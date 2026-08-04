@@ -748,43 +748,6 @@ func NewRouter(deps Deps) http.Handler {
 				return
 			}
 			writeJSON(w, http.StatusOK, result)
-		case "loadCheckpoint":
-			// 加载断点恢复信息（前端启动时调用，判断是否需要展示"恢复"横幅）
-			if r.Method != http.MethodGet {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
-			checkpoint, err := deps.TraversalManager.LoadCheckpoint()
-			if err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			writeJSON(w, http.StatusOK, checkpoint)
-		case "resumeFromCheckpoint":
-			// 从断点恢复测试（复用原 taskId，从已完成点数继续）
-			if r.Method != http.MethodPost {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
-			var cp traversal.Checkpoint
-			if err := json.NewDecoder(r.Body).Decode(&cp); err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			taskID, err := deps.TraversalManager.ResumeFromCheckpoint(cp)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]string{"taskId": taskID})
-		case "clearCheckpoint":
-			// 清除断点文件（用户主动放弃恢复时调用）
-			if r.Method != http.MethodPost {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
-			deps.TraversalManager.ClearCheckpoint()
-			writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

@@ -382,3 +382,25 @@ func TestStop_ReleaseSuccess_NoExtraError(t *testing.T) {
 		t.Errorf("Release 调用次数 = %d，期望 1", got)
 	}
 }
+
+func TestStop_RemovesTemporaryCheckpoint(t *testing.T) {
+	checkpointStore := newFakeCheckpointStore()
+	csvPath := "D:/out/task-stop.csv"
+	checkpointPath := traversal.ResolveCheckpointPathFromCSV(csvPath)
+	if err := checkpointStore.Write(checkpointPath, []byte(`{"version":2}`)); err != nil {
+		t.Fatalf("write checkpoint: %v", err)
+	}
+	manager := NewTraversalManager(nil, nil, nil, nil, checkpointStore)
+	manager.lockService = &fakeTraversalLockService{}
+	manager.mu.Lock()
+	manager.config = traversal.Config{TaskID: "task-stop"}
+	manager.status = traversal.Status{TaskID: "task-stop", State: traversal.StateRunning, CSVPath: csvPath}
+	manager.mu.Unlock()
+
+	if err := manager.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if exists, err := checkpointStore.Stat(checkpointPath); err != nil || exists {
+		t.Fatalf("stopped traversal must not retain checkpoint: exists=%v err=%v", exists, err)
+	}
+}

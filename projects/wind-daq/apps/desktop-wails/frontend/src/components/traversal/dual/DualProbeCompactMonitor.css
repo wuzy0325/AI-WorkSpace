@@ -14,26 +14,6 @@
   align-items: center;
 }
 
-.dual-compact__checkpoint {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  color: var(--state-warning);
-  background: color-mix(in srgb, var(--state-warning) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--state-warning) 30%, transparent);
-  border-radius: 6px;
-  font-size: 11px;
-}
-
-.dual-compact__checkpoint-text {
-  min-width: 0;
-  margin-right: auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .dual-compact__status-fields {
   display: grid;
   grid-template-columns: minmax(60px, 0.6fr) minmax(90px, 0.9fr) minmax(130px, 1.4fr) minmax(130px, 1.4fr);

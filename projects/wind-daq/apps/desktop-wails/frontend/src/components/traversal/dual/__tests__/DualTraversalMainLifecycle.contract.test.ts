@@ -13,7 +13,6 @@ const dualStore = vi.hoisted(() => ({
   },
   loadConfig: vi.fn(),
   recoverRuntime: vi.fn(),
-  loadCheckpoint: vi.fn(),
   cleanupLocal: vi.fn(),
 }))
 
@@ -55,7 +54,6 @@ describe('DualTraversalMain runtime lifecycle contract', () => {
     vi.clearAllMocks()
     dualStore.loadConfig.mockResolvedValue(undefined)
     dualStore.recoverRuntime.mockResolvedValue(undefined)
-    dualStore.loadCheckpoint.mockResolvedValue(undefined)
   })
 
   it('loads each config before recovering its keyed runtime', () => {
@@ -79,7 +77,6 @@ describe('DualTraversalMain runtime lifecycle contract', () => {
     await flushPromises()
 
     expect(dualStore.recoverRuntime).not.toHaveBeenCalled()
-    expect(dualStore.loadCheckpoint).not.toHaveBeenCalled()
   })
 
   it('recovers runtimes when intentionally mounted again', async () => {

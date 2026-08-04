@@ -103,8 +103,6 @@ type ManagedTraversalManager interface {
 	ParseConfig(raw json.RawMessage) (traversal.Config, error)
 	// StartManaged 以 managed ownership 启动新任务；admission 已持有全部 lease。
 	StartManaged(config traversal.Config, opts ManagedSessionOptions) error
-	// ResumeManaged 以 managed ownership 从 checkpoint 恢复；返回权威 taskID。
-	ResumeManaged(cp traversal.Checkpoint, opts ManagedSessionOptions) (string, error)
 	// RunCurrentPoint 执行当前点位（供 runPoint 单步操作）。
 	RunCurrentPoint() error
 	// Pause 暂停运行中的任务。
@@ -123,10 +121,6 @@ type ManagedTraversalManager interface {
 	SaveConfigRaw(config json.RawMessage)
 	// GetConfigRaw 读取持久化的原始配置 JSON。
 	GetConfigRaw() json.RawMessage
-	// LoadCheckpoint 读取该 manager 的可恢复 checkpoint（无候选返回 nil）。
-	LoadCheckpoint() (*traversal.Checkpoint, error)
-	// ClearCheckpoint 显式放弃当前可恢复 checkpoint。
-	ClearCheckpoint()
 }
 
 // TraversalManagerFactory 按 probe 创建完整装配的 managed manager（spec FR3）。
@@ -158,10 +152,6 @@ var (
 	ErrCloseProbeTimeout = errors.New("close_probe_timeout")
 	// ErrShutdownTimeout shutdown hard deadline 到期仍有未退出任务（含 probe/task ID）。
 	ErrShutdownTimeout = errors.New("shutdown_timeout")
-	// ErrTaskIDMismatch 请求 taskID 与 dual recovery index 权威候选不一致（HTTP 400）。
-	ErrTaskIDMismatch = errors.New("task_id_mismatch")
-	// ErrProbeIDMismatch checkpoint 中 ProbeID 与请求 probeID 不一致（HTTP 400）。
-	ErrProbeIDMismatch = errors.New("probe_id_mismatch")
 )
 
 const (
@@ -184,8 +174,7 @@ type ManagerRegistryDeps struct {
 	// MotionAccess Shutdown hard deadline 路径的 EmergencyStop 端口（可选；
 	// 未注入时 ES 阶段仅记录诊断错误）。生产装配见 Task 14。
 	MotionAccess ports.MotionAccess
-	// CheckpointStore dual v3 checkpoint 的读取/删除端口（可选；Task 11 的
-	// registry probe-scoped resume/clear 用；未注入时恢复 façade 返回装配错误）。
+	// CheckpointStore dual v3 checkpoint 的删除端口（可选），用于终态清理临时文件。
 	CheckpointStore ports.CheckpointStore
 }
 
@@ -245,8 +234,6 @@ type registrySession struct {
 	renewDone   chan struct{}
 	// cleanupMu 串行化 completion 清理与 CloseProbe/Shutdown 的幂等重试。
 	cleanupMu sync.Mutex
-	// recoveryStopOnce bounds asynchronous stop requests after recovery index failures.
-	recoveryStopOnce sync.Once
 	// pendingReleases 尚未成功释放的控制器轴 lease（cleanupMu 保护）；
 	// 初始为 controllerTokens 的拷贝，释放成功即删除对应条目。
 	pendingReleases map[ControllerAxisPair]string
@@ -290,7 +277,7 @@ type ManagerRegistry struct {
 	hardTimeout     time.Duration
 	// motion Shutdown hard deadline 路径的 EmergencyStop 端口（可选注入；Task 14 装配）。
 	motion ports.MotionAccess
-	// checkpointStore dual v3 checkpoint 读取/删除端口（可选注入；Task 11 恢复 façade 用）。
+	// checkpointStore dual v3 checkpoint 删除端口（可选注入），用于终态清理临时文件。
 	checkpointStore ports.CheckpointStore
 
 	taskIDs         ports.TaskIDGenerator

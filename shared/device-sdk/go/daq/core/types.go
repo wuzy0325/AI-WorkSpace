@@ -103,7 +103,7 @@ type DataPayload struct {
 	DeviceID          string    `json:"deviceId"`
 	Timestamp         int64     `json:"timestamp"`
 	HardwareTimestamp float64   `json:"hardwareTimestamp,omitempty"` // 设备硬件时间戳（秒.纳秒），0 表示无时间戳
-	SequenceNumber    int       `json:"sequenceNumber,omitempty"`    // 帧序号（HEAD=1 时每帧递增），0 表示未开启
+	SequenceNumber    int64     `json:"sequenceNumber,omitempty"`    // 帧序号（HEAD=1 时每帧递增，来源 uint32；int64 保证 32 位平台不溢出），0 表示未开启
 	Channels          []float64 `json:"channels"`
 	ChannelIndices    []int     `json:"channelIndices"`
 }

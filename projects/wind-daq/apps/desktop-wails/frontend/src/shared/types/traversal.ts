@@ -1401,18 +1401,6 @@ export function getMotionSafetyVerdictLabel(
   return labels[verdict] ?? verdict
 }
 
-/** 断点恢复信息 */
-export interface TraversalCheckpoint {
-  taskId: string
-  /** 完整测试配置（用于恢复时重建测试上下文，与 Cursor DAQ 行为一致） */
-  config?: TraversalTestConfig
-  completedPoints: number
-  totalPoints: number
-  lastPoint?: TraversalPoint
-  savePath: string
-  createdAt: number
-}
-
 // ---------------------------------------------------------------------------
 // 双探针并行遍历（dual traversal）类型（spec FR5 / Task 15）
 // ---------------------------------------------------------------------------
@@ -1442,8 +1430,6 @@ export interface TraversalSessionState {
   error: string | null
   /** 最近一次完成事件（completed/stopped/error 终态） */
   completeEvent: TraversalCompleteEvent | null
-  /** 可恢复断点（stopped/error 后由 dual recovery index 提供） */
-  checkpoint: TraversalCheckpoint | null
   /** 实时原始压力（进度事件/latestData 驱动） */
   realtimePressures: TraversalRawPressure | null
   /** 实时插值结果（节流实时计算驱动） */

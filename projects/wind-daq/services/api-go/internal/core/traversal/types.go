@@ -575,7 +575,7 @@ type Status struct {
 	// 前端据此向操作员展示"回零未完成"警告。
 	Warning string `json:"warning,omitempty"`
 	// CSVPath 实际落盘的 CSV 文件完整路径。
-	// 由 Start/ResumeFromCheckpoint 在 openReliabilityPorts 之后写入：
+	// 由 Start 在 openReliabilityPorts 之后写入：
 	// csvPort.Open 在 Create 模式撞名时会自动追加 -2/-3 后缀（openCreateUnique），
 	// 实际路径可能与 ResolveOutputPath(config) 计算的预期路径不同。
 	// 前端侧边栏据此展示真实文件名，避免显示预期路径误导操作员。

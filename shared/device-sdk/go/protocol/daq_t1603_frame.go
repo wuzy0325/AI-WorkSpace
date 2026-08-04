@@ -6,14 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"shared.local/device-sdk/go/pkg/slog"
 )
 
 // -- DAQ-T-1603 serial frame parsing --
@@ -75,21 +74,25 @@ func ParseTCPFrame(data []byte) ([]float64, error) {
 }
 
 func parseBinaryFrame(data []byte) ([]float64, error) {
-	temperatures := make([]float64, 16)
+	return decodeTemperatures(data)
+}
+
+// decodeTemperatures 解码 64 字节二进制温度负载（16 × float32 LE）。
+// 设备通道顺序为 CH15→CH0，结果反转为 CH0→CH15，并做物理范围校验。
+// 调用方必须保证 data 恰好是 64 字节温度数据（各帧解析函数已按帧长校验边界）。
+func decodeTemperatures(data []byte) ([]float64, error) {
+	temps := make([]float64, 16)
 	for i := 0; i < 16; i++ {
-		bits := binary.LittleEndian.Uint32(data[i*4:])
-		temperatures[i] = float64(math.Float32frombits(bits))
+		temps[i] = float64(math.Float32frombits(binary.LittleEndian.Uint32(data[i*4:])))
 	}
 
-	for i, j := 0, len(temperatures)-1; i < j; i, j = i+1, j-1 {
-		temperatures[i], temperatures[j] = temperatures[j], temperatures[i]
+	for i, j := 0, len(temps)-1; i < j; i, j = i+1, j-1 {
+		temps[i], temps[j] = temps[j], temps[i]
 	}
-
-	if !looksLikeReasonableTemperatureFrame(temperatures) {
+	if !looksLikeReasonableTemperatureFrame(temps) {
 		return nil, fmt.Errorf("binary frame values out of expected range")
 	}
-
-	return temperatures, nil
+	return temps, nil
 }
 
 func looksLikeReasonableTemperatureFrame(temps []float64) bool {
@@ -148,7 +151,7 @@ func ParseASCIIFrame(data []byte) ([]float64, error) {
 // metadata prefix (sequence number and hardware timestamp).
 type T1603ParsedFrame struct {
 	HardwareTimestamp float64
-	SequenceNumber    int
+	SequenceNumber    int64 // 来源为 uint32 帧序号；int64 保证 32 位平台不溢出
 	Temperatures      []float64
 }
 
@@ -164,17 +167,9 @@ func parseBinaryFrameWithTimestamp(data []byte) (*T1603ParsedFrame, error) {
 	ns := binary.LittleEndian.Uint32(data[4:8])
 	ts := float64(sec) + float64(ns)/1e9
 
-	temps := make([]float64, 16)
-	for i := 0; i < 16; i++ {
-		bits := binary.LittleEndian.Uint32(data[8+i*4:])
-		temps[i] = float64(math.Float32frombits(bits))
-	}
-
-	for i, j := 0, len(temps)-1; i < j; i, j = i+1, j-1 {
-		temps[i], temps[j] = temps[j], temps[i]
-	}
-	if !looksLikeReasonableTemperatureFrame(temps) {
-		return nil, fmt.Errorf("binary frame values out of expected range")
+	temps, err := decodeTemperatures(data[8:])
+	if err != nil {
+		return nil, err
 	}
 
 	return &T1603ParsedFrame{
@@ -191,17 +186,11 @@ func parseBinaryFrameWithSequence(data []byte) (*T1603ParsedFrame, error) {
 		return nil, fmt.Errorf("invalid frame size: %d, expected %d", len(data), TCPFrameSizeWithSequence)
 	}
 	seq := binary.LittleEndian.Uint32(data[0:4])
-	temps := make([]float64, 16)
-	for i := 0; i < 16; i++ {
-		temps[i] = float64(math.Float32frombits(binary.LittleEndian.Uint32(data[4+i*4:])))
+	temps, err := decodeTemperatures(data[4:])
+	if err != nil {
+		return nil, err
 	}
-	for i, j := 0, len(temps)-1; i < j; i, j = i+1, j-1 {
-		temps[i], temps[j] = temps[j], temps[i]
-	}
-	if !looksLikeReasonableTemperatureFrame(temps) {
-		return nil, fmt.Errorf("binary frame values out of expected range")
-	}
-	return &T1603ParsedFrame{SequenceNumber: int(seq), Temperatures: temps}, nil
+	return &T1603ParsedFrame{SequenceNumber: int64(seq), Temperatures: temps}, nil
 }
 
 // parseBinaryFrameWithSequenceAndTimestamp parses a 76-byte binary frame with
@@ -215,17 +204,11 @@ func parseBinaryFrameWithSequenceAndTimestamp(data []byte) (*T1603ParsedFrame, e
 	sec := binary.LittleEndian.Uint32(data[4:8])
 	ns := binary.LittleEndian.Uint32(data[8:12])
 	ts := float64(sec) + float64(ns)/1e9
-	temps := make([]float64, 16)
-	for i := 0; i < 16; i++ {
-		temps[i] = float64(math.Float32frombits(binary.LittleEndian.Uint32(data[12+i*4:])))
+	temps, err := decodeTemperatures(data[12:])
+	if err != nil {
+		return nil, err
 	}
-	for i, j := 0, len(temps)-1; i < j; i, j = i+1, j-1 {
-		temps[i], temps[j] = temps[j], temps[i]
-	}
-	if !looksLikeReasonableTemperatureFrame(temps) {
-		return nil, fmt.Errorf("binary frame values out of expected range")
-	}
-	return &T1603ParsedFrame{SequenceNumber: int(seq), HardwareTimestamp: ts, Temperatures: temps}, nil
+	return &T1603ParsedFrame{SequenceNumber: int64(seq), HardwareTimestamp: ts, Temperatures: temps}, nil
 }
 
 // ParseTCPFrameEx parses a TCP frame with optional metadata prefix.
@@ -275,7 +258,7 @@ func parseSpaceSeparatedFrame(data []byte) (*T1603ParsedFrame, error) {
 	if len(parts) > 16 {
 		seq, err := strconv.Atoi(parts[0])
 		if err == nil {
-			result.SequenceNumber = seq
+			result.SequenceNumber = int64(seq)
 			offset = 1
 			if len(parts) > 17 {
 				ts, err := strconv.ParseFloat(parts[1], 64)

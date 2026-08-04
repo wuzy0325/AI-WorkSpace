@@ -748,7 +748,7 @@ func TestReadFrame_PrefixedASCIIFrameWithNewline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseTCPFrameEx returned error: %v", err)
 	}
-	if result.SequenceNumber != seq {
+	if result.SequenceNumber != int64(seq) {
 		t.Fatalf("sequence = %d, want %d", result.SequenceNumber, seq)
 	}
 	if result.HardwareTimestamp != timestamp {

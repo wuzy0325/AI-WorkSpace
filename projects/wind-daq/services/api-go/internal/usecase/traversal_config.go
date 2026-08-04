@@ -57,44 +57,6 @@ func (m *TraversalManager) loadPersistedConfig() {
 		m.config.ProbeType = probeTypeProbe.ProbeType
 		m.mu.Unlock()
 	}
-
-	// 从持久化配置中提取 savePath / saveFileName / taskId，按与运行期相同的派生逻辑
-	// 计算断点路径：ResolveOutputPath → ResolveCheckpointPathFromCSV。
-	// 插值器恢复改为显式的 RestoreInterpolatorFromPersistedConfig 调用，
-	// 避免在装配阶段没有注入 InterpolatorLoader 时阻塞或失败。
-	//
-	// 旧实现直接拼接 probe.SavePath + ".checkpoint.json"，
-	// 与实际写入路径 (${dir}/.traversal/${stem}.checkpoint.json) 完全不匹配，
-	// Stat 永远返回 false，重启后 LoadCheckpoint 永远返回 nil，断点恢复失效。
-	//
-	// 局限：撞名 -2/-3 场景下，预期路径与实际落盘路径不同，启动期无法恢复；
-	// 该场景依赖运行期 csvPort.OutputPath() 回写的 lastCheckpointPath（已正确实现）。
-	var probe struct {
-		SavePath     string `json:"savePath"`
-		SaveFileName string `json:"saveFileName"`
-		TaskID       string `json:"taskId"`
-	}
-	if err := json.Unmarshal(data, &probe); err != nil {
-		return
-	}
-	if probe.SavePath == "" && probe.SaveFileName == "" && probe.TaskID == "" {
-		return
-	}
-	if m.checkpointStore == nil {
-		return
-	}
-	candidate := traversal.ResolveCheckpointPathFromCSV(traversal.ResolveOutputPath(traversal.Config{
-		SavePath:     probe.SavePath,
-		SaveFileName: probe.SaveFileName,
-		TaskID:       probe.TaskID,
-	}))
-	exists, err := m.checkpointStore.Stat(candidate)
-	if err != nil || !exists {
-		return
-	}
-	m.mu.Lock()
-	m.lastCheckpointPath = candidate
-	m.mu.Unlock()
 }
 
 // RestoreInterpolatorFromPersistedConfig 启动期异步恢复插值器。

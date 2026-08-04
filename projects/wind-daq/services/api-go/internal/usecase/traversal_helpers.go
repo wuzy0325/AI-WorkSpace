@@ -195,7 +195,7 @@ func resolveMotionAxes(motionAxes []traversal.MotionAxisBinding, statuses []moti
 // validation and stop handling treat hidden axes as active even though no MoveTo is sent.
 //
 // 幂等性：本函数仅按 path 中的有限坐标过滤绑定，对已规范化的输入再次调用返回
-// 相同结果，可安全在 ParseConfig / Start / ResumeFromCheckpoint 多处重复调用——
+// 相同结果，可安全在 ParseConfig / Start 多处重复调用——
 // 防御性兜底，避免内部调用方绕过 ParseConfig 直传 Config 时遗漏过滤。
 func motionAxesForPath(motionAxes []traversal.MotionAxisBinding, path []traversal.Point) []traversal.MotionAxisBinding {
 	if len(motionAxes) == 0 {

@@ -3,6 +3,7 @@ package hardware
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"runtime/debug"
 	"strconv"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"shared.local/device-sdk/go/daq/core"
-	"shared.local/device-sdk/go/pkg/slog"
 	"shared.local/device-sdk/go/protocol"
 )
 
@@ -79,21 +79,21 @@ type LogEntry struct {
 }
 
 type DAQT1603 struct {
-	mu        sync.RWMutex
-	logMu     sync.RWMutex
-	writeMu   sync.Mutex
-	profile   core.Profile
-	status    core.Status
-	sink      core.DataSink
-	stop      chan struct{}
-	acquiring bool
-	streaming bool
-	stopping  bool
+	mu                     sync.RWMutex
+	logMu                  sync.RWMutex
+	writeMu                sync.Mutex
+	profile                core.Profile
+	status                 core.Status
+	sink                   core.DataSink
+	stop                   chan struct{}
+	acquiring              bool
+	streaming              bool
+	stopping               bool
 	// stopAbandoned 表示 Stop owner 已在静默兜底（deadline 失效故障电脑）路径
 	// 主动废弃连接：readLoop 随后因对端 FIN 收到的 EOF 属预期退出，不应再触发
 	// onReadLoopExit 回调或"Read loop exited unexpectedly"告警。连接在下一次
 	// StartAcquisition 时透明重连。仅在 connectLocked 成功与 Disconnect 时复位。
-	stopAbandoned bool
+	stopAbandoned          bool
 	// deadlineProbed/deadlineBroken：机器 SetReadDeadline 是否失效的探测
 	// 结果（连接建立后的空窗期探测一次，device 级缓存）。部分 Windows
 	// 机器安全软件（LSP hook winsock）使 deadline 取消失效，阻塞 Read
@@ -869,18 +869,16 @@ func (d *DAQT1603) GetDaqT1603Config() (core.DaqT1603HardwareConfig, error) {
 }
 
 func (d *DAQT1603) ApplyDaqT1603Config(cfg core.DaqT1603HardwareConfig) error {
-	// 驱动连接时强制开启 HEAD（帧序号），apply 路径保持一致：
-	// 不允许调用方传入 ShowSequence=false 把设备切回无序号帧，
-	// 否则与连接时的 HEAD=1 协议边界不一致，帧长从 68 变 64 导致解析错位。
-	// 设备实际不支持 HEAD 的固件（temp）在 connect 时已回退 ShowSequence=false，
-	// 此时保持 false 即可（读取 d.config 实际值）。
-	d.mu.RLock()
-	actualSeq := d.config.ShowSequence
-	d.mu.RUnlock()
-	if actualSeq {
-		cfg.ShowSequence = true
-	}
+	// apply 路径强制 ShowSequence 与设备实际 HEAD 状态双向对齐（d.config 由
+	// connectLocked 经 @fd HEAD 读回验证写入，conn != nil 时即为设备事实）：
+	//   - 设备 HEAD 生效时不允许传入 false 切回无序号帧，否则与连接时的 HEAD=1
+	//     协议边界不一致，帧长从 68 变 64 导致解析错位；
+	//   - 设备固件不支持 HEAD（temp，connect 时已回退 ShowSequence=false）时
+	//     也不允许传入 true：temp 固件对 @fe HEAD 1 回 ACK 但不生效，
+	//     frameReader 会按 68 字节序号帧解析设备实际发送的 64 字节帧，同样错位。
+	// 读取实际值与后续状态检查在同一把写锁内完成，避免 RUnlock→Lock 窗口（TOCTOU）。
 	d.mu.Lock()
+	cfg.ShowSequence = d.config.ShowSequence
 	conn := d.conn
 	if conn != nil && d.acquiring {
 		d.mu.Unlock()

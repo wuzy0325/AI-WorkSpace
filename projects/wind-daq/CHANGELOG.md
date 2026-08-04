@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.12.2] - 2026-08-03
+
+### Changed
+
+- **Breaking**：下线遍历测试"停止后恢复"能力。停止遍历测试现在表示操作员作出最终决定，临时 checkpoint 被清理，不再作为未完成任务提供恢复入口。
+  - 后端删除 HTTP 端点：`loadCheckpoint`、`resumeFromCheckpoint`、`clearCheckpoint`（位于 `services/api-go/api/server.go` 与 `server_dual_traversal.go`）。
+  - 后端删除 `TraversalManager.LoadCheckpoint` / `ResumeFromCheckpoint` / `resumeInternal`、`ManagerRegistry.LoadCheckpoint` / `ResumeFromCheckpoint` / `ClearCheckpoint` / `authoritativeCheckpoint` / `admitResumeLockedUnderGate` / `loadDualCheckpoint` / `discardOrphanedRecovery` 等恢复相关方法。
+  - 前端删除单探针/双探针界面的"未完成任务检测"、"继续测试"、"放弃任务"入口与 `TraversalCheckpointBanner.vue` 组件。
+  - 前端 `traversalApi.ts` / `traversalStore.ts` / `dualTraversalStore.ts` / `dualTraversalRuntime.ts` / `i18nStore.ts` / `traversal.ts` 类型同步移除 checkpoint 相关字段与方法。
+  - 受影响测试用例同步精简或删除：`DualTraversalCheckpointRecovery.contract.test.ts`、`traversal_v2_integration_test.go` 中 checkpoint 用例、`traversal_managed_checkpoint_test.go` / `traversal_registry_recovery_test.go` 等保留少量非恢复路径用例。
+
+### Internal
+
+- `traversal_checkpoint.go` 从 ~588 行精简至 ~300 行，仅保留 checkpoint 文件写入/清理副作用，不再对外暴露恢复 API。
+- `traversal_registry_recovery.go` 从 ~700 行精简至 ~350 行，删除孤儿恢复、权威 checkpoint 解析、双探针 checkpoint 加载等逻辑。
+- 共减少 ~2770 行、新增 ~183 行，整体代码维护成本显著降低。
+
+### Compatibility
+
+- 配置文件格式：兼容。
+- 数据文件格式：兼容（已落盘的测试结果 CSV 不受影响）。
+- API 契约：**不兼容**。依赖上述 checkpoint 端点的调用方必须移除对应调用。
+- 升级路径：升级后无法从旧版本遗留的 traversal checkpoint 继续测试；如需保留测试结果，请在升级前完成当前遍历任务。
+
+### Verification
+
+- `go build ./services/api-go/...`: passed
+- `go test ./services/api-go/internal/...`: passed
+- `go vet ./services/api-go/...`: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `npm run test`: passed
+- `task release`: passed
+- `makensis build/windows/installer/project.nsi`: passed
+- `task archive-release`: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名，Windows 可能显示未知发布者提示。
+- 旧版本（≤0.12.1）遗留的 traversal checkpoint 文件在升级后会保留在磁盘但不会被读取，可手动清理 `%APPDATA%\wind-daq\` 下的相关 json 文件。
+
 ## [0.12.1] - 2026-08-03
 
 ### Fixed

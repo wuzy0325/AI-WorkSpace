@@ -723,7 +723,8 @@ func (a *P1604Adapter) Disconnect(id string) error {
 // 若仅用 IsConnectionFault 判定，会走"软错误"分支只重启 idleReadLoop、不清理
 // driver，应用停留在"已连接但不可用"的假状态，每次操作都失败。
 //
-// 仅用于 handleConnectionLost 等状态迁移决策；日志分级仍用 IsConnectionFault 原义。
+// 用于 handleConnectionLost 等状态迁移决策，以及 rollbackAcquisition 等
+// "连接已死"场景的日志分级（Debug/Warn），保证日志分级与状态迁移判定口径一致。
 func isDeadConnectionError(err error) bool {
 	return sharedproto.IsConnectionFault(err) || sharedproto.IsConnResetByPeer(err)
 }
@@ -896,7 +897,9 @@ func (a *P1604Adapter) rollbackAcquisition(id string, ch chan core.PressureSnaps
 	shard.mu.RUnlock()
 	if driverExists && driver != nil {
 		if err := driver.sendCommandACK("c 02 1"); err != nil {
-			if sharedproto.IsConnectionFault(err) {
+			// 与状态迁移判定同口径：死连接（含 WSAECONNABORTED）属预期清理竞态，记 Debug；
+			// 仅真正意外的软错误记 Warn，避免日志分级与连接状态判定不一致误导排查。
+			if isDeadConnectionError(err) {
 				slog.Debug("DAQ-P-1604 rollback stop stream: connection already gone", "device", id, "error", err)
 			} else {
 				slog.Warn("DAQ-P-1604 rollback stop stream failed", "device", id, "error", err)
@@ -1026,12 +1029,14 @@ func (a *P1604Adapter) StopAcquisition(id string) error {
 //   - 空闲期间：idleReadLoop 不使用 frameReader（仅裸读 conn），先停止它
 //     再用 frameReader 直接读写，结束后重启 idleReadLoop（与 ApplyConfig 同模式）。
 //
-// 错误处理与采集路径对齐：使用 IsConnectionFault（而非 IsConnResetByPeer）
-// 判定连接故障并触发 handleConnectionLost。原因：
+// 错误处理与采集路径对齐：使用 isDeadConnectionError（IsConnectionFault ∪
+// IsConnResetByPeer）判定连接故障并触发 handleConnectionLost。原因：
 //   - 校零常在采集运行中触发，若设备连接半开（TCP keepalive 超时但未收到 RST），
 //     IsConnResetByPeer 不匹配超时，会遗漏清理，导致后续采集调用持续撞同一死连接；
-//   - IsConnectionFault 覆盖超时/broken pipe/closed conn/RST 等所有"连接不可用"证据，
-//     保守触发清理比静默失败更安全；
+//   - IsConnectionFault 覆盖超时/broken pipe/closed conn/RST 等"连接不可用"证据，
+//     但漏匹配 WSAECONNABORTED（keepalive abort 半死连接后的 Write 立即返回该错误），
+//     该错误只在 IsConnResetByPeer 的匹配范围内，两者组合才是完整的死连接判定；
+//   - 保守触发清理比静默失败更安全；
 //   - 注：IsConnectionFault 文档标注"不可作为状态机输入"，但 StartAcquisition/StopAcquisition
 //     的 rollback 路径已事实上用它做连接状态判定，此处与已有实践保持一致。
 //
@@ -1211,8 +1216,11 @@ func (a *P1604Adapter) zeroCalibrationDirect(id string, driver *p1604Driver) err
 			a.handleConnectionLost(id, driver, calibErr)
 			return calibErr
 		}
-		// 普通 Write 错误：原有逻辑保留——仅连接级故障才清理
-		if sharedproto.IsConnectionFault(err) {
+		// 普通 Write 错误：连接级故障（含 WSAECONNABORTED）才清理，软错误保留连接。
+		// 与 zeroCalibrationViaReadLoop 的 Write 路径对齐：IsConnectionFault 漏匹配
+		// WSAECONNABORTED（keepalive abort 半死连接），必须用 isDeadConnectionError，
+		// 否则 driver 停留在"已连接但不可用"假状态。
+		if isDeadConnectionError(err) {
 			a.handleConnectionLost(id, driver, fmt.Errorf("zero calibration: %w", err))
 		}
 		return fmt.Errorf("zero calibration: %w", err)
@@ -1237,8 +1245,8 @@ func (a *P1604Adapter) zeroCalibrationDirect(id string, driver *p1604Driver) err
 		} else {
 			calibErr = fmt.Errorf("zero calibration: %w", err)
 		}
-		// watchdog 触发 / FIN / RST / 超时：均视为连接已死，触发清理
-		if watchdogTriggered || sharedproto.IsConnResetByPeer(err) || sharedproto.IsConnectionFault(err) {
+		// watchdog 触发或死连接（FIN/RST/超时/abort）：均视为连接已死，触发清理
+		if watchdogTriggered || isDeadConnectionError(err) {
 			a.handleConnectionLost(id, driver, calibErr)
 		}
 		return calibErr

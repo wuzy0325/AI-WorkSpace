@@ -245,9 +245,6 @@ func NewTraversalManager(reader ports.LatestDataReader, motion ports.MotionAcces
 	return mgr
 }
 
-// loadPersistedConfig 启动时从磁盘加载已保存的遍历配置
-// 同时尝试根据上一次的 SavePath 推断 checkpoint 路径并回填 lastCheckpointPath，
-// 修复"应用重启后 LoadCheckpoint 永远返回 nil"的问题。
 func (m *TraversalManager) GenerateGridPath(config traversal.GridConfig) ([]traversal.Point, error) {
 	return traversal.GenerateGridPath(config)
 }
@@ -581,7 +578,7 @@ func (m *TraversalManager) CheckPreconditions(config *traversal.Config) map[stri
 		if len(cfg.Path) > 0 {
 			bindings = motionAxesForPath(bindings, cfg.Path)
 		}
-		// 与运行路径（RunCurrentPoint / Start / ResumeFromCheckpoint）保持同一回退语义：
+		// 与运行路径（RunCurrentPoint / Start）保持同一回退语义：
 		// 先用 resolveMotionAxes 预处理，让保存了别名 / 控制器名 / 旧 UUID 的旧配置
 		// 在"所有非空 controllerId 都不匹配已连接控制器"时回退到按轴名匹配，
 		// 而不是被前置检查直接判定为断开。部分有效 ID 仍保持严格绑定（resolveMotionAxes
@@ -703,11 +700,11 @@ func (m *TraversalManager) beginSession(parent context.Context, taskID string, s
 	return m.session, nil
 }
 
-// resetFinalizeOnce 重置 finalizeOnce，让下一次 Start/ResumeFromCheckpoint 可重新触发
+// resetFinalizeOnce 重置 finalizeOnce，让下一次 Start 可重新触发
 // finalizeSinkInternal。sync.Once 一旦执行就永久标记 done，必须在每次新任务开始前
 // 通过整体赋值清空，否则新任务的 finalizeSink 会直接返回，端口不会被关闭。
 //
-// 调用时机：Start / ResumeFromCheckpoint 在 beginSession 成功之后、打开 v2 端口之前
+// 调用时机：Start 在 beginSession 成功之后、打开 v2 端口之前
 // 调用，保证 finalizeOnce 与 session 生命周期严格对齐。
 //
 // 并发安全：整体赋值 sync.Once 持有 m.mu，与 finalizeSinkInternal 中的
@@ -868,9 +865,7 @@ func (m *TraversalManager) startInternal(config traversal.Config, opts *ManagedS
 	// 必须用 snapshot.CSVPath（= ResolveOutputPath(config)）而非 config.SavePath：
 	//   - SavePath 可能是目录（如 "D:/data"），factory.Create 基于它派生 checkpoint 路径
 	//     会落在 ".traversal/" 同目录下，但 SavePath 是目录时 Ext 为空，派生结果错乱。
-	//   - ResumeFromCheckpoint 用 snapshot.CSVPath 创建 checkpointPort（见 traversal_checkpoint.go），
-	//     Start 必须用同一 basePath 才能保证崩溃恢复链路一致。
-	//   - activeIndex.Register 与 saveCheckpoint/loadCheckpoint 全部基于 snapshot.CSVPath 派生，
+	//   - activeIndex.Register 与 saveCheckpoint 全部基于 snapshot.CSVPath 派生，
 	//     形成单一真相源。
 	var checkpointPort ports.TraversalCheckpointPort
 	if checkpointPortFactory != nil && snapshot.CSVPath != "" {
@@ -1366,6 +1361,10 @@ func (m *TraversalManager) Stop() error {
 			)
 		}
 	}
+
+	// 停止是操作员的最终决定。删除临时提交 checkpoint，
+	// 不再将已停止任务作为未完成或可恢复任务暴露。
+	m.ClearCheckpoint()
 
 	// 清理活动索引（仅 legacy single 路径；managed 会话由 registry 负责 dual recovery index）
 	managed := session != nil && session.managedOpts != nil

@@ -10,7 +10,6 @@ import (
 	"shared.local/device-sdk/go/pkg/slog"
 
 	"wind-daq/services/api-go/internal/core/traversal"
-	"wind-daq/services/api-go/internal/ports"
 )
 
 // registry 准入事务（Task 4：Start façade + 原子准入 + 回滚）。
@@ -153,22 +152,14 @@ type startPreparation struct {
 	otherAxisPairs []traversal.MotionAxisBinding
 }
 
-// prepareStart 可恢复候选检查（任何输出文件/运动 I/O 之前）→ GetOrCreate → 解析配置 →
-// 服务端生成权威 task ID（覆盖客户端 config.TaskID）→ 锁外准备绑定校验输入。
+// prepareStart 创建或加载 manager、解析配置、生成权威 task ID，并准备绑定校验输入。
+// 已停止的任务不会阻止新任务启动。
 func (r *ManagerRegistry) prepareStart(ctx context.Context, probeID ProbeID, rawConfig json.RawMessage) (*startPreparation, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if !probeID.Valid() {
 		return nil, fmt.Errorf("%w: %q", ErrInvalidProbeID, probeID)
-	}
-	// 可恢复候选拒绝：发生在 factory 创建、配置解析和任何文件/运动 I/O 之前（spec FR4）。
-	ref, found, err := r.recoveryIndex.Find(ctx, string(probeID))
-	if err != nil {
-		return nil, fmt.Errorf("查询双探针恢复索引失败: %w", err)
-	}
-	if found {
-		return nil, fmt.Errorf("%w: probe %s 存在可恢复任务 %s", ports.ErrRecoverableTaskExists, probeID, ref.TaskID)
 	}
 	manager, err := r.GetOrCreate(probeID)
 	if err != nil {

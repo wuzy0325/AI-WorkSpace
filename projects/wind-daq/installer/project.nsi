@@ -9,7 +9,7 @@ Unicode true
 ####
 
 ; Version must match projects/wind-daq/VERSION.
-!define INFO_PRODUCTVERSION "0.10.0"
+!define INFO_PRODUCTVERSION "0.12.2"
 
 ####
 ## Please note: Template replacements don't work in this file. They are provided with default defines like

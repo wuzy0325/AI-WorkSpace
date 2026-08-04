@@ -20,7 +20,6 @@ import {
   toRealtimeInterpolationInput,
 } from '@composables/useTraversalRealtimeData'
 import { safeInterpolate } from '@shared/i18nInterpolate'
-import { isRecoverableTaskExistsError } from '@api/traversalErrorMapper'
 import type { DualTraversalRuntimes, DualTraversalSessionRuntime } from '@stores/dualTraversalRuntime'
 import type {
   CalibrationCsvFileInfo,
@@ -56,7 +55,6 @@ function emptySession(): TraversalSessionState {
     isStarting: false,
     error: null,
     completeEvent: null,
-    checkpoint: null,
     realtimePressures: null,
     realtimeResult: null,
     hasLoadedInterpolator: false,
@@ -106,7 +104,6 @@ export const useDualTraversalStore = defineStore('dualTraversal', () => {
     probe1: createDualTraversalRuntime(),
     probe2: createDualTraversalRuntime(),
   }
-  const checkpointPending = reactive<Record<ProbeId, boolean>>({ probe1: false, probe2: false })
 
   const uiRefreshIntervalMs = computed(() => {
     const store = useStorageStore()
@@ -197,9 +194,6 @@ export const useDualTraversalStore = defineStore('dualTraversal', () => {
         // C9 修复：终态后立即 teardown 轮询类订阅，停止 500ms 无意义轮询。
         // snapshot 类（onSnapshot）保留，让用户在结果界面仍能看到当前压力值。
         teardownPollingSubscriptions(probeId)
-        if (event.status === 'error' || event.status === 'stopped') {
-          void loadCheckpoint(probeId)
-        }
       }),
       traversalProbeApi.onError(probeId, (event) => {
         session.error = event.error
@@ -488,33 +482,10 @@ export const useDualTraversalStore = defineStore('dualTraversal', () => {
     return true
   }
 
-  async function loadCheckpoint(probeId: ProbeId): Promise<{ ok: boolean; error?: string }> {
-    const runtime = runtimes[probeId]
-    const requestId = ++runtime.checkpointRequestId
-    runtime.checkpointAbort?.abort()
-    const abort = new AbortController()
-    runtime.checkpointAbort = abort
-    const res = await traversalProbeApi.loadCheckpoint(probeId, abort.signal)
-    if (requestId !== runtime.checkpointRequestId) return { ok: false }
-    runtime.checkpointAbort = null
-    if (res.success) {
-      sessionOf(probeId).checkpoint = res.data ?? null
-      return { ok: true }
-    }
-    return { ok: false, error: res.error ?? i18n.t.dualErrLoadCheckpoint }
-  }
-
   async function start(probeId: ProbeId): Promise<boolean> {
     const session = sessionOf(probeId)
     const runtime = runtimes[probeId]
     if (session.isStarting || !session.config) return false
-    // I-18 修复：clearCheckpoint/resumeFromCheckpoint 进行中时 checkpointPending=true，
-    // 此时若用户点 start 会与正在进行的 loadCheckpoint 产生 race（两边都改 session.checkpoint）。
-    // 直接拒绝并提示，让用户等当前操作完成后再点开始。
-    if (checkpointPending[probeId]) {
-      session.error = i18n.t.dualErrCheckpointPending
-      return false
-    }
     const lifecycleGeneration = runtime.lifecycleGeneration
     session.isStarting = true
     session.error = null
@@ -523,20 +494,6 @@ export const useDualTraversalStore = defineStore('dualTraversal', () => {
     cancelPendingRealtime(probeId)
     session.realtimePressures = null
     session.realtimeResult = null
-    const checkpointResult = await loadCheckpoint(probeId)
-    if (lifecycleGeneration !== runtime.lifecycleGeneration) return false
-    if (!checkpointResult.ok) {
-      session.isStarting = false
-      session.error = checkpointResult.error ?? i18n.t.dualErrLoadCheckpoint
-      return false
-    }
-    if (session.checkpoint) {
-      // C10 修复：原静默返回 false，UI 无任何反馈，用户会反复点击"开始"。
-      // 改为写入 session.error，UI 通过 warningText 显示提示。
-      session.isStarting = false
-      session.error = i18n.t.dualErrCheckpointPending
-      return false
-    }
     // 新任务启动：代际失效丢弃旧轮询响应（spec FR6）。
     invalidateProbePolling(probeId)
     const res = await traversalProbeApi.start(probeId, session.config)
@@ -546,20 +503,6 @@ export const useDualTraversalStore = defineStore('dualTraversal', () => {
     }
     session.isStarting = false
     if (!res.success || !res.data) {
-      // I-16 修复：用共享常量替代裸字符串 'recoverable_task_exists'，
-      // 后端改码或前端多处判定时只需修改 isRecoverableTaskExistsError 一处。
-      if (isRecoverableTaskExistsError(res.error)) {
-        const recoveryResult = await loadCheckpoint(probeId)
-        if (lifecycleGeneration !== runtime.lifecycleGeneration) return false
-        if (session.checkpoint) {
-          session.error = i18n.t.dualErrCheckpointPending
-          return false
-        }
-        if (!recoveryResult.ok) {
-          session.error = recoveryResult.error ?? i18n.t.dualErrLoadCheckpoint
-          return false
-        }
-      }
       session.error = res.error ?? i18n.t.dualErrStart
       return false
     }
@@ -624,7 +567,6 @@ export const useDualTraversalStore = defineStore('dualTraversal', () => {
     session.realtimePressures = null
     session.realtimeResult = null
     session.error = null
-    session.checkpoint = null
     return true
   }
 
@@ -636,72 +578,9 @@ export const useDualTraversalStore = defineStore('dualTraversal', () => {
     const runtime = runtimes[probeId]
     runtime.lifecycleGeneration += 1
     runtime.requestId += 1
-    runtime.checkpointRequestId += 1
-    runtime.checkpointOperationId += 1
-    runtime.checkpointAbort?.abort()
-    runtime.checkpointAbort = null
     runtime.pendingInput = null
     runtime.realtimeInFlight = false
-    checkpointPending[probeId] = false
     sessionOf(probeId).isStarting = false
-  }
-
-  async function resumeFromCheckpoint(probeId: ProbeId, taskId: string): Promise<boolean> {
-    if (checkpointPending[probeId]) return false
-    const runtime = runtimes[probeId]
-    const lifecycleGeneration = runtime.lifecycleGeneration
-    const operationId = ++runtime.checkpointOperationId
-    checkpointPending[probeId] = true
-    invalidateProbePolling(probeId)
-    const res = await traversalProbeApi.resumeFromCheckpoint(probeId, taskId)
-    if (operationId !== runtime.checkpointOperationId || lifecycleGeneration !== runtime.lifecycleGeneration) {
-      if (res.success && res.data) await traversalProbeApi.stop(probeId)
-      return false
-    }
-    checkpointPending[probeId] = false
-    if (!res.success || !res.data) {
-      sessionOf(probeId).error = res.error ?? i18n.t.dualErrResumeFromCheckpoint
-      return false
-    }
-    const session = sessionOf(probeId)
-    session.checkpoint = null
-    session.error = null
-    session.completeEvent = null
-    session.status = { taskId: res.data.taskId, status: 'running' } as TraversalTestStatus
-    setupSubscriptions(probeId)
-    acquireDevices(probeId)
-    return true
-  }
-
-  async function clearCheckpoint(probeId: ProbeId, taskId: string): Promise<boolean> {
-    if (checkpointPending[probeId]) return false
-    const runtime = runtimes[probeId]
-    const lifecycleGeneration = runtime.lifecycleGeneration
-    const operationId = ++runtime.checkpointOperationId
-    checkpointPending[probeId] = true
-    const res = await traversalProbeApi.clearCheckpoint(probeId, taskId)
-    if (operationId !== runtime.checkpointOperationId || lifecycleGeneration !== runtime.lifecycleGeneration) return false
-    if (!res.success) {
-      checkpointPending[probeId] = false
-      sessionOf(probeId).error = res.error ?? i18n.t.dualErrClearCheckpoint
-      return false
-    }
-    const checkpointResult = await loadCheckpoint(probeId)
-    if (operationId !== runtime.checkpointOperationId || lifecycleGeneration !== runtime.lifecycleGeneration) return false
-    checkpointPending[probeId] = false
-    const session = sessionOf(probeId)
-    if (!checkpointResult.ok) {
-      session.error = checkpointResult.error ?? i18n.t.dualErrLoadCheckpoint
-      return false
-    }
-    if (session.checkpoint) {
-      session.error = i18n.t.dualErrClearCheckpointRetry
-      return false
-    }
-    session.status = null
-    session.error = null
-    session.completeEvent = null
-    return true
   }
 
   function markInterpolatorLoaded(probeId: ProbeId, restoreMessage: string | null = null): void {
@@ -719,13 +598,8 @@ export const useDualTraversalStore = defineStore('dualTraversal', () => {
     const runtime = runtimes[probeId]
     runtime.lifecycleGeneration += 1
     runtime.requestId += 1
-    runtime.checkpointRequestId += 1
-    runtime.checkpointOperationId += 1
-    runtime.checkpointAbort?.abort()
-    runtime.checkpointAbort = null
     runtime.pendingInput = null
     runtime.realtimeInFlight = false
-    checkpointPending[probeId] = false
     Object.assign(sessions[probeId], emptySession())
   }
 
@@ -738,7 +612,6 @@ export const useDualTraversalStore = defineStore('dualTraversal', () => {
 
   return {
     sessions,
-    checkpointPending,
     sessionOf,
     anyActive,
     isActive,
@@ -746,13 +619,10 @@ export const useDualTraversalStore = defineStore('dualTraversal', () => {
     recoverRuntime,
     importPrbFile, importMultiPrbFiles, importCalibrationCsvFile,
     importSevenHolePrbFiles, importSevenHoleCalibrationCsvFiles, clearInterpolator,
-    loadCheckpoint,
     start,
     pause, resume,
     stop, close,
     cleanupLocal,
-    resumeFromCheckpoint,
-    clearCheckpoint,
     markInterpolatorLoaded,
     syncRealtimeInput,
     reset,
