@@ -1,0 +1,40 @@
+version: '3'
+
+# 项目元信息（用于 wails3 generate build-assets 等命令生成平台资源）
+info:
+  companyName: "DAQ-P-1604 Team"
+  productName: "DAQ-P-1604"
+  productIdentifier: "com.daq-p1604.app"
+  description: "DAQ-P-1604 pressure acquisition desktop app"
+  copyright: "(c) 2025, DAQ-P-1604 Team"
+  version: "0.7.4"
+
+# 开发模式配置：wails3 dev 默认读取 ./build/config.yml
+# 策略与 wind-daq 一致：先构建前端资源，再构建 Go 二进制（内嵌前端），最后启动应用
+# 不依赖 vite dev server，避免 Wails v3 WebView2 头部冲突与热更新不稳定问题
+dev_mode:
+  root_path: .
+  log_level: warn
+  debounce: 1000
+  ignore:
+    dir:
+      - .git
+      - node_modules
+      - bin
+    file:
+      - .DS_Store
+      - .gitignore
+      - .gitkeep
+    watched_extension:
+      - "*.go"
+    git_ignore: true
+  executes:
+    # 阻塞：先完成前端构建（生成 frontend/dist）
+    - cmd: wails3 task build-frontend
+      type: blocking
+    # 阻塞：再完成 Go 二进制构建（内嵌 frontend/dist）
+    - cmd: wails3 task build-go
+      type: blocking
+    # 主进程：启动桌面应用（使用内嵌前端，清除 FRONTEND_DEVSERVER_URL）
+    - cmd: wails3 task run-dev
+      type: primary

@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.7.4] - 2026-08-04
+
+### Fixed
+- 修复扫描弹窗内联改名不生效：`ScanResultList` 的 `ScanSelectionItem.name`（UI v-model 字段）与 `ScannedDeviceInput.overrideName`（`planScannedAdditions` 期望字段）字段名不匹配，`AppShell` 把 `scanSelection` 原样传入 `addScannedProfiles` 时 TS 结构子类型不报错，但运行时 `input.overrideName` 永远 `undefined`，永远回退到 `makeDefaultName`。将 `ScannedDeviceInput.overrideName` 改名为 `name`，与 `ScanSelectionItem` 对齐，UI v-model 数据可直接透传，消除字段映射层。
+- 修复配置面板缺少设备名修改入口：`DaqP1604Config.vue` 新增 `deviceName` ref，在 `syncFormFromProfile` 回填、`formEqualsProfile` 脏值比较（trim 后比对）、watcher 监听、`saveConfig` 写入 `nextProfile.name`；改名不触发 `applyConfig`（`hasHardwareConfigChanged` 不含 name），只走 `saveProfile` 持久化。
+- 修复改名缺少唯一性校验：`saveConfig` 开头加唯一性校验，与扫描路径 `planScannedAdditions` 的 `dedupeName` 约束对齐。批量扫描用无感追加 `(2)/(3)`，配置面板显式改名阻断并提示，两条路径行为互补。
+
+### Internal
+- 新增 2 个回归测试：`ScanSelectionItem` 结构（含 `id` + `name`）直接传入 `planScannedAdditions` 时名字生效；`name` 为空字符串时回退到默认名。
+- i18n 同步新增 `config.deviceName` / `config.deviceNamePlaceholder` / `config.error.nameExists`（zh/en），`satisfies Record<LocaleKey, string>` 双向校验保证两侧 key 一致。
+- 同步 6 个版本号文件到 0.7.4：VERSION、apps/desktop-wails/wails.json、apps/desktop-wails/frontend/package.json、apps/desktop-wails/frontend/package-lock.json、apps/desktop-wails/build/config.yml、apps/desktop-wails/build/windows/installer/project.nsi。
+
+### Verification
+- `npm run typecheck` (vue-tsc)
+- `npm run test` (vitest): 22 passed
+- `npm run build`
+- `task release`
+- `makensis -DARG_WAILS_AMD64_BINARY=... build/windows/installer/project.nsi`
+
 ## [0.7.3] - 2026-07-31
 
 ### Fixed
