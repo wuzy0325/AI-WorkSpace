@@ -1,4 +1,4 @@
-﻿//go:build windows
+//go:build windows
 
 package hardware
 
@@ -102,8 +102,7 @@ func TestWTNMC4AReadOnlyConcurrentStatus(t *testing.T) {
 		errs := make(chan error, callers)
 		var wg sync.WaitGroup
 		started := time.Now()
-		// Go 1.20 不支持 `for range N` 整数迭代（Go 1.22+ 语法），改写为经典三段式
-		for c := 0; c < callers; c++ {
+		for range callers {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -131,11 +130,14 @@ func TestWTNMC4AReadOnlyConcurrentStatus(t *testing.T) {
 		batches, callers, total/batches, maximum)
 }
 
-// TestWTNMC4ADLLLatency 杩炴帴鐪熷疄鎺у埗鍣ㄥ苟娴嬮噺鍚?DLL 璋冪敤鑰楁椂銆?// 鐢ㄦ硶锛?//
+// TestWTNMC4ADLLLatency 连接真实控制器并测量各 DLL 调用耗时。
+// 用法：
+//
 //	set WTNMC4A_BENCH_IP=192.168.3.141
 //	go test ./adapters/hardware/ -run TestWTNMC4ADLLLatency -v -timeout 120s
 //
-// 璇ユ祴璇曞彧鍦?WTNMC4A_BENCH_IP 鐜鍙橀噺璁剧疆鏃惰繍琛岋紝鍚﹀垯 skip銆?func TestWTNMC4ADLLLatency(t *testing.T) {
+// 该测试只在 WTNMC4A_BENCH_IP 环境变量设置时运行，否则 skip。
+func TestWTNMC4ADLLLatency(t *testing.T) {
 	ip := os.Getenv("WTNMC4A_BENCH_IP")
 	if ip == "" {
 		t.Skip("set WTNMC4A_BENCH_IP to run this test")
@@ -165,7 +167,7 @@ func TestWTNMC4AReadOnlyConcurrentStatus(t *testing.T) {
 	handle := ctrl.handle
 	procs := ctrl.procs
 
-	// 鍗曟 DLL 璋冪敤鑰楁椂缁熻
+	// 单次 DLL 调用耗时统计
 	measure := func(name string, n int, fn func()) {
 		// warmup
 		fn()
@@ -195,32 +197,35 @@ func TestWTNMC4AReadOnlyConcurrentStatus(t *testing.T) {
 
 	const N = 30
 
-	// 1. 鍗曡酱 readLP
+	// 1. 单轴 readLP
 	measure("readLP(axis0)", N, func() {
 		procs.readLP.Call(handle, 0)
 	})
 
-	// 2. 鍗曡酱 getRR1Status
-	// SDK 鍐欏叆 64 瀛楄妭 WTNMC4A_PARA_RR1 缁撴瀯浣擄紝蹇呴』鐢ㄥ尮閰嶇殑缂撳啿鍖?	var rr1Buf wtnmc4aRR1Struct
+	// 2. 单轴 getRR1Status
+	// SDK 写入 64 字节 WTNMC4A_PARA_RR1 结构体，必须用匹配的缓冲区
+	var rr1Buf wtnmc4aRR1Struct
 	measure("getRR1(axis0)", N, func() {
 		procs.getRR1.Call(handle, 0, uintptr(unsafe.Pointer(&rr1Buf)))
 	})
 
-	// 3. 4 杞?readLP 涓茶
+	// 3. 4 轴 readLP 串行
 	measure("readLP x4 serial", N, func() {
 		for ax := 0; ax < 4; ax++ {
 			procs.readLP.Call(handle, uintptr(ax))
 		}
 	})
 
-	// 4. 4 杞?readLP + getRR1 涓茶锛堝綋鍓?Status 瀹屾暣璺緞锛?	measure("readLP+getRR1 x4 serial (full Status)", N, func() {
+	// 4. 4 轴 readLP + getRR1 串行（当前 Status 完整路径）
+	measure("readLP+getRR1 x4 serial (full Status)", N, func() {
 		for ax := 0; ax < 4; ax++ {
 			procs.readLP.Call(handle, uintptr(ax))
 			procs.getRR1.Call(handle, uintptr(ax), uintptr(unsafe.Pointer(&rr1Buf)))
 		}
 	})
 
-	// 5. 4 杞?readLP 骞跺彂锛坓oroutine锛?	measure("readLP x4 concurrent", N, func() {
+	// 5. 4 轴 readLP 并发（goroutine）
+	measure("readLP x4 concurrent", N, func() {
 		var wg sync.WaitGroup
 		for ax := 0; ax < 4; ax++ {
 			wg.Add(1)
@@ -232,11 +237,12 @@ func TestWTNMC4AReadOnlyConcurrentStatus(t *testing.T) {
 		wg.Wait()
 	})
 
-	// 6. 瀹屾暣 Status锛堥€氳繃 Status 鏂规硶锛?	measure("Status() method", N, func() {
+	// 6. 完整 Status（通过 Status 方法）
+	measure("Status() method", N, func() {
 		_, _ = ctrl.Status(ctx)
 	})
 
-	// 7. 瀹屾暣 Status 骞跺彂锛? 涓苟鍙戣皟鐢級
+	// 7. 完整 Status 并发（2 个并发调用）
 	measure("Status() x2 concurrent", N, func() {
 		var wg sync.WaitGroup
 		for i := 0; i < 2; i++ {
@@ -249,10 +255,10 @@ func TestWTNMC4AReadOnlyConcurrentStatus(t *testing.T) {
 		wg.Wait()
 	})
 
-	// 8. MoveTo 1mm 姝ラ暱鑰楁椂
+	// 8. MoveTo 1mm 步长耗时
 	measure("MoveTo 1mm", 10, func() {
 		_ = ctrl.MoveTo(ctx, core.AxisX, 1)
-		// 绛夊緟杩愬姩瀹屾垚
+		// 等待运动完成
 		time.Sleep(200 * time.Millisecond)
 		for {
 			s, _ := ctrl.Status(ctx)
@@ -263,16 +269,17 @@ func TestWTNMC4AReadOnlyConcurrentStatus(t *testing.T) {
 		}
 	})
 
-	// 9. 妯℃嫙鐐瑰姩 + 100ms 杞鐨勫畬鏁存椂搴忥紝璁板綍姣忔 Status 鐪嬪埌鐨勪綅缃?	fmt.Println("\n=== 鐐瑰姩 1mm + 100ms 杞鏃跺簭 ===")
+	// 9. 模拟点动 + 100ms 轮询的完整时序，记录每次 Status 看到的位置
+	fmt.Println("\n=== 点动 1mm + 100ms 轮询时序 ===")
 	for trial := 0; trial < 3; trial++ {
 		fmt.Printf("--- trial %d ---\n", trial)
-		_ = ctrl.MoveTo(ctx, core.AxisX, 0) // 澶嶄綅
+		_ = ctrl.MoveTo(ctx, core.AxisX, 0) // 复位
 		time.Sleep(300 * time.Millisecond)
 
 		startTime := time.Now()
-		_ = ctrl.MoveTo(ctx, core.AxisX, 1) // 鐐瑰姩 1mm
+		_ = ctrl.MoveTo(ctx, core.AxisX, 1) // 点动 1mm
 
-		// 妯℃嫙鍓嶇 100ms 杞
+		// 模拟前端 100ms 轮询
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 		positions := []struct {

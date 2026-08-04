@@ -558,22 +558,26 @@ export const useDeviceStore = defineStore('device', () => {
   }
 
   async function addProfile(name: string, address: string, port: number, localAddress = ''): Promise<void> {
+    // 防御性 trim：不依赖调用方是否已去空白，保证重名校验与落库名一致
+    const trimmedName = name.trim()
     // CONN-002 重复添加防御：仅 IP+端口完全相同视为重复（同 IP 不同端口允许添加）。
     // 与扫描弹窗 planScannedAdditions 共用 hostKey 规则，保证手动添加与扫描批量添加
-    // 的去重语义一致。
+    // 的地址去重语义一致。
     const dupKey = hostKey(address, port)
     if (computeExistingKeys(profiles.value).has(dupKey)) {
       throw new Error(i18n.t('error.duplicateDevice'))
     }
-    // 名字全局唯一：设备名是用户可读的唯一标识，与现有设备重名时阻止添加
-    if (computeExistingNames(profiles.value).has(name)) {
+    // 单条添加路径的名字唯一性：设备名是用户可读的唯一标识，与现有设备重名时阻止添加。
+    // 注意：扫描批量添加走 dedupeName 自动追加 "(2)"（批量场景静默改名更友好），
+    // 与这里的"阻止并提示"是有意的差异，不是同一语义。
+    if (computeExistingNames(profiles.value).has(trimmedName)) {
       throw new Error(i18n.t('error.duplicateName'))
     }
 
     const id = `p1604_${Date.now()}`
     const profile: PressureProfile = {
       id,
-      name,
+      name: trimmedName,
       address,
       localAddress,
       port,

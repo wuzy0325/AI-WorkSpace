@@ -209,18 +209,23 @@ function hasHardwareConfigChanged(current: typeof profile.value, next: typeof cu
 
 async function saveConfig() {
   if (!profile.value) return
-  // 设备名校验：非空 + 全局唯一（排除当前设备自身，与手动添加/扫描添加共用同一语义）
+  // 设备名校验：仅当用户实际改动名字时才校验非空 + 全局唯一。
+  // - 名字未改动（含 legacy 空名设备保存其他配置）→ 跳过校验，保持原名
+  // - 改动后为空 或 与其他设备重名 → 阻止并提示
   const trimmedName = deviceName.value.trim()
-  if (!trimmedName) {
-    saveStatus.value = 'error'
-    saveMessage.value = i18n.t('dialog.inputDeviceName')
-    return
-  }
-  const nameTaken = deviceStore.profiles.some((p) => p.id !== props.deviceId && p.name === trimmedName)
-  if (nameTaken) {
-    saveStatus.value = 'error'
-    saveMessage.value = i18n.t('error.duplicateName')
-    return
+  const nameChanged = trimmedName !== (profile.value.name || '')
+  if (nameChanged) {
+    if (!trimmedName) {
+      saveStatus.value = 'error'
+      saveMessage.value = i18n.t('config.deviceNameRequired')
+      return
+    }
+    const nameTaken = deviceStore.profiles.some((p) => p.id !== props.deviceId && p.name === trimmedName)
+    if (nameTaken) {
+      saveStatus.value = 'error'
+      saveMessage.value = i18n.t('error.duplicateName')
+      return
+    }
   }
   saveStatus.value = 'saving'
   saveMessage.value = ''
@@ -249,6 +254,9 @@ async function saveConfig() {
     }
     const hwChanged = hasHardwareConfigChanged(profile.value, nextProfile)
     await deviceStore.saveProfile(nextProfile)
+    // 成功后把规范化名字回写表单，避免"尾随空格"等未 trim 值在下次编辑时
+    // 触发 formEqualsProfile 永久脏值（CFG-017 回归）
+    deviceName.value = trimmedName
 
     if (hwChanged) {
       try {
