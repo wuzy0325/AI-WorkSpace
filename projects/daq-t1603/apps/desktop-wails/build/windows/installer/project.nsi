@@ -1,7 +1,7 @@
 Unicode true
 
 ; Project version. Keep in sync with projects/<project>/VERSION.
-!define INFO_PRODUCTVERSION "0.6.6"
+!define INFO_PRODUCTVERSION "0.6.7"
 
 ####
 ## Please note: Template replacements don't work in this file. They are provided with default defines like

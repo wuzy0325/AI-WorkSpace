@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.6.7] - 2026-08-04
+
+### Added
+- 设备配置面板"硬件参数" section 顶部新增"设备名称"输入框，用户可随时改名（采集期间禁用，与采样频率等硬件参数一致）。
+
+### Fixed
+- 修复配置面板缺少设备名修改入口的问题：`DaqT1603Config.vue` 此前头部只读显示 `profile.name`，整个面板没有设备名 input，`saveConfig` 也不写 `name` 字段。新增 `deviceName` ref + watcher + `saveConfig` 写入 `nextProfile.name`，改名不触发 `applyConfig` 只走 `saveProfile` 持久化。
+- 修复改名缺少唯一性校验的问题：扫描路径 addProfile 仅按 IP:port 去重不校验名字，配置面板显式改名应阻断重名。`saveConfig` 开头加唯一性校验（排除当前 profile 自身），冲突时阻断保存并提示。
+
+### Internal
+- 同步 6 个版本号文件到 0.6.7：`VERSION` / `wails.json` / `frontend/package.json` / `frontend/package-lock.json`（含 `packages[""]`）/ `build/windows/installer/project.nsi` / `build/config.yml`。
+- 与 daq-p1604 v0.7.4 配置面板改名约束对齐，两条路径行为互补。
+
+### Verification
+- `npm run typecheck`: passed.
+- `npm run test`: 2 passed.
+- `npm run build`: passed.
+- `$env:GOWORK="off"; go vet ./...`: passed.
+- `$env:GOWORK="off"; go test ./... -count=1 -timeout 120s`: passed.
+- `task release`: passed.
+- `makensis -DARG_WAILS_AMD64_BINARY=... build/windows/installer/project.nsi`: passed.
+
+### Known Issues
+- 暂无。
+
 ## [0.6.4] - 2026-07-31
 
 ### Fixed
