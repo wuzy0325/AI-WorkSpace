@@ -608,6 +608,36 @@ type registryFixture struct {
 	cpStore     *fakeCheckpointStore
 }
 
+// completeSession 模拟 manager goroutine exit + finalize 后的完成回调。
+// 补回 lts/win7 误删的 traversal_registry_completion_test.go 中的通用 helper，
+// 供 admission/lifecycle/recovery 等 test 复用（master 版本依赖 testing/synctest，
+// lts/win7 go.mod 声明 go 1.20 不支持，故仅提取此函数）。
+func completeSession(fx *registryFixture, probeID ProbeID) {
+	fx.registry.mu.Lock()
+	session := fx.registry.sessions[probeID]
+	fx.registry.mu.Unlock()
+	if session == nil {
+		return
+	}
+	fx.registry.notifyCompletion(session.token)
+}
+
+// startPairOK 启动 Probe1/Probe2 双探针的成功路径快捷封装。
+// 同样补回自 traversal_registry_completion_test.go（master 版本依赖 testing/synctest，
+// lts/win7 go 1.20 不支持，故仅提取此函数）。
+func startPairOK(t *testing.T, fx *registryFixture) {
+	t.Helper()
+	fx.seedPersistedBindings(Probe1, "ctrl-a")
+	fx.seedPersistedBindings(Probe2, "ctrl-b")
+	ctx := context.Background()
+	if _, err := fx.registry.Start(ctx, Probe1, dualConfigJSON("", "ctrl-a")); err != nil {
+		t.Fatalf("Start probe1: %v", err)
+	}
+	if _, err := fx.registry.Start(ctx, Probe2, dualConfigJSON("", "ctrl-b")); err != nil {
+		t.Fatalf("Start probe2: %v", err)
+	}
+}
+
 func newRegistryFixture(t *testing.T) *registryFixture {
 	t.Helper()
 	fx := &registryFixture{

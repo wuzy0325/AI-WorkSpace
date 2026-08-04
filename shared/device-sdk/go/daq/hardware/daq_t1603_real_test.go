@@ -154,8 +154,10 @@ func TestDAQT1603RealDeviceCH2At500HzSpikeCheck(t *testing.T) {
 
 	var mu sync.Mutex
 	var frameCount int
-	var seqPrev int
-	var seqFirst int
+	// master 将 SequenceNumber 从 int 改为 int64（防 32 位平台溢出），
+	// lts/win7 跟随 master 类型变更。
+	var seqPrev int64
+	var seqFirst int64
 	var seqGaps int
 	chMin := make([]float64, 16)
 	chMax := make([]float64, 16)

@@ -25,12 +25,10 @@ func (h *captureHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
 func (h *captureHandler) WithGroup(_ string) slog.Handler       { return h }
 
 // newRecord 构造带 inline attrs 的 slog.Record，供测试统一调用。
-// slog.Record.Add 接受 ...any 而非 ...slog.Attr，需通过包装函数转换。
+// lts/win7 的 pkg/slog.Record.Add 签名是 (string, any)，批量追加 Attr 用 AddAttrs。
 func newRecord(msg string, level slog.Level, attrs ...slog.Attr) slog.Record {
 	r := slog.NewRecord(time.Now(), level, msg, 0)
-	for _, a := range attrs {
-		r.Add(a)
-	}
+	r.AddAttrs(attrs...)
 	return r
 }
 

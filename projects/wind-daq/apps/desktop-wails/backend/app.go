@@ -53,6 +53,16 @@ type App struct {
 	cancel     context.CancelFunc
 	appContext *appcontext.AppContext
 	relayStop  func()
+	// traversalShutdown 双探针 registry 关停入口（spec FR9）。
+	// 默认为 appContext.TraversalRegistry.Shutdown；测试注入替身以覆盖 fatal 路径。
+	// 补自 master shutdown 重构（lts/win7 273d704 merge 时漏合 app.go 此字段）。
+	traversalShutdown func(ctx context.Context) error
+	// hostExit fatal 路径的非零退出 seam（默认 os.Exit；测试注入以观测退出码，
+	// 避免测试进程被真实退出）。registry shutdown 失败时跳过共享服务 Close 后调用。
+	hostExit func(code int)
+	// exitWatchdog 在用户确认退出时启动最终兜底；测试可注入同步替身。
+	// 补自 master shutdown 重构（lts/win7 273d704 merge 时漏合 app.go 此字段）。
+	exitWatchdog func()
 	logMgr     *logging.Manager
 	// mode 启动模式：normal 或 motion，决定 Start 时加载哪些后台服务
 	mode string
@@ -76,7 +86,19 @@ func NewApp(mode string) *App {
 	if mode != ModeMotion {
 		mode = ModeNormal
 	}
-	return &App{mode: mode}
+	app := &App{mode: mode}
+	// exitWatchdog 在用户确认退出时启动最终兜底，避免优雅退出超时后进程残留。
+	// 测试可注入同步替身。补自 master shutdown 重构（lts/win7 273d704 漏合）。
+	app.exitWatchdog = func() {
+		time.AfterFunc(30*time.Second, func() {
+			slog.Error("[app] 优雅退出超时，强制结束残留进程",
+				"component", "app", "timeout", "30s")
+			if app.hostExit != nil {
+				app.hostExit(0)
+			}
+		})
+	}
+	return app
 }
 
 // SetParentPID 仅 ModeMotion 子进程使用：在 Start 之前把父进程 PID 注入。
@@ -347,6 +369,23 @@ func (a *App) startDeviceAutoConnect() {
 // 返回 error 用于未来扩展（当前关停流程不可逆，永远返回 nil）。
 func (a *App) Stop() error {
 	a.shuttingDown.Store(true)
+
+	// 双探针 registry 先行关停（spec FR9）：失败时 fatal + 非零 exit seam，
+	// 跳过后续共享服务 cleanup（relayStop/terminateMotionWindow 等）。
+	// 测试可经 traversalShutdown/hostExit 字段注入替身覆盖 fatal 路径。
+	// 补自 master shutdown 重构（lts/win7 273d704 merge 时漏合此逻辑）。
+	if a.traversalShutdown != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := a.traversalShutdown(ctx); err != nil {
+			slog.Error("fatal: traversal registry shutdown 失败，跳过共享服务关闭",
+				"component", "app", "error", err)
+			if a.hostExit != nil {
+				a.hostExit(2)
+			}
+			return err
+		}
+	}
 
 	if a.relayStop != nil {
 		a.relayStop()

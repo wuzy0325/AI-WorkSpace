@@ -223,7 +223,8 @@ func TestManagerRegistry_CloseProbe_ConcurrentProbesNonBlocking(t *testing.T) {
 	done := make(chan error, 2)
 	go func() { done <- fx.registry.CloseProbe(context.Background(), Probe1) }()
 	go func() { done <- fx.registry.CloseProbe(context.Background(), Probe2) }()
-	for range 2 {
+	// lts/win7 go.mod 声明 go 1.20，不支持 Go 1.22 的 range over int 语法。
+	for i := 0; i < 2; i++ {
 		if err := <-done; err != nil {
 			t.Fatalf("terminal manager 并发 CloseProbe: %v", err)
 		}
