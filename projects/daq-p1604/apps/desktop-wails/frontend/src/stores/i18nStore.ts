@@ -121,6 +121,8 @@ const zh = {
 
   // ---- 配置面板 ----
   'config.deviceConfig': '设备配置',
+  'config.deviceName': '设备名称',
+  'config.deviceNamePlaceholder': '例如: 压力采集器 1',
   'config.hardwareParams': '硬件参数',
   'config.channelConfig': '通道配置',
   'config.samplingRate': '采样频率',
@@ -140,6 +142,7 @@ const zh = {
   'config.hardwareApplyFailed': '硬件配置应用失败',
   'config.saved': '配置已保存',
   'config.saveFailed': '保存失败',
+  'config.error.nameExists': '设备名称已被其他设备占用，请修改后重试',
   'config.defaultChannelName': '通道 {n}',
 
   // ---- 扫描结果列表 ----
@@ -344,6 +347,8 @@ const en = {
 
   // ---- config ----
   'config.deviceConfig': 'Device Config',
+  'config.deviceName': 'Device Name',
+  'config.deviceNamePlaceholder': 'e.g., Pressure DAQ 1',
   'config.hardwareParams': 'Hardware',
   'config.channelConfig': 'Channels',
   'config.samplingRate': 'Sampling Rate',
@@ -363,6 +368,7 @@ const en = {
   'config.hardwareApplyFailed': 'Failed to apply config to hardware',
   'config.saved': 'Config saved',
   'config.saveFailed': 'Save failed',
+  'config.error.nameExists': 'Device name is already used by another device. Please rename and retry.',
   'config.defaultChannelName': 'Channel {n}',
 
   // ---- scan ----

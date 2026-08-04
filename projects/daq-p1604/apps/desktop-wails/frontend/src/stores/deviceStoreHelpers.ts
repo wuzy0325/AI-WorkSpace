@@ -14,8 +14,14 @@ export interface ScannedDeviceInput {
   port: number
   macAddress?: string
   serialNumber?: string
-  /** 用户在扫描弹窗中内联覆盖的名字；未填写时走默认名生成 */
-  overrideName?: string
+  /**
+   * 用户在扫描弹窗中内联覆盖的名字；未填写（或为空字符串）时走默认名生成。
+   *
+   * 字段名与 ScanResultList 的 ScanSelectionItem.name 对齐，
+   * 使 ScanSelectionItem 可直接作为 ScannedDeviceInput 传入 addScannedProfiles，
+   * 避免字段名不一致导致用户改名被静默丢弃。
+   */
+  name?: string
 }
 
 /** 落地为 profile 前的中间结果（不含 channels / p1604Config 等模板字段） */
@@ -119,7 +125,7 @@ export function computeExistingKeys(profiles: PressureProfile[]): Set<string> {
  * 规则：
  * 1. host:addr:port 命中现有 profile → skip（reason: duplicate-address）
  * 2. 名字冲突（含现有 profile 名字 + 本批已用名字）→ dedupeName 追加 (2)/(3)
- * 3. overrideName 优先于默认名，但同样受名字冲突兜底
+ * 3. input.name 优先于默认名，但同样受名字冲突兜底
  * 4. autoConnect 值由 defaultAutoConnect 决定，同批统一
  */
 export function planScannedAdditions(params: {
@@ -152,8 +158,8 @@ export function planScannedAdditions(params: {
       continue
     }
 
-    // 生成候选名字：优先用户覆盖名，否则用默认名
-    const rawName = (input.overrideName ?? '').trim() || makeDefaultName(input)
+    // 生成候选名字：优先用户覆盖名（input.name），否则用默认名
+    const rawName = (input.name ?? '').trim() || makeDefaultName(input)
     const finalName = dedupeName(rawName, usedNames)
     usedNames.add(finalName)
 

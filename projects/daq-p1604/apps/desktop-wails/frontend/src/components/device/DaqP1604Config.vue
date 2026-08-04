@@ -7,7 +7,7 @@ import type { SelectOption } from './CustomSelect.vue'
 import {
   Settings2, Activity,
   Save, RotateCcw, CheckCircle2, AlertCircle,
-  SlidersHorizontal, Hash, Clock, Timer, Wifi, Gauge, Crosshair,
+  SlidersHorizontal, Hash, Clock, Timer, Wifi, Gauge, Crosshair, Tag,
 } from '@lucide/vue'
 
 const props = defineProps<{ deviceId: string }>()
@@ -42,6 +42,8 @@ const autoConnect = ref(false) // 启动时自动连接
 const pressureUnit = ref('psi') // 全局压力单位
 const globalPrecision = ref(3) // 全局默认精度（小数位数）
 const useDeviceTimestamp = ref(true) // 是否使用设备硬件时间戳（默认开启，关闭时回退到系统时间）
+// 设备名：用户可自定义，留空时 UI 显示"未命名"（sidebar 兜底逻辑）
+const deviceName = ref('')
 const channelNames = ref<string[]>(Array(18).fill(''))
 const channelEnabled = ref<boolean[]>(Array(18).fill(true))
 const channelColors = ref<string[]>(Array(18).fill(''))
@@ -114,6 +116,8 @@ function syncFormFromProfile(profileData: typeof profile.value) {
   globalPrecision.value = profileData.p1604Config?.precision ?? 3
   // 时间戳开关默认开启：profile 未设置（老配置）或显式 true 均视为开启
   useDeviceTimestamp.value = profileData.p1604Config?.useDeviceTimestamp ?? true
+  // 设备名回填：profile.name 可能为空字符串，与"未命名"占位区分
+  deviceName.value = profileData.name || ''
   channelNames.value = profileData.channels.map((c) => c.name || '')
   channelEnabled.value = profileData.channels.map((c) => c.enabled)
   channelColors.value = profileData.channels.map((c) => c.color || '')
@@ -149,6 +153,8 @@ function formEqualsProfile(p: typeof profile.value): boolean {
   if (pressureUnit.value !== (cfg?.unit || 'psi')) return false
   if (globalPrecision.value !== (cfg?.precision ?? 3)) return false
   if (useDeviceTimestamp.value !== (cfg?.useDeviceTimestamp ?? true)) return false
+  // 设备名脏值比较：trim 后比对，避免首尾空格导致虚假脏值
+  if ((deviceName.value.trim()) !== (p.name || '')) return false
   const chs = p.channels
   if (channelNames.value.length !== chs.length) return false
   if (channelEnabled.value.length !== chs.length) return false
@@ -167,7 +173,7 @@ function formEqualsProfile(p: typeof profile.value): boolean {
   return true
 }
 
-watch([samplingFreq, autoConnect, pressureUnit, globalPrecision, useDeviceTimestamp, channelNames, channelEnabled, channelColors, channelPrecisions], () => {
+watch([samplingFreq, autoConnect, pressureUnit, globalPrecision, useDeviceTimestamp, deviceName, channelNames, channelEnabled, channelColors, channelPrecisions], () => {
   // 保存同步中跳过，避免覆盖 saveStatus
   if (syncing.value) return
   // CFG-017：改回原值时自动清除徽章；只有真正存在差异时才标记未保存
@@ -206,12 +212,32 @@ function hasHardwareConfigChanged(current: typeof profile.value, next: typeof cu
 
 async function saveConfig() {
   if (!profile.value) return
+
+  // 设备名唯一性校验：与扫描路径 planScannedAdditions 的 dedupeName 约束对齐。
+  // 批量扫描场景因用户未逐个命名，采用自动追加 (2)/(3) 的无感策略；
+  // 配置面板是显式单设备改名，用户应感知冲突，故阻断并提示，避免改名后
+  // sidebar/monitor 出现多个同名设备无法区分（与扫描路径行为互补）。
+  // 排除当前 profile 自身：用户未改名直接保存不应触发冲突。
+  const trimmedName = deviceName.value.trim()
+  if (trimmedName !== '') {
+    const nameConflict = deviceStore.profiles.some(
+      (p) => p.id !== props.deviceId && p.name === trimmedName,
+    )
+    if (nameConflict) {
+      saveStatus.value = 'error'
+      saveMessage.value = i18n.t('config.error.nameExists')
+      return
+    }
+  }
+
   saveStatus.value = 'saving'
   saveMessage.value = ''
   syncing.value = true
   try {
     const nextProfile = {
       ...profile.value,
+      // 设备名：trim 后写入，空字符串由 sidebar/monitor 的兜底逻辑显示为"未命名"
+      name: deviceName.value.trim(),
       p1604Config: {
         ...profile.value.p1604Config,
         samplingRate: hzToPeriodMs(samplingFreq.value),
@@ -314,6 +340,22 @@ function onChannelPrecisionChange(index: number, value: string) {
           <h4 class="config__section-title">{{ i18n.t('config.hardwareParams') }}</h4>
         </div>
         <div class="config__section-body">
+          <!-- 设备名称：用户可自定义，留空时 UI 兜底显示"未命名" -->
+          <div class="config__field">
+            <label class="config__label">
+              <Tag class="config__label-icon" />
+              <span>{{ i18n.t('config.deviceName') }}</span>
+            </label>
+            <input
+              v-model="deviceName"
+              type="text"
+              class="config__name-input"
+              :placeholder="i18n.t('config.deviceNamePlaceholder')"
+              :disabled="isAcquiring"
+              maxlength="64"
+            />
+          </div>
+
           <!-- 采样频率（Hz） -->
           <div class="config__field">
             <label class="config__label">
@@ -727,6 +769,37 @@ function onChannelPrecisionChange(index: number, value: string) {
 .config__rate-input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* 设备名输入框：宽度自适应，左对齐，与采样频率输入框风格统一 */
+.config__name-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input, var(--bg-panel));
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  text-align: left;
+  outline: none;
+  transition: border-color var(--motion-fast) var(--easing-standard);
+}
+
+.config__name-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
+.config__name-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.config__name-input::placeholder {
+  color: var(--text-muted);
+  font-weight: 500;
 }
 
 .config__rate-unit {
