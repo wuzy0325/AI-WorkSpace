@@ -87,7 +87,14 @@ AI agent 在打包前必须执行以下流程：
 7. 更新 `apps/desktop-wails/wails.json` 的 `version`。
 8. 更新 `apps/desktop-wails/frontend/package.json` 的 `version`。
 9. 如果存在 `package-lock.json`，同步其中根包版本。
-10. 更新 `apps/desktop-wails/build/windows/installer/project.nsi` 中的 `INFO_PRODUCTVERSION`。
+10. 更新 `apps/desktop-wails/build/windows/installer/project.nsi` 中的 `INFO_PRODUCTVERSION`。**该文件是 UTF-16 LE with BOM 编码，Edit 类工具会破坏编码导致 makensis 报 "Bad text encoding"，必须用 PowerShell 保留编码替换**：
+    ```powershell
+    $path = 'apps/desktop-wails/build/windows/installer/project.nsi'
+    $content = Get-Content -Path $path -Encoding Unicode -Raw
+    $updated = $content -replace '!define INFO_PRODUCTVERSION "0\.12\.1"', '!define INFO_PRODUCTVERSION "0.12.2"'
+    Set-Content -Path $path -Value $updated -Encoding Unicode -NoNewline
+    ```
+    禁止用 `[System.Text.Encoding]::Default` 转编码；禁止删除 project.nsi（如需恢复用 `git checkout`）。`projects/<project>/installer/project.nsi`（备份副本）是普通 UTF-8，Edit 可直接改。
 11. 更新 `apps/desktop-wails/build/config.yml` 的 `info.version`（wails3 build 用它渲染 `build/windows/info.json` 模板生成 wails_tools.nsh）。
 12. 创建或更新 `releases/<version>.md` 单次打包说明，必须包含 `Install / Upgrade` 段。
 13. 清理本地遗留的 `apps/desktop-wails/build/bin/` 和上次打包遗留的 `installer/*.exe` 等中间产物。**注意：`wails_windows_amd64.syso` 是入库的 PE 资源段源文件（由 `generate-icon` 任务管理），不要手动删除；如需刷新图标，执行 `task generate-icon` 重新生成。**
@@ -295,11 +302,19 @@ daq-t1603-0.1.2-amd64-installer.exe
 cd projects/<project>/apps/desktop-wails
 # 1. 构建 Go 生产二进制（含 -tags production）
 task release
-# 2. NSIS 打包
-makensis build/windows/installer/project.nsi
+# 2. NSIS 打包（必须传 -DARG_WAILS_AMD64_BINARY 指向 Go 二进制，否则报 "Undefined ARCH"）
+cd build/windows/installer
+makensis '-DARG_WAILS_AMD64_BINARY=..\..\bin\<project>.exe' project.nsi
+cd ../../..
 # 3. 归档到 releases/bin/
 task archive-release
 ```
+
+> **makensis 调用硬规则**：
+> - 必须从 `build/windows/installer/` 目录调用，二进制路径用反斜杠相对路径 `..\..\bin\<project>.exe`。
+> - 整个 `-D` 参数用**单引号**包裹，避免 PowerShell 把 `=` 后的空格拆分导致 "no files found"。
+> - 从父目录调用且用正斜杠或绝对路径会报 "no files found"。
+> - wind-daq 可用一键脚本替代上述 1+2 步：`cd projects/wind-daq; powershell -ExecutionPolicy Bypass -File scripts/build-release.ps1 -WithInstaller`（自动处理 wails build + DLL 复制 + NSIS 打包 + 编码转换）。
 
 **无 Taskfile 的项目**（daq-t1603 / three-hole-interpolator）：
 
@@ -308,8 +323,10 @@ cd projects/<project>/apps/desktop-wails
 $env:GOWORK="off"
 # 1. 构建 Go 生产二进制
 go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o build/bin/<project>.exe .
-# 2. NSIS 打包
-makensis build/windows/installer/project.nsi
+# 2. NSIS 打包（同样需要 -DARG_WAILS_AMD64_BINARY 参数，见上文硬规则）
+cd build/windows/installer
+makensis '-DARG_WAILS_AMD64_BINARY=..\..\bin\<project>.exe' project.nsi
+cd ../../..
 # 3. 归档到 releases/bin/（直接调用统一脚本）
 powershell -ExecutionPolicy Bypass -File ../../../../scripts/copy-release-artifacts.ps1 -Project <project>
 ```
