@@ -158,13 +158,14 @@ func baseRef(name string, cmaList []float64, in goldenInput, res interp.Interpol
 			"PAtm": in.PAtm, "TAtm": in.TAtm,
 		},
 		"go": map[string]interface{}{
-			"alpha":          res.Alpha,
-			"machNumber":     res.MachNumber,
-			"P0":             res.TotalPressure,
-			"Ps":             res.StaticPressure,
-			"iterationCount": res.IterationCount,
-			"isValid":        res.IsValid,
-			"warning":        res.Warning,
+			"alpha":      res.Alpha,
+			"machNumber": res.MachNumber,
+			"velocity":   res.Velocity,
+			"P0":         res.TotalPressure,
+			"Ps":         res.StaticPressure,
+			"calculated": res.Calculated,
+			"isValid":    res.IsValid,
+			"warning":    res.Warning,
 		},
 	}
 	if cmaList != nil {

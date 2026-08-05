@@ -18,7 +18,8 @@ function threeSynthLines(cma) {
   return lines;
 }
 
-const FIELDS = ['alpha', 'machNumber', 'P0', 'Ps', 'iterationCount'];
+// velocity 与 machNumber/P0/Ps 同为 double 数值字段，统一纳入跨实现数值比对
+const FIELDS = ['alpha', 'machNumber', 'velocity', 'P0', 'Ps'];
 const TOL = 1e-9; // 纯 double 数学，Go 与 JS 应逐位一致
 
 function buildRealInterp() {
@@ -70,6 +71,12 @@ function main() {
     if (error) {
       fail++;
       failures.push(`[${c.name}] JS 计算报错: ${error}`);
+      continue;
+    }
+    // calculated 必须一致（区分"未计算"与"已计算-参考"）
+    if (!!result.calculated !== !!go.calculated) {
+      fail++;
+      failures.push(`[${c.name}] calculated 不一致: JS=${result.calculated} Go=${go.calculated} (warning_JS=${result.warning})`);
       continue;
     }
     // isValid 必须一致
