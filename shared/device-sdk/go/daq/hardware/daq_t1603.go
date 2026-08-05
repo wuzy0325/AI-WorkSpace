@@ -46,9 +46,10 @@ const stopQuietFallbackTimeout = 350 * time.Millisecond
 const maxConsecutiveFrameErrors = 5
 
 // configSyncTotalTimeout 限制 Connect 阶段配置同步的总耗时预算。
-// 设计动机：readAllConfig 串行发送 8 条 @fd 查询命令，最坏每条 1s + 每字节 100ms，
-// 极端情况下可超过 8s，会踩穿 Wails binding 默认 5s 调用超时，UI 误判连接失败。
-// 4s 预算下：8 条命令平均每条 500ms，正常设备通常 50-200ms 完成，留足重试余量。
+// 设计动机：readAllConfig 串行发送最多 10 条 @fd 查询命令（deadline 生效机器
+// 额外含 SPS/AVG/TNUM 三条变长查询），最坏每条 1s + 每字节 100ms，
+// 极端情况下可超过预算，会踩穿 Wails binding 默认 5s 调用超时，UI 误判连接失败。
+// 4s 预算下：命令平均每条 500ms，正常设备通常 50-200ms 完成，留足重试余量。
 // 超过预算立即返回错误，让 Connect fail-fast，操作员可重新点连接。
 const configSyncTotalTimeout = 4 * time.Second
 
@@ -56,6 +57,13 @@ const configSyncTotalTimeout = 4 * time.Second
 // 若剩余时间不足此阈值，认为已无法完成下一条命令，提前返回 deadline 错误，
 // 避免单条命令跨过总 deadline 导致总耗时超出预算。
 const configSyncMinRemaining = 200 * time.Millisecond
+
+// configQueryIdleWindow 是连接阶段查询变长响应字段（@fd SPS/AVG/TNUM）时的
+// 静默窗口：收到一个字节后该窗口内无新数据即视为响应结束。
+// 与 protocol 包内部 cmdIdleWindow(30ms) 对齐。仅允许在 socket deadline 生效的
+// 机器上使用（readAllConfig 用 d.deadlineBroken 守卫），否则静默窗口永不触发，
+// SendCommandIdle 会阻塞到 watchdog 毒化连接。
+const configQueryIdleWindow = 30 * time.Millisecond
 
 const (
 	acquisitionReconnectAttempts = 3
@@ -209,6 +217,22 @@ func (d *DAQT1603) sendCommand(conn net.Conn, cmd string) (string, error) {
 func (d *DAQT1603) sendCommandExact(conn net.Conn, cmd string, n int) (string, error) {
 	d.emitLog("debug", "hardware-send", "Send command", cmd)
 	resp, err := protocol.SendCommandExact(conn, cmd, n)
+	if err != nil {
+		d.emitLog("error", "hardware-recv", "Command failed", err.Error())
+		return "", err
+	}
+	d.emitLog("debug", "hardware-recv", "Received response", strings.TrimSpace(resp))
+	return resp, nil
+}
+
+// sendCommandIdle 发送查询命令并按静默窗口判定变长响应结束（@fd SPS/AVG/TNUM）。
+// 这些字段的响应无分隔符且长度可变，只能靠"收到一个字节后静默窗口内无新数据"
+// 判定结束。仅应在 socket deadline 生效的机器上调用（readAllConfig 用
+// d.deadlineBroken 守卫）：deadline 失效时静默窗口永不触发，SendCommandIdle 会
+// 阻塞到 watchdog 毒化连接（R0-12），返回的错误一律意味着连接不可复用。
+func (d *DAQT1603) sendCommandIdle(conn net.Conn, cmd string) (string, error) {
+	d.emitLog("debug", "hardware-send", "Send command", cmd)
+	resp, err := protocol.SendCommandIdle(conn, cmd, configQueryIdleWindow)
 	if err != nil {
 		d.emitLog("error", "hardware-recv", "Command failed", err.Error())
 		return "", err
@@ -1509,22 +1533,32 @@ func (d *DAQT1603) queryBinaryMode(conn net.Conn, deadline time.Time) (bool, err
 	}
 }
 
-// readAllConfig 查询具有固定响应长度的硬件配置。单条查询失败时记 warn 并保留
-// 已保存配置后继续。SPS/AVG/TNUM 的响应无分隔符且长度可变，无法在 Windows
-// deadline 失效时安全判定结束，因此连接阶段不查询这三个字段。
+// readAllConfig 查询硬件配置。固定响应长度字段（@e3 / @fd MCH/BIN/TIME/HEAD/
+// TYPE/TRIG）用定长读；变长无分隔符字段（@fd SPS/AVG/TNUM）仅在 socket
+// deadline 生效的机器上查询（见下方 d.deadlineBroken 守卫）。单条查询失败时记
+// warn 并保留已保存配置后继续。
 // 不因某条辅助查询失败而整体放弃连接——
-// 这是与同步化之前一致的容错语义。两类错误会硬失败：
+// 这是与同步化之前一致的容错语义。三类错误会硬失败：
 //   - 总预算耗尽（checkConfigSyncDeadline）：用于对完全不响应的设备 fail-fast
 //   - watchdog 触发（ErrWatchdogTriggered）：conn 已被强制 Close，后续命令必失败，
-//     继续循环只会浪费 0ms（后续命令立即失败），但仍走完 10 条命令的循环开销，
+//     继续循环只会浪费 0ms（后续命令立即失败），但仍走完剩余命令的循环开销，
 //     且掩盖真正的失败原因（用户看到 "force BIN mode: use of closed network connection"
 //     而非 "config sync aborted: watchdog triggered"）
+//   - 变长查询（@fd SPS/AVG/TNUM）任何错误：SendCommandIdle 出错即毒化连接
+//     （R0-12），连接已不可复用，必须中止同步
 //
 // BIN/TIME/HEAD 的读回值随后会被 syncHardwareConfigLocked 的 @fe 强制命令覆盖，
 // 因此其读失败无害（前提：失败原因不是 watchdog 触发）。
 // MCH 例外：其读回值是设备端持久化的历史掩码（如出厂遗留 "0000"），不代表应用
 // 期望的配置，因此只读取以维持协议响应边界与后续命令时序，不写回 cfg.ChannelMask
 // （应用配置/profile 才是权威，空值回退 FFFF）。见下方 @fd MCH 处的 0.6.8 修复。
+//
+// SPS/AVG/TNUM 查询（仅 deadline 生效机器）：
+//   - 修 0.6.x 遗留问题：连接后界面显示的采样频率等始终是本地 profile 值，
+//     不是设备端实际值。deadline 生效时读回设备实际 SPS/AVG/TNUM 并回写 cfg，
+//     OnConfigSynced 会把设备实际值镜像到上层 profile；
+//   - deadline 失效机器上保留已保存配置（与旧行为一致），避免静默窗口永不触发
+//     导致 SendCommandIdle 阻塞到 watchdog 毒化连接、整个 Connect 失败。
 func (d *DAQT1603) readAllConfig(conn net.Conn, deadline time.Time) (*core.DaqT1603HardwareConfig, error) {
 	cfg := d.config
 	if cfg.ChannelMask == "" {
@@ -1554,6 +1588,24 @@ func (d *DAQT1603) readAllConfig(conn net.Conn, deadline time.Time) (*core.DaqT1
 				return err
 			}
 			return nil
+		}
+		d.logConfigQuery(cmd, startedAt, resp, nil)
+		fn(resp)
+		return nil
+	}
+
+	// readIdle 查询变长响应字段（@fd SPS/AVG/TNUM），按静默窗口判定响应结束。
+	// SendCommandIdle 出错即毒化连接（R0-12），连接已不可复用，因此任何错误都
+	// 必须中止同步（区别于 readExact 对非 watchdog 错误的容忍）。
+	readIdle := func(cmd string, fn func(resp string)) error {
+		if err := checkConfigSyncDeadline(deadline); err != nil {
+			return err
+		}
+		startedAt := time.Now()
+		resp, err := d.sendCommandIdle(conn, cmd)
+		if err != nil {
+			d.logConfigQuery(cmd, startedAt, "", err)
+			return err
 		}
 		d.logConfigQuery(cmd, startedAt, resp, nil)
 		fn(resp)
@@ -1608,6 +1660,40 @@ func (d *DAQT1603) readAllConfig(conn net.Conn, deadline time.Time) (*core.DaqT1
 		}
 	}); err != nil {
 		return nil, err
+	}
+
+	// @fd SPS / AVG / TNUM：响应无分隔符且长度可变，只能靠静默窗口判定结束。
+	// 问题 Windows 机器 SetReadDeadline 失效时静默窗口永不触发，SendCommandIdle
+	// 会阻塞到 watchdog 毒化连接（R0-12）导致整个 Connect 失败。因此仅在 deadline
+	// 生效的机器上查询并回写设备实际值；deadline 失效时保留已保存配置（旧行为）。
+	// 容错边界：
+	//   - 设备应答但值不可解析（如固件返回 'E' 表示不支持该查询）→ 保留原值，
+	//     连接继续（不视为错误，SendCommandIdle 正常返回该响应）；
+	//   - 设备不响应（静默）→ SendCommandIdle 首字节 cmdTimeout soft timeout 触发
+	//     R0-12 毒化连接并返回错误，readIdle 中止整个配置同步——这是刻意的，
+	//     因为连接已不可复用，继续只会让后续命令在已死连接上失败。
+	if !d.deadlineBroken {
+		if err := readIdle("@fd SPS", func(resp string) {
+			if v, err := strconv.Atoi(strings.TrimSpace(resp)); err == nil {
+				cfg.SamplingRate = v
+			}
+		}); err != nil {
+			return nil, err
+		}
+		if err := readIdle("@fd AVG", func(resp string) {
+			if v, err := strconv.Atoi(strings.TrimSpace(resp)); err == nil {
+				cfg.AverageCount = v
+			}
+		}); err != nil {
+			return nil, err
+		}
+		if err := readIdle("@fd TNUM", func(resp string) {
+			if v, err := strconv.Atoi(strings.TrimSpace(resp)); err == nil {
+				cfg.TriggerCount = v
+			}
+		}); err != nil {
+			return nil, err
+		}
 	}
 	return &cfg, nil
 }

@@ -184,6 +184,9 @@ func TestDAQT1603ReadAllConfigMatchesDelimiterFreeHardwareResponses(t *testing.T
 		{"@fd HEAD", "0"},
 		{"@fd TYPE", "0"},
 		{"@fd TRIG", "0"},
+		{"@fd SPS", "10"}, // 变长无分隔符响应：静默窗口判定结束，设备实际值覆盖本地
+		{"@fd AVG", "8"},
+		{"@fd TNUM", "2"},
 	}
 
 	serverErr := make(chan error, 1)
@@ -222,8 +225,86 @@ func TestDAQT1603ReadAllConfigMatchesDelimiterFreeHardwareResponses(t *testing.T
 	if cfg.ThermocoupleTypes != "KTTTTTTTTTTTTTTT" || cfg.ChannelMask != "FFFF" {
 		t.Fatalf("unexpected fixed config: %#v", cfg)
 	}
+	// deadline 生效机器：SPS/AVG/TNUM 从设备读回（设备值 10/8/2 覆盖本地 2/4/1），
+	// 修复 0.6.x 遗留"连接后采样频率始终是本地 profile 值"的问题。
+	if cfg.SamplingRate != 10 || cfg.AverageCount != 8 || cfg.TriggerCount != 2 {
+		t.Fatalf("variable-length config should be read from device, got: %#v", cfg)
+	}
+}
+
+// TestDAQT1603ReadAllConfigSkipsVariableLengthOnDeadlineBroken 验证问题 Windows 机器
+// （socket deadline 失效，deadlineBroken=true）上连接阶段不查询 SPS/AVG/TNUM：
+// 变长无分隔符响应只能靠静默窗口判定结束，deadline 失效时静默窗口永不触发，
+// SendCommandIdle 会阻塞到 watchdog 毒化连接（R0-12）导致整个 Connect 失败。
+//
+// 期待结果：
+//   - 服务器只收到 7 条固定长度查询，不收 @fd SPS/AVG/TNUM
+//   - readAllConfig 返回的 cfg 保留本地已保存值（SamplingRate=2 等）
+func TestDAQT1603ReadAllConfigSkipsVariableLengthOnDeadlineBroken(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	responses := []struct {
+		command  string
+		response string
+	}{
+		{"@e3", "KTTTTTTTTTTTTTTT\n"},
+		{"@fd MCH", "FFFF"},
+		{"@fd BIN", "1"},
+		{"@fd TIME", "0"},
+		{"@fd HEAD", "0"},
+		{"@fd TYPE", "0"},
+		{"@fd TRIG", "0"},
+	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		for i, item := range responses {
+			cmd, err := readWithTimeout(server, testReadTimeout)
+			if err != nil {
+				serverErr <- fmt.Errorf("read %d-th command failed: %v", i, err)
+				return
+			}
+			if cmd != item.command {
+				serverErr <- fmt.Errorf("command %d = %q, want %q", i, cmd, item.command)
+				return
+			}
+			if _, err := server.Write([]byte(item.response)); err != nil {
+				serverErr <- fmt.Errorf("write response %q failed: %v", item.response, err)
+				return
+			}
+		}
+		// deadlineBroken 机器不应再收到 @fd SPS/AVG/TNUM；读到即失败
+		if cmd, err := readWithTimeout(server, testReadTimeout); err == nil {
+			serverErr <- fmt.Errorf("deadline-broken machine should not query variable-length config, got: %q", cmd)
+			return
+		}
+		serverErr <- nil
+	}()
+
+	device := NewDAQT1603(core.Profile{
+		ID:   "t1603-deadline-broken",
+		Type: core.DeviceDaqT1603,
+		DaqT1603Config: core.DaqT1603HardwareConfig{
+			ChannelMask:  "FFFF",
+			SamplingRate: 2,
+			AverageCount: 4,
+			TriggerCount: 1,
+		},
+	})
+	device.deadlineBroken = true
+
+	cfg, err := device.readAllConfig(client, time.Now().Add(configSyncTotalTimeout))
+	if err != nil {
+		t.Fatalf("readAllConfig returned error: %v", err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+	// 本地已保存值必须被保留（不读设备、不默认覆盖）
 	if cfg.SamplingRate != 2 || cfg.AverageCount != 4 || cfg.TriggerCount != 1 {
-		t.Fatalf("variable-length saved config was not preserved: %#v", cfg)
+		t.Fatalf("deadline-broken machine should preserve saved config, got: %#v", cfg)
 	}
 }
 
@@ -2461,6 +2542,9 @@ func TestDAQT1603SyncHardwareConfig_TempFirmwareFallsBackToASCII(t *testing.T) {
 		{"@fd HEAD", "0"},
 		{"@fd TYPE", "0"},
 		{"@fd TRIG", "0"},
+		{"@fd SPS", "10"}, // 变长响应：静默窗口判定结束（deadline 生效机器）
+		{"@fd AVG", "1"},
+		{"@fd TNUM", "1"},
 		{"@fe BIN 1", "A"},
 		{"@fd BIN", "0"}, // queryBinaryMode 第 2 次查询，temp 固件读回 0 → 触发回退
 		{"@fe TIME 0", "A"},
@@ -2553,6 +2637,9 @@ func TestDAQT1603SyncHardwareConfig_HeadFallbackKeepsNoSequence(t *testing.T) {
 		{"@fd HEAD", "0"},
 		{"@fd TYPE", "0"},
 		{"@fd TRIG", "0"},
+		{"@fd SPS", "10"}, // 变长响应：静默窗口判定结束（deadline 生效机器）
+		{"@fd AVG", "1"},
+		{"@fd TNUM", "1"},
 		{"@fe BIN 1", "A"},
 		{"@fd BIN", "1"},
 		{"@fe TIME 0", "A"},
@@ -2636,6 +2723,9 @@ func TestDAQT1603SyncHardwareConfig_BinVerifiedStaysBinary(t *testing.T) {
 		{"@fd HEAD", "0"},
 		{"@fd TYPE", "0"},
 		{"@fd TRIG", "0"},
+		{"@fd SPS", "10"}, // 变长响应：静默窗口判定结束（deadline 生效机器）
+		{"@fd AVG", "1"},
+		{"@fd TNUM", "1"},
 		{"@fe BIN 1", "A"},
 		{"@fd BIN", "1"}, // queryBinaryMode 第 2 次，读回 1 → 保持二进制
 		{"@fe TIME 0", "A"},
@@ -2727,6 +2817,9 @@ func TestDAQT1603SyncHardwareConfig_MchDeviceValueDoesNotOverrideProfileMask(t *
 		{"@fd HEAD", "0"},
 		{"@fd TYPE", "0"},
 		{"@fd TRIG", "0"},
+		{"@fd SPS", "10"}, // 变长响应：静默窗口判定结束（deadline 生效机器）
+		{"@fd AVG", "1"},
+		{"@fd TNUM", "1"},
 		{"@fe BIN 1", "A"},
 		{"@fd BIN", "1"}, // queryBinaryMode 第 2 次，读回 1 → 保持二进制
 		{"@fe TIME 0", "A"},
@@ -2806,6 +2899,9 @@ func TestDAQT1603SyncHardwareConfig_ReturnsWhenCallerHoldsDeviceLock(t *testing.
 		{"@fd HEAD", "0"},
 		{"@fd TYPE", "0"},
 		{"@fd TRIG", "0"},
+		{"@fd SPS", "10"}, // 变长响应：静默窗口判定结束（deadline 生效机器）
+		{"@fd AVG", "1"},
+		{"@fd TNUM", "1"},
 		{"@fe BIN 1", "A"},
 		{"@fd BIN", "1"},
 		{"@fe TIME 0", "A"},
@@ -2973,6 +3069,9 @@ func TestDAQT1603SyncHardwareConfig_BinVerifyFailureAbortsSync(t *testing.T) {
 		{"@fd HEAD", "0"},
 		{"@fd TYPE", "0"},
 		{"@fd TRIG", "0"},
+		{"@fd SPS", "10"}, // 变长响应：静默窗口判定结束（deadline 生效机器）
+		{"@fd AVG", "1"},
+		{"@fd TNUM", "1"},
 		{"@fe BIN 1", "A"},
 		{"@fd BIN", "X"}, // 非法响应 → 中止同步
 	}
