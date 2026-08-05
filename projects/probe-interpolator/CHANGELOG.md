@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.2.2] - 2026-08-05
+
+### Added
+
+- **三孔插值结果新增气流速度 Velocity 输出**（对应 `shared/algorithms/go/threehole/interpolation`，与 probe-interpolator-miniprogram 同源同步）：`InterpolationResult` 新增 `Velocity` 字段（m/s），由 `MachNumber` 与 `Tatm` 经 `V = Ma · sqrt(γ · R · T_K)` 推导（R=287 J/(kg·K)，γ 复用 `calcGamma` 温度修正）。
+  - 业务背景：三孔探针风洞验证需要"速度误差范围"作为验收指标，原先算法只输出 Ma，调用方需各自离线换算 V，跨实现一致性无法保证。
+  - 兜底语义：Velocity 严格跟随 MachNumber——Ma 有效或兜底（initMa/currentMa）时给出对应速度，Ma 为 0/NaN（输入非法、calcMach 失败）时返回 0。
+  - 5 个返回点全部填充 Velocity，与现有 MachNumber 行为对齐。
+  - 数值示例：Ma=0.8 / Tatm=20℃ → V≈274.55 m/s；Tatm=-40℃ → V≈245.90 m/s。
+
+### Compatibility
+
+- 配置文件格式：兼容。
+- 数据文件格式：兼容（PRB / CSV 输入输出无字段变更；批量结果 JSON 新增 `velocity` 字段为可选，旧调用方无需改动）。
+- API 契约：兼容（`InterpolationResult` 新增字段为可选）。
+- 校准文件加载行为：不变。
+
+### Verification
+
+- `go vet ./...`（shared/algorithms/go/threehole）: passed
+- `go test ./...`（shared/algorithms/go/threehole，含新增 4 个测试）: passed
+- `go vet ./...` + `go test ./backend/`（probe-interpolator）: passed
+- `node verify_three.js`（50 用例 Go↔JS 跨实现数值一致，容差 1e-9）: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `task release`: passed
+- `makensis -DARG_WAILS_AMD64_BINARY=..\..\bin\probe-interpolator.exe project.nsi`（在 `windows/nsis/` 目录下执行）: passed
+- `task archive-release`: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名，Windows 可能显示"未知发布者"提示。
+- 前端结果表暂未展示 Velocity 列（后续按需追加；当前可通过 Go bindings 调用拿到 V 值）。
+- 内嵌 exe 的 ProductVersion 资源为空是 wails3 v3.0.0-alpha2.106 的既有行为（不渲染 `{{.Info.ProductVersion}}` 模板），installer 壳 ProductVersion 为 `0.2.2`，对外交付不受影响。
+
 ## [0.2.1] - 2026-08-02
 
 ### Fixed
