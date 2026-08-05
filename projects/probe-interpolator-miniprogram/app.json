@@ -3,13 +3,14 @@
     "pages/select/select",
     "pages/five/five",
     "pages/three/three",
-    "pages/seven/seven"
+    "pages/seven/seven",
+    "pages/help/help"
   ],
   "window": {
     "navigationBarTitleText": "探针插值计算器",
-    "navigationBarBackgroundColor": "#1f2937",
-    "navigationBarTextStyle": "white",
-    "backgroundColor": "#f3f4f6"
+    "navigationBarBackgroundColor": "#ffffff",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#eef1f5"
   },
   "style": "v2",
   "sitemapLocation": "sitemap.json"

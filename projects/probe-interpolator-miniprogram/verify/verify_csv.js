@@ -85,7 +85,7 @@ console.log('[2] runBatch 行为');
 // ---------- 3) resultColumns 与 reference go 键集一致性 ----------
 console.log('[3] resultColumns 与 reference 输出键一致');
 const PROBE_RC = {
-  three: ['alpha', 'machNumber', 'P0', 'Ps', 'iterationCount'],
+  three: ['alpha', 'machNumber', 'P0', 'Ps'],
   five: ['alpha', 'beta', 'machNumber', 'v', 'vx', 'vy', 'vz', 'cas', 'sat', 'dynamicPressure', 'density', 'P0', 'Ps'],
   seven: ['alpha', 'beta', 'theta', 'phi', 'machNumber', 'velocity', 'totalPressure', 'staticPressure', 'dynamicPressure'],
 };

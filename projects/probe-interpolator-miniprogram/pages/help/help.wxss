@@ -1,0 +1,152 @@
+/* ===================================================================
+   使用说明页专用样式
+   通用样式（.card / .page-header / .input-tabs / .hint）由 app.wxss 提供
+   本文件只补充 help 页特有结构：tab 卡片、概览、步骤、字段表、FAQ
+   =================================================================== */
+
+/* tab 卡片：去除内边距让 input-tabs 满宽，保留外层卡片描边与阴影 */
+.help-tabs-card { padding: 0 28rpx; margin-bottom: 4rpx; }
+.help-tabs { margin-bottom: 0; }
+
+/* 概览：单行强调文本，与卡片标题分隔 */
+.help-overview {
+  font-size: 27rpx;
+  color: var(--ink-2);
+  line-height: 1.6;
+  letter-spacing: .3rpx;
+}
+
+/* —— 校准步骤：编号气泡 + 步骤文本 —— */
+.help-steps { display: flex; flex-direction: column; gap: 18rpx; }
+.help-step { display: flex; align-items: flex-start; gap: 16rpx; }
+.help-step-no {
+  flex: 0 0 auto;
+  width: 44rpx;
+  height: 44rpx;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 24rpx;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2rpx;
+}
+.help-step-text {
+  flex: 1;
+  font-size: 26rpx;
+  color: var(--ink);
+  line-height: 1.6;
+}
+
+/* —— 字段表：表头粘性 + 斑马纹，复用 csv-table 视觉语言 —— */
+.help-table {
+  border: 1rpx solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+.help-tr {
+  display: flex;
+  flex-direction: row;
+  border-bottom: 1rpx solid var(--border);
+}
+.help-tr:last-child { border-bottom: none; }
+.help-tr:nth-child(even) { background: var(--surface-2); }
+.help-tr.help-th { background: var(--surface-3); }
+.help-th .help-td { color: var(--ink); font-weight: 600; font-size: 24rpx; }
+
+/* 列宽：字段名固定 200rpx，单位固定 100rpx，说明占满剩余 */
+.help-td {
+  padding: 16rpx 14rpx;
+  font-size: 25rpx;
+  color: var(--ink-2);
+  border-right: 1rpx solid var(--border);
+  line-height: 1.5;
+}
+.help-td:last-child { border-right: none; }
+.help-td-name { flex: 0 0 200rpx; width: 200rpx; }
+.help-td-unit { flex: 0 0 100rpx; width: 100rpx; text-align: center; font-variant-numeric: tabular-nums; }
+.help-td-desc { flex: 1; min-width: 0; }
+
+.help-field-name {
+  font-family: "SF Mono", "Menlo", Consolas, monospace;
+  font-size: 24rpx;
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+/* 必填项星标 */
+.help-req {
+  color: var(--err);
+  font-size: 24rpx;
+  margin-left: 6rpx;
+  font-weight: 700;
+}
+
+/* 列约定表「必填」列：与单位列同宽，居中显示是/否 */
+.help-td-req { flex: 0 0 100rpx; width: 100rpx; text-align: center; }
+
+/* CSV 格式卡片内的分节小标题（复用 .field-label 的样式基调） */
+.help-sec { margin-top: 24rpx; }
+
+/* 表头容错要点：圆点前缀列表 */
+.help-tol { display: flex; flex-direction: column; gap: 10rpx; }
+.help-tol-item {
+  font-size: 25rpx;
+  color: var(--ink-2);
+  line-height: 1.6;
+  padding-left: 22rpx;
+  position: relative;
+}
+.help-tol-item::before {
+  content: '';
+  position: absolute;
+  left: 4rpx;
+  top: 16rpx;
+  width: 10rpx;
+  height: 10rpx;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: .7;
+}
+
+/* 输出列说明：浅底强调块 */
+.help-output {
+  font-size: 25rpx;
+  color: var(--ink-2);
+  line-height: 1.7;
+  background: var(--surface-2);
+  border: 1rpx solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 18rpx 22rpx;
+}
+
+/* —— FAQ：问答卡片式列表 —— */
+.help-faq { display: flex; flex-direction: column; gap: 20rpx; }
+.help-faq-item {
+  background: var(--surface-2);
+  border: 1rpx solid var(--border);
+  border-left: 4rpx solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 18rpx 22rpx;
+}
+.help-faq-q {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.5;
+}
+.help-faq-a {
+  font-size: 25rpx;
+  color: var(--ink-2);
+  line-height: 1.6;
+  margin-top: 8rpx;
+}
+
+/* 底部提示 */
+.help-footer {
+  text-align: center;
+  padding: 16rpx 48rpx 40rpx;
+}

@@ -3,17 +3,50 @@
 把桌面端 `probe-interpolator`（3/5/7 孔风洞探针插值）的 Go 核心算法，移植为**纯前端 JavaScript** 微信小程序。
 全离线运行，无需服务器；校准 `.prb` 由用户从微信会话上传。
 
+## 使用说明书
+
+三/五/七孔探针各有一份 HTML 说明书，配套小程序界面截图（SVG），可在浏览器直接打开：
+
+| 说明书 | 入口 | 适用场景 |
+|---|---|---|
+| [三孔使用说明](docs/manual-three.html) | 三孔探针 · 一维角度（α）求解 | 1~10 个 .prb 跨马赫数档，3 孔压输入 |
+| [五孔使用说明](docs/manual-five.html) | 五孔探针 · 二维角度（α/β）求解 | 多马赫 .prb 校准，5 孔压输入 |
+| [七孔使用说明](docs/manual-seven.html) | 七孔探针 · 大角度范围自动分区 | 7.prb 内区 + 1~6.prb 外区，7 孔压输入 |
+
+**小程序内帮助**：首页 hero 右上角与三/五/七孔工作区标题右侧均有「使用说明 / ?」按钮，点击进入小程序内帮助页（`pages/help/help`），内含概览、校准文件准备步骤、输入/输出字段说明、**CSV 批量导入格式**（列约定 / 表头容错 / 输出列）与常见问题；从探针工作区进入时自动定位到对应探针的 tab。
+
+### 界面截图（SVG）
+
+所有截图均为小程序版本的真实界面示意（保留手机外框 + 微信胶囊 + Home 指示条）：
+
+| 编号 | 文件 | 说明 |
+|---|---|---|
+| 01 | [01_home.svg](docs/screenshots/01_home.svg) | 首页探针选择瓦片（hero + 3/5/7 瓦片） |
+| 02 | [02_three_input.svg](docs/screenshots/02_three_input.svg) | 三孔输入界面（校准文件 + 3 孔压 + 大气参数） |
+| 03 | [03_three_result.svg](docs/screenshots/03_three_result.svg) | 三孔计算结果（α / Ma / P0 / Ps + 状态胶囊） |
+| 04 | [04_csv_batch.svg](docs/screenshots/04_csv_batch.svg) | CSV 批量结果（斑马纹表格 + 错误行高亮） |
+| 05 | [05_five_input.svg](docs/screenshots/05_five_input.svg) | 五孔输入界面（多 .prb + 每行 Ma 输入） |
+| 06 | [06_five_result.svg](docs/screenshots/06_five_result.svg) | 五孔计算结果（13 项气动参数） |
+| 07 | [07_seven_input.svg](docs/screenshots/07_seven_input.svg) | 七孔输入界面（7 个 prb 标签 + 7 孔压） |
+| 08 | [08_seven_result.svg](docs/screenshots/08_seven_result.svg) | 七孔计算结果（9 项气动参数） |
+
 ## 架构
 
 ```
 probe-interpolator-miniprogram/
 ├── app.json / app.js / app.wxss       # 小程序入口与全局样式
 ├── project.config.json / sitemap.json # 微信开发者工具工程配置
+├── docs/                              # 使用说明书（HTML）+ 小程序界面截图（SVG）
+│   ├── manual-three.html              # 三孔使用说明
+│   ├── manual-five.html               # 五孔使用说明
+│   ├── manual-seven.html              # 七孔使用说明
+│   └── screenshots/                   # 01_home ~ 08_seven_result 共 8 张 SVG
 ├── pages/
-│   ├── select/                        # 探针选择页（3/5/7 孔）
-│   ├── five/                          # 五孔工作区（已可用）
-│   ├── three/                         # 三孔工作区（已可用）
-│   └── seven/                         # 七孔工作区（已可用，大小角度模式）
+│   ├── select/                        # 探针选择页（3/5/7 孔，含帮助入口）
+│   ├── five/                          # 五孔工作区（已可用，标题栏含帮助入口）
+│   ├── three/                         # 三孔工作区（已可用，标题栏含帮助入口）
+│   ├── seven/                         # 七孔工作区（已可用，大小角度模式，标题栏含帮助入口）
+│   └── help/                          # 使用说明页（三/五/七孔 tab 切换）
 ├── utils/
 │   ├── algorithms/
 │   │   ├── atmospheric.js             # 大气数据计算器（端口自 atmospheric_data.go）
@@ -43,7 +76,7 @@ probe-interpolator-miniprogram/
 
 - **核心算法**：Go 纯数学代码逐函数移植为 CommonJS JS，确保小程序端（`require`）与 Node 校验端都能直接运行。
 - **数值可信**：用 Go 原版生成黄金参考，Node 端跑同输入对比。五孔、三孔容差 1e-9；七孔因逐位移植精度极高，最大误差 ~1e-14（角度）、~1e-15（马赫），theta/phi/速度/总静压完全逐位一致。
-- **校准数据**：复用桌面端 `.prb` 格式。五孔多马赫 `.prb` 由文件名/表头携带马赫；三孔单文件内嵌马赫；七孔为 `7.prb`（内区）+ `1~6.prb`（外区扇区）固定马赫集。
+- **校准数据**：复用桌面端 `.prb` 格式。五孔多马赫 `.prb` 由文件名/表头携带马赫；三孔每个 `.prb` 首行内嵌一个校准马赫数，可一次加载 1~10 个文件跨马赫数档迭代插值；七孔为 `7.prb`（内区）+ `1~6.prb`（外区扇区）固定马赫集。
 
 ## 运行小程序
 
@@ -74,7 +107,7 @@ probe-interpolator-miniprogram/
   - 表头容错：支持 `P1 (Pa)`、`大气压`、`气温(℃)`、`Patm`、`TAtm` 等写法（忽略空格/括号/单位/中文）。
 - 逐行调用与单点「计算」完全相同的插值器（已加载的校准），每行得到一组结果。
 - 输出表头固定为：`P1..Pn, Patm, TAtm, <结果列>, isValid, warning`
-  - 三孔结果列：`alpha, machNumber, P0, Ps, iterationCount`
+  - 三孔结果列：`alpha, machNumber, P0, Ps`
   - 五孔结果列：`alpha, beta, machNumber, v, vx, vy, vz, cas, sat, dynamicPressure, density, P0, Ps`
   - 七孔结果列：`alpha, beta, theta, phi, machNumber, velocity, totalPressure, staticPressure, dynamicPressure`
   - `isValid = 1/0`；解析或计算失败的该行 `isValid = ERROR` 并在 `warning` 列写明原因（缺列、非法数值、内部异常）。

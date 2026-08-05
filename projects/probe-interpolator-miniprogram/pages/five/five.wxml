@@ -1,70 +1,65 @@
-<view class="page-header">
-  <view class="title">五孔探针插值</view>
-  <view class="sub">输入 5 个孔压与大气参数</view>
+<view class="page-header has-help">
+  <view class="header-main">
+    <view class="title">五孔探针插值</view>
+    <view class="sub">5 个孔压 + 大气参数 · 多马赫 .prb 校准</view>
+  </view>
+  <!-- 帮助按钮：跳转使用说明页并预选五孔 tab -->
+  <view class="header-help" bindtap="goHelp">?</view>
 </view>
 
-<view class="card">
-  <view class="field-label">孔压输入 (Pa)</view>
-  <view class="grid2">
-    <view class="inp"><text>P1</text><input type="digit" data-field="p1" value="{{p1}}" bindinput="onInput" placeholder="0"/></view>
-    <view class="inp"><text>P2</text><input type="digit" data-field="p2" value="{{p2}}" bindinput="onInput" placeholder="0"/></view>
-    <view class="inp"><text>P3</text><input type="digit" data-field="p3" value="{{p3}}" bindinput="onInput" placeholder="0"/></view>
-    <view class="inp"><text>P4</text><input type="digit" data-field="p4" value="{{p4}}" bindinput="onInput" placeholder="0"/></view>
-    <view class="inp"><text>P5</text><input type="digit" data-field="p5" value="{{p5}}" bindinput="onInput" placeholder="0"/></view>
-  </view>
-  <view class="grid2" style="margin-top:16rpx;">
-    <view class="inp"><text>Patm</text><input type="digit" data-field="patm" value="{{patm}}" bindinput="onInput" placeholder="101325"/></view>
-    <view class="inp"><text>Tatm</text><input type="digit" data-field="tatm" value="{{tatm}}" bindinput="onInput" placeholder="20"/></view>
-  </view>
-</view>
-
-<view class="card">
-  <view class="card-title">显示单位</view>
-  <view class="hint" style="margin-bottom:14rpx;">仅影响结果展示与 CSV 导出，输入固定 Pa / °C</view>
-  <view class="unit-row">
-    <view class="unit-item"><text>压力</text>
-      <picker mode="selector" range="{{pressureOptions}}" value="{{pressureIndex}}" data-unit="pressure" bindchange="onUnitChange">
-        <view class="unit-picker">{{units.pressure}}</view>
-      </picker>
-    </view>
-    <view class="unit-item"><text>角度</text>
-      <picker mode="selector" range="{{angleOptions}}" value="{{angleIndex}}" data-unit="angle" bindchange="onUnitChange">
-        <view class="unit-picker">{{units.angle}}</view>
-      </picker>
-    </view>
-    <view class="unit-item"><text>温度</text>
-      <picker mode="selector" range="{{tempOptions}}" value="{{tempIndex}}" data-unit="temp" bindchange="onUnitChange">
-        <view class="unit-picker">{{units.temp}}</view>
-      </picker>
-    </view>
-    <view class="unit-item"><text>速度</text>
-      <picker mode="selector" range="{{velocityOptions}}" value="{{velocityIndex}}" data-unit="velocity" bindchange="onUnitChange">
-        <view class="unit-picker">{{units.velocity}}</view>
-      </picker>
-    </view>
-  </view>
-</view>
-
+<!-- 校准文件 -->
 <view class="card">
   <view class="card-title">校准文件</view>
   <view wx:if="{{files.length === 0}}" class="hint">尚未上传 .prb</view>
   <view wx:else>
     <view wx:for="{{files}}" wx:key="filePath" class="file-row">
       <text class="file-name">· {{item.name}}</text>
-      <view class="inp mach-inp"><text>Ma</text><input type="digit" data-idx="{{index}}" value="{{item.mach}}" bindinput="onMachInput" placeholder="如 0.8"/></view>
+      <view class="inp mach-inp"><text>Ma</text><input type="digit" data-idx="{{index}}" value="{{item.mach}}" bindinput="onMachInput" placeholder="0.8"/></view>
     </view>
   </view>
   <view class="hint" style="margin-top:12rpx;">文件名含 0.8Ma 等将自动识别，否则请手动填写</view>
+  <view class="hint" style="margin-top:6rpx;">操作步骤：先把 .prb 发到微信聊天或「文件传输助手」→ 点下方按钮从聊天中选择</view>
+  <view class="hint" style="margin-top:6rpx;color:var(--warn);">提示：PC 微信客户端兼容性较差，建议用手机微信扫码预览</view>
   <view class="btn-row" style="margin-top:16rpx;">
     <button class="btn btn-primary" bindtap="onChooseFile">选择 .prb</button>
     <button class="btn btn-ghost" bindtap="clearFiles">清空</button>
   </view>
 </view>
 
-<button class="btn btn-primary btn-block" bindtap="onCalculate">计算</button>
+<!-- 数据输入（两种并列方式） -->
+<view class="card">
+  <view class="input-tabs">
+    <view class="input-tab {{activeInputTab === 'manual' ? 'active' : ''}}" data-tab="manual" bindtap="onSwitchTab">手动单点</view>
+    <view class="input-tab {{activeInputTab === 'csv' ? 'active' : ''}}" data-tab="csv" bindtap="onSwitchTab">CSV 批量</view>
+  </view>
 
-<view wx:if="{{status}}" class="status {{statusType}}">{{status}}</view>
+  <view wx:if="{{activeInputTab === 'manual'}}">
+    <view class="field-label">孔压输入 (Pa)</view>
+    <view class="grid2">
+      <view class="inp"><text>P1</text><input type="digit" data-field="p1" value="{{p1}}" bindinput="onInput" placeholder="0"/></view>
+      <view class="inp"><text>P2</text><input type="digit" data-field="p2" value="{{p2}}" bindinput="onInput" placeholder="0"/></view>
+      <view class="inp"><text>P3</text><input type="digit" data-field="p3" value="{{p3}}" bindinput="onInput" placeholder="0"/></view>
+      <view class="inp"><text>P4</text><input type="digit" data-field="p4" value="{{p4}}" bindinput="onInput" placeholder="0"/></view>
+      <view class="inp"><text>P5</text><input type="digit" data-field="p5" value="{{p5}}" bindinput="onInput" placeholder="0"/></view>
+    </view>
+    <view class="grid2" style="margin-top:16rpx;">
+      <view class="inp"><text>Patm</text><input type="digit" data-field="patm" value="{{patm}}" bindinput="onInput" placeholder="101325"/></view>
+      <view class="inp"><text>Tatm</text><input type="digit" data-field="tatm" value="{{tatm}}" bindinput="onInput" placeholder="20"/></view>
+    </view>
+    <button class="btn btn-primary btn-full" style="margin-top:20rpx;" bindtap="onCalculate">计算</button>
+  </view>
 
+  <view wx:if="{{activeInputTab === 'csv'}}">
+    <view class="hint" style="margin-bottom:14rpx;">列需含 P1~P5（可选 Patm / TAtm）；导入后自动批量计算</view>
+    <view class="btn-row">
+      <button class="btn btn-primary" bindtap="onImportCsv">导入 CSV 并计算</button>
+      <button class="btn btn-ghost" bindtap="onExportCsv" wx:if="{{batchRows.length}}">导出结果</button>
+    </view>
+    <view wx:if="{{batchStatus}}" class="status {{batchStatusType}}" style="margin:16rpx 0 0;">{{batchStatus}}</view>
+  </view>
+</view>
+
+<!-- 单点结果 -->
 <view class="card" wx:if="{{result}}">
   <view class="card-title">
     <text>计算结果</text>
@@ -73,34 +68,31 @@
       <button class="btn btn-ghost btn-sm" bindtap="onShareCard">分享卡片</button>
     </view>
   </view>
-  <view class="res-row"><text class="res-label">有效性</text><text class="res-val {{result.isValid ? 'ok' : 'error'}}">{{result.isValid ? '有效' : '无效'}}</text></view>
+  <view style="margin-bottom:12rpx;">
+    <view class="status-badge {{statusKind}}">{{statusText}}</view>
+  </view>
   <view class="res-row" wx:for="{{dispRows}}" wx:key="label">
     <text class="res-label">{{item.label}}</text>
-    <text class="res-val {{result.isValid ? '' : 'error'}}">{{item.value}}</text>
+    <text class="res-val {{statusKind === 'error' ? 'error' : ''}}">{{item.value}}</text>
   </view>
 </view>
 
-<view class="card csv-card">
-  <view class="card-title">批量 CSV</view>
-  <view class="hint" style="margin-bottom:14rpx;">列需含 P1~P5（可选 Patm / TAtm）</view>
-  <view class="btn-row">
-    <button class="btn btn-primary" bindtap="onImportCsv">导入并计算</button>
-    <button class="btn btn-ghost" bindtap="onExportCsv">导出 CSV</button>
+<!-- 批量结果表格 -->
+<view class="card" wx:if="{{batchPreview.length}}">
+  <view class="card-title">
+    <text>批量结果</text>
+    <text class="hint">共 {{batchRows.length}} 行</text>
   </view>
-  <view wx:if="{{batchStatus}}" class="status {{batchStatusType}}" style="margin:16rpx 0 0;">{{batchStatus}}</view>
-  <view wx:if="{{batchPreview.length}}" class="csv-table-wrap">
-    <view class="hint" style="margin:16rpx 0 8rpx;">预览前 {{batchPreview.length}} 行（共 {{batchRows.length}} 行）</view>
-    <scroll-view scroll-x="true" class="scroll-x">
-      <view class="csv-table">
-        <view class="csv-tr csv-th">
-          <view class="csv-td" wx:for="{{batchHeader}}" wx:key="*this">{{item}}</view>
-        </view>
-        <view class="csv-tr" wx:for="{{batchPreview}}" wx:for-item="row" wx:key="index">
-          <view class="csv-td {{row[row.length-2] === 'ERROR' ? 'error' : ''}}" wx:for="{{row}}" wx:for-item="cell" wx:key="index">{{cell}}</view>
-        </view>
+  <scroll-view scroll-x="true" class="scroll-x">
+    <view class="csv-table">
+      <view class="csv-tr csv-th">
+        <view class="csv-td" wx:for="{{batchHeader}}" wx:key="*this">{{item}}</view>
       </view>
-    </scroll-view>
-  </view>
+      <view class="csv-tr {{row[row.length-2] === 'ERROR' ? 'row-error' : ''}}" wx:for="{{batchPreview}}" wx:for-item="row" wx:key="index">
+        <view class="csv-td" wx:for="{{row}}" wx:for-item="cell" wx:key="index">{{cell}}</view>
+      </view>
+    </view>
+  </scroll-view>
 </view>
 
 <canvas type="2d" id="shareCanvas" class="offscreen-canvas"></canvas>

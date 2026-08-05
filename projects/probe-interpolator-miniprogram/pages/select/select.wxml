@@ -1,32 +1,52 @@
-<view class="page-header">
-  <view class="title">探针插值计算器</view>
-  <view class="sub">风洞探针 · 离线计算</view>
+<!-- 首页：hero 品牌区 + 探针瓦片列表 -->
+<view class="hero">
+  <!-- 右上角帮助按钮：半透明白底，点击跳转使用说明页（不带 tab 参数，默认三孔） -->
+  <view class="hero-help" bindtap="goHelp" hover-class="hero-help-hover">使用说明</view>
+  <view class="hero-title">探针插值计算器</view>
+  <view class="hero-sub">风洞探针 · 离线插值 · 单位换算</view>
+  <view class="hero-meta">
+    <view class="hero-meta-item">3/5/7 孔</view>
+    <view class="hero-meta-item">PRB 校准</view>
+    <view class="hero-meta-item">CSV 批量</view>
+  </view>
 </view>
 
 <view class="probe-list">
-  <view class="probe-tile" data-kind="three" bindtap="go">
+  <view class="probe-tile" data-kind="three" bindtap="go" hover-class="none">
     <view class="probe-badge">3</view>
     <view class="probe-meta">
       <view class="probe-name">三孔探针</view>
-      <view class="probe-desc">3 孔压 · 单 .prb 校准</view>
+      <view class="probe-desc">3 孔压 · 1~10 个 .prb</view>
+      <view class="probe-tags">
+        <view class="probe-tag">多 PRB</view>
+        <view class="probe-tag">一维角度</view>
+      </view>
     </view>
     <view class="chevron">›</view>
   </view>
 
-  <view class="probe-tile" data-kind="five" bindtap="go">
+  <view class="probe-tile" data-kind="five" bindtap="go" hover-class="none">
     <view class="probe-badge">5</view>
     <view class="probe-meta">
       <view class="probe-name">五孔探针</view>
       <view class="probe-desc">5 孔压 · 多马赫 .prb 校准</view>
+      <view class="probe-tags">
+        <view class="probe-tag">多马赫</view>
+        <view class="probe-tag">二维角度</view>
+      </view>
     </view>
     <view class="chevron">›</view>
   </view>
 
-  <view class="probe-tile" data-kind="seven" bindtap="go">
+  <view class="probe-tile" data-kind="seven" bindtap="go" hover-class="none">
     <view class="probe-badge">7</view>
     <view class="probe-meta">
       <view class="probe-name">七孔探针</view>
       <view class="probe-desc">7 孔压 · 大小角度自动判定</view>
+      <view class="probe-tags">
+        <view class="probe-tag">内外区</view>
+        <view class="probe-tag">自动分区</view>
+      </view>
     </view>
     <view class="chevron">›</view>
   </view>

@@ -3,7 +3,7 @@ const { parseMachFromFileName } = require('../../utils/algorithms/fivehole/multi
 const { choosePrbFiles } = require('../../utils/prb-file.js');
 const { runBatch, toCsv, parseNumber } = require('../../utils/csv-batch.js');
 const { chooseCsvText, exportCsvFile, batchFileName } = require('../../utils/csv-file.js');
-const { formatValue, unitLabelShort, OPTIONS } = require('../../utils/units.js');
+const { formatValue, convertNumber, unitLabelShort, OPTIONS } = require('../../utils/units.js');
 const { buildCardModel } = require('../../utils/share-card.js');
 const { shareCardImage } = require('../../utils/share-canvas.js');
 
@@ -16,6 +16,18 @@ const COLUMN_UNIT = {
   alpha: 'angle', beta: 'angle', machNumber: 'none',
   v: 'velocity', vx: 'velocity', vy: 'velocity', vz: 'velocity', cas: 'velocity',
   sat: 'temp', dynamicPressure: 'pressure', density: 'none', P0: 'pressure', Ps: 'pressure',
+};
+// CSV 表格各列固定精度（小数位）—— 列宽统一 + 右对齐 + 固定精度 = 视觉对齐
+const COLUMN_DECIMALS = {
+  alpha: 3, beta: 3, machNumber: 4,
+  v: 2, vx: 2, vy: 2, vz: 2, cas: 2,
+  sat: 2, dynamicPressure: 2, density: 4, P0: 2, Ps: 2,
+};
+// CSV 表头中文标签（替代英文 key + 后缀，提升可读性）
+const COLUMN_LABEL = {
+  alpha: '攻角α', beta: '侧滑角β', machNumber: '马赫数',
+  v: '速度V', vx: 'Vx', vy: 'Vy', vz: 'Vz', cas: 'CAS',
+  sat: 'SAT', dynamicPressure: '动压', density: '密度', P0: '总压P0', Ps: '静压Ps',
 };
 // 单点结果展示定义（label + 单位类型）
 const FIELD_DEFS = [
@@ -62,6 +74,13 @@ Page({
     batchSummary: null,
     batchStatus: '',
     batchStatusType: '',
+    // 数据输入方式 tab：'manual' | 'csv'，两种并列，计算按钮只在 manual tab 内
+    activeInputTab: 'manual',
+  },
+
+  // 跳转使用说明页并预选五孔 tab
+  goHelp() {
+    wx.navigateTo({ url: '/pages/help/help?tab=five' });
   },
 
   onLoad() {
@@ -79,6 +98,14 @@ Page({
   onInput(e) {
     const field = e.currentTarget.dataset.field;
     this.setData({ [field]: e.detail.value });
+  },
+
+  // 切换数据输入方式 tab：manual（手动输入） / csv（CSV 批量）
+  onSwitchTab(e) {
+    const tab = e.currentTarget.dataset.tab;
+    if (tab && tab !== this.data.activeInputTab) {
+      this.setData({ activeInputTab: tab });
+    }
   },
 
   async onChooseFile() {
@@ -156,11 +183,18 @@ Page({
       return;
     }
     const warn = (loadRes.warnings || []).concat(result.warning ? [result.warning] : []).filter(Boolean);
+    // 5/7 孔算法无 calculated 字段，回退到 isValid 决定「参考」语义：
+    //   isValid=true → ok（参考）；isValid=false & 有 warning → warn（参考: 原因）；其余 → error（计算失败）
+    // 与 share-card 的旧路径回退逻辑一致，保证 UI 与分享卡片语义统一。
+    const statusKind = result.isValid ? 'ok' : (result.warning ? 'warn' : 'error');
+    const statusText = result.isValid ? '参考' : (result.warning ? '参考: ' + result.warning : '计算失败');
     this.setData({
       result,
       dispRows: buildDispRows(result, FIELD_DEFS, d.units),
       status: warn.length ? warn.join('；') : '计算完成',
       statusType: result.isValid ? 'ok' : 'error',
+      statusKind,
+      statusText,
     });
   },
 
@@ -197,6 +231,9 @@ Page({
       dispRows: d.dispRows,
       isValid: d.result.isValid,
       warning: d.result.warning,
+      // 直接复用页面派生的 statusText/statusKind，避免 share-card 二次派生导致文案不一致
+      statusText: d.statusText,
+      statusKind: d.statusKind,
     });
     this.setData({ status: '正在生成分享卡片…', statusType: '' });
     shareCardImage(model, 'shareCanvas')
@@ -229,14 +266,36 @@ Page({
     if (this._lastCsvText) this.runBatchWith(this._lastCsvText, units);
   },
 
+  // CSV 表格结果列格式化：换算到当前单位 + 固定精度纯数值（不带单位后缀，单位在表头）
   _fmtVal(units) {
-    return (col, raw) => formatValue(COLUMN_UNIT[col] || 'none', units[COLUMN_UNIT[col] || 'none'], raw);
+    return (col, raw) => {
+      const t = COLUMN_UNIT[col] || 'none';
+      if (raw === undefined || raw === null || raw === '') return '';
+      if (t === 'none') {
+        const n = Number(raw);
+        const d = COLUMN_DECIMALS[col] ?? 3;
+        return isFinite(n) ? n.toFixed(d) : '';
+      }
+      const v = convertNumber(t, units[t], Number(raw));
+      if (typeof v !== 'number' || !isFinite(v)) return '';
+      return v.toFixed(COLUMN_DECIMALS[col] ?? 3);
+    };
+  },
+  // CSV 表格输入列格式化：P1~P5/Patm/TAtm 统一 2 位。
+  // 输入列不换算单位（CSV 原始数据就是 Pa / °C），只统一精度；
+  // 单位切换只作用于结果列（_fmtVal/_colHdr），units 参数保留仅为签名一致。
+  _fmtInput(k, v, units) {
+    if (v === undefined || v === null || v === '') return '';
+    const n = Number(v);
+    if (!isFinite(n)) return String(v);
+    return n.toFixed(2);
   },
   _colHdr(units) {
     return (col) => {
+      const label = COLUMN_LABEL[col] || col;
       const t = COLUMN_UNIT[col] || 'none';
-      if (t === 'none') return col;
-      return col + '_' + unitLabelShort(t, units[t]);
+      if (t === 'none') return label;
+      return label + '(' + unitLabelShort(t, units[t]) + ')';
     };
   },
 
@@ -273,6 +332,10 @@ Page({
         resultColumns: RESULT_COLUMNS,
         formatResultValue: this._fmtVal(units),
         resultColumnHeader: this._colHdr(units),
+        // 输入列固定精度：P1~P5/Patm 压力 2 位、TAtm 温度 2 位
+        inputFormat: (k, v) => this._fmtInput(k, v, units),
+        // 输入列表头中文标签
+        inputHeaderMap: { P1: 'P1', P2: 'P2', P3: 'P3', P4: 'P4', P5: 'P5', Patm: '大气压', TAtm: '温度' },
       });
     } catch (e) {
       this.setData({ batchStatus: '批量计算失败: ' + (e.message || e), batchStatusType: 'error' });
@@ -314,9 +377,21 @@ Page({
     const name = batchFileName('five');
     try {
       const r = await exportCsvFile(csv, name);
-      const how = r.method === 'share' ? '已调起分享到会话' : (r.method === 'disk' ? '已保存到本地' : '已写出到 ' + r.path);
+      let how;
+      if (r.method === 'share') {
+        how = '已调起分享到会话，请选择聊天或文件传输助手转发';
+      } else if (r.method === 'disk') {
+        how = '已保存到本地磁盘';
+      } else {
+        how = '已写出到 ' + r.path;
+      }
       this.setData({ batchStatus: '导出成功（' + this.data.batchRows.length + ' 行）→ ' + how, batchStatusType: 'ok' });
     } catch (e) {
+      // 用户在分享面板点返回 —— 静默提示，不算错误
+      if (e && e.canceled) {
+        this.setData({ batchStatus: '已取消分享，未导出', batchStatusType: '' });
+        return;
+      }
       const msg = (e && e.errMsg) ? e.errMsg : (e && e.message) ? e.message : String(e);
       this.setData({ batchStatus: '导出失败: ' + msg, batchStatusType: 'error' });
     }

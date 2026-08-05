@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f5cad"/>
+      <stop offset="100%" stop-color="#0a4a8c"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="900" rx="44" ry="44" fill="#0f172a"/>
+  <rect x="14" y="14" width="572" height="872" rx="34" ry="34" fill="#eef1f5"/>
+  <rect x="14" y="14" width="572" height="44" rx="34" ry="34" fill="#ffffff"/>
+  <text x="44" y="42" font-size="22" fill="#0f172a" font-weight="600">9:41</text>
+  <circle cx="500" cy="36" r="14" fill="none" stroke="#94a3b8" stroke-width="2"/>
+  <circle cx="540" cy="36" r="14" fill="none" stroke="#94a3b8" stroke-width="2"/>
+
+  <!-- 页面 header -->
+  <rect x="14" y="58" width="572" height="92" fill="#ffffff" stroke="#e4e8ee"/>
+  <text x="48" y="106" font-size="34" font-weight="700" fill="#0f172a">七孔探针插值</text>
+  <text x="48" y="138" font-size="20" fill="#94a3b8">7 个 .prb：7=内区，1~6=外区；α=侧滑角，β=迎角</text>
+
+  <!-- 校准文件卡片（7 个 prb 标签） -->
+  <rect x="32" y="170" width="536" height="220" rx="16" ry="16" fill="#ffffff" stroke="#e4e8ee"/>
+  <text x="60" y="206" font-size="26" font-weight="600" fill="#0f172a">校准文件</text>
+  <text x="60" y="234" font-size="17" fill="#475569">选 7 个文件：.prb（7.prb 内区 + 1~6.prb 外区）</text>
+  <text x="60" y="254" font-size="17" fill="#475569">或 7 份校准 .csv（内区 + 6 扇区）</text>
+
+  <!-- 加载按钮 -->
+  <rect x="60" y="270" width="480" height="44" rx="8" ry="8" fill="url(#hero)"/>
+  <text x="300" y="298" font-size="20" font-weight="500" fill="#ffffff" text-anchor="middle">加载校准文件（.prb / .csv）</text>
+
+  <!-- 文件标签 -->
+  <rect x="60" y="324" width="60" height="22" rx="11" ry="11" fill="#eaf2fb"/>
+  <text x="90" y="340" font-size="14" fill="#0a4a8c" text-anchor="middle">7.prb</text>
+  <rect x="128" y="324" width="60" height="22" rx="11" ry="11" fill="#eaf2fb"/>
+  <text x="158" y="340" font-size="14" fill="#0a4a8c" text-anchor="middle">1.prb</text>
+  <rect x="196" y="324" width="60" height="22" rx="11" ry="11" fill="#eaf2fb"/>
+  <text x="226" y="340" font-size="14" fill="#0a4a8c" text-anchor="middle">2.prb</text>
+  <rect x="264" y="324" width="60" height="22" rx="11" ry="11" fill="#eaf2fb"/>
+  <text x="294" y="340" font-size="14" fill="#0a4a8c" text-anchor="middle">3.prb</text>
+  <rect x="332" y="324" width="60" height="22" rx="11" ry="11" fill="#eaf2fb"/>
+  <text x="362" y="340" font-size="14" fill="#0a4a8c" text-anchor="middle">4.prb</text>
+  <rect x="400" y="324" width="60" height="22" rx="11" ry="11" fill="#eaf2fb"/>
+  <text x="430" y="340" font-size="14" fill="#0a4a8c" text-anchor="middle">5.prb</text>
+  <rect x="468" y="324" width="60" height="22" rx="11" ry="11" fill="#eaf2fb"/>
+  <text x="498" y="340" font-size="14" fill="#0a4a8c" text-anchor="middle">6.prb</text>
+
+  <text x="60" y="372" font-size="16" fill="#94a3b8">内区：7.prb   ·   外区：1~6.prb</text>
+
+  <!-- 数据输入卡片 -->
+  <rect x="32" y="410" width="536" height="408" rx="16" ry="16" fill="#ffffff" stroke="#e4e8ee"/>
+  <line x1="60" y1="452" x2="540" y2="452" stroke="#e4e8ee"/>
+  <rect x="60" y="448" width="120" height="4" rx="2" ry="2" fill="#0f5cad"/>
+  <text x="120" y="442" font-size="22" font-weight="600" fill="#0f5cad" text-anchor="middle">手动单点</text>
+  <text x="480" y="442" font-size="22" fill="#94a3b8" text-anchor="middle">CSV 批量</text>
+
+  <!-- 7 个孔压 -->
+  <text x="60" y="488" font-size="20" font-weight="600" fill="#475569">孔压输入 (Pa，表压)</text>
+  <!-- P1~P4 第一行 -->
+  <rect x="60" y="502" width="116" height="44" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="76" y="530" font-size="16" font-weight="600" fill="#475569">P1</text>
+  <text x="168" y="530" font-size="20" fill="#0f172a" text-anchor="end">37227.7</text>
+  <rect x="184" y="502" width="116" height="44" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="200" y="530" font-size="16" font-weight="600" fill="#475569">P2</text>
+  <text x="292" y="530" font-size="20" fill="#0f172a" text-anchor="end">49908.4</text>
+  <rect x="308" y="502" width="116" height="44" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="324" y="530" font-size="16" font-weight="600" fill="#475569">P3</text>
+  <text x="416" y="530" font-size="20" fill="#0f172a" text-anchor="end">36503.7</text>
+  <rect x="432" y="502" width="108" height="44" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="448" y="530" font-size="16" font-weight="600" fill="#475569">P4</text>
+  <text x="528" y="530" font-size="20" fill="#0f172a" text-anchor="end">39800.5</text>
+  <!-- P5~P7 第二行 -->
+  <rect x="60" y="556" width="156" height="44" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="76" y="584" font-size="16" font-weight="600" fill="#475569">P5</text>
+  <text x="208" y="584" font-size="20" fill="#0f172a" text-anchor="end">36400.2</text>
+  <rect x="224" y="556" width="156" height="44" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="240" y="584" font-size="16" font-weight="600" fill="#475569">P6</text>
+  <text x="372" y="584" font-size="20" fill="#0f172a" text-anchor="end">35200.8</text>
+  <rect x="388" y="556" width="152" height="44" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="404" y="584" font-size="16" font-weight="600" fill="#475569">P7</text>
+  <text x="528" y="584" font-size="20" fill="#0f172a" text-anchor="end">36800.1</text>
+
+  <!-- 大气压 / 温度 -->
+  <text x="60" y="630" font-size="20" font-weight="600" fill="#475569">大气参数</text>
+  <rect x="60" y="644" width="240" height="44" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="80" y="672" font-size="18" font-weight="600" fill="#475569">Patm</text>
+  <text x="284" y="672" font-size="20" fill="#0f172a" text-anchor="end">101325</text>
+  <rect x="312" y="644" width="228" height="44" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="332" y="672" font-size="18" font-weight="600" fill="#475569">Tatm</text>
+  <text x="524" y="672" font-size="20" fill="#0f172a" text-anchor="end">20</text>
+
+  <!-- 计算按钮 -->
+  <rect x="60" y="710" width="480" height="56" rx="10" ry="10" fill="url(#hero)"/>
+  <text x="300" y="746" font-size="24" font-weight="500" fill="#ffffff" text-anchor="middle">计算</text>
+
+  <text x="300" y="796" font-size="16" fill="#94a3b8" text-anchor="middle">大小角度模式自动判定 · 超出校准网格不支持外推</text>
+
+  <rect x="220" y="838" width="160" height="6" rx="3" ry="3" fill="#94a3b8"/>
+</svg>

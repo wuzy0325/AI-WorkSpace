@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f5cad"/>
+      <stop offset="100%" stop-color="#0a4a8c"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="900" rx="44" ry="44" fill="#0f172a"/>
+  <rect x="14" y="14" width="572" height="872" rx="34" ry="34" fill="#eef1f5"/>
+  <rect x="14" y="14" width="572" height="44" rx="34" ry="34" fill="#ffffff"/>
+  <text x="44" y="42" font-size="22" fill="#0f172a" font-weight="600">9:41</text>
+  <circle cx="500" cy="36" r="14" fill="none" stroke="#94a3b8" stroke-width="2"/>
+  <circle cx="540" cy="36" r="14" fill="none" stroke="#94a3b8" stroke-width="2"/>
+
+  <!-- 页面 header -->
+  <rect x="14" y="58" width="572" height="92" fill="#ffffff" stroke="#e4e8ee"/>
+  <text x="48" y="106" font-size="34" font-weight="700" fill="#0f172a">三孔探针插值</text>
+  <text x="48" y="138" font-size="20" fill="#94a3b8">输入 3 个孔压与大气参数 · 1~10 个 .prb 跨马赫数档</text>
+
+  <!-- 计算结果卡片 -->
+  <rect x="32" y="170" width="536" height="496" rx="16" ry="16" fill="#ffffff" stroke="#e4e8ee"/>
+  <!-- 卡片标题 -->
+  <text x="60" y="206" font-size="26" font-weight="600" fill="#0f172a">计算结果</text>
+  <!-- 复制按钮 -->
+  <rect x="380" y="184" width="76" height="32" rx="16" ry="16" fill="#ffffff" stroke="#d0d6de"/>
+  <text x="418" y="206" font-size="18" fill="#475569" text-anchor="middle">复制</text>
+  <!-- 分享卡片按钮 -->
+  <rect x="466" y="184" width="100" height="32" rx="16" ry="16" fill="#ffffff" stroke="#d0d6de"/>
+  <text x="516" y="206" font-size="18" fill="#475569" text-anchor="middle">分享卡片</text>
+
+  <!-- 状态胶囊：参考 -->
+  <rect x="60" y="230" width="92" height="32" rx="16" ry="16" fill="#ecfaf0" stroke="#22c55e" stroke-opacity="0.2"/>
+  <circle cx="80" cy="246" r="6" fill="#15803d"/>
+  <text x="142" y="252" font-size="18" font-weight="600" fill="#15803d" text-anchor="end">参考</text>
+
+  <!-- 结果行 -->
+  <text x="60" y="298" font-size="22" fill="#475569">偏角 α</text>
+  <text x="540" y="298" font-size="24" font-weight="600" fill="#0f172a" text-anchor="end">0.000 deg</text>
+  <line x1="60" y1="316" x2="540" y2="316" stroke="#e4e8ee" stroke-dasharray="4 4"/>
+
+  <text x="60" y="354" font-size="22" fill="#475569">马赫数 Ma</text>
+  <text x="540" y="354" font-size="24" font-weight="600" fill="#0f172a" text-anchor="end">0.8012</text>
+  <line x1="60" y1="372" x2="540" y2="372" stroke="#e4e8ee" stroke-dasharray="4 4"/>
+
+  <text x="60" y="410" font-size="22" fill="#475569">总压 P0</text>
+  <text x="540" y="410" font-size="24" font-weight="600" fill="#0f172a" text-anchor="end">49.987 kPa</text>
+  <line x1="60" y1="428" x2="540" y2="428" stroke="#e4e8ee" stroke-dasharray="4 4"/>
+
+  <text x="60" y="466" font-size="22" fill="#475569">静压 Ps</text>
+  <text x="540" y="466" font-size="24" font-weight="600" fill="#0f172a" text-anchor="end">-2.209 kPa</text>
+
+  <!-- 说明区 -->
+  <line x1="60" y1="500" x2="540" y2="500" stroke="#e4e8ee"/>
+  <text x="60" y="532" font-size="18" fill="#94a3b8">结果状态说明：</text>
+  <rect x="60" y="546" width="50" height="22" rx="11" ry="11" fill="#ecfaf0" stroke="#22c55e" stroke-opacity="0.2"/>
+  <text x="85" y="562" font-size="14" font-weight="600" fill="#15803d" text-anchor="middle">参考</text>
+  <text x="120" y="562" font-size="16" fill="#475569">—— 已计算且在校准范围内</text>
+
+  <rect x="60" y="576" width="120" height="22" rx="11" ry="11" fill="#fdf2e0" stroke="#f59e0b" stroke-opacity="0.2"/>
+  <text x="120" y="592" font-size="14" font-weight="600" fill="#a45a00" text-anchor="middle">参考: 原因</text>
+  <text x="190" y="592" font-size="16" fill="#475569">—— 超出校准范围（仅供参考）</text>
+
+  <rect x="60" y="606" width="120" height="22" rx="11" ry="11" fill="#fdecec" stroke="#ef4444" stroke-opacity="0.2"/>
+  <text x="120" y="622" font-size="14" font-weight="600" fill="#b91c1c" text-anchor="middle">计算失败: 原因</text>
+  <text x="190" y="622" font-size="16" fill="#475569">—— 输入非法或无法收敛</text>
+
+  <!-- 底部操作提示 -->
+  <text x="300" y="700" font-size="20" fill="#475569" text-anchor="middle">「复制」→ 制表符分隔文本，可粘贴到 Excel</text>
+  <text x="300" y="730" font-size="20" fill="#475569" text-anchor="middle">「分享卡片」→ 生成图片发到微信会话或存相册</text>
+
+  <rect x="220" y="838" width="160" height="6" rx="3" ry="3" fill="#94a3b8"/>
+</svg>

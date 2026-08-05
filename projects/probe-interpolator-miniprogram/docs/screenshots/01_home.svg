@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <!-- 手机外框 -->
+  <rect width="600" height="900" rx="44" ry="44" fill="#0f172a"/>
+  <rect x="14" y="14" width="572" height="872" rx="34" ry="34" fill="#eef1f5"/>
+  <!-- 顶部状态栏（微信胶囊 + 时间） -->
+  <rect x="14" y="14" width="572" height="44" rx="34" ry="34" fill="#ffffff"/>
+  <text x="44" y="42" font-size="22" fill="#0f172a" font-weight="600">9:41</text>
+  <text x="556" y="42" font-size="20" fill="#0f172a" text-anchor="end">●●● ▮</text>
+  <!-- 微信胶囊（更多 + 关闭） -->
+  <circle cx="500" cy="36" r="14" fill="none" stroke="#94a3b8" stroke-width="2"/>
+  <circle cx="540" cy="36" r="14" fill="none" stroke="#94a3b8" stroke-width="2"/>
+
+  <!-- hero 品牌区 -->
+  <defs>
+    <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f5cad"/>
+      <stop offset="100%" stop-color="#0a4a8c"/>
+    </linearGradient>
+  </defs>
+  <rect x="14" y="58" width="572" height="190" fill="url(#hero)"/>
+  <text x="48" y="148" font-size="42" font-weight="700" fill="#ffffff">探针插值计算器</text>
+  <text x="48" y="186" font-size="22" fill="#ffffff" opacity="0.85">风洞探针 · 离线插值 · 单位换算</text>
+  <text x="48" y="220" font-size="20" fill="#ffffff" opacity="0.8">· 3/5/7 孔   · PRB 校准   · CSV 批量</text>
+
+  <!-- 探针瓦片 1：三孔 -->
+  <rect x="32" y="280" width="536" height="120" rx="16" ry="16" fill="#ffffff" stroke="#e4e8ee"/>
+  <rect x="56" y="308" width="64" height="64" rx="14" ry="14" fill="url(#hero)"/>
+  <text x="88" y="352" font-size="34" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+  <text x="148" y="338" font-size="28" font-weight="600" fill="#0f172a">三孔探针</text>
+  <text x="148" y="368" font-size="20" fill="#94a3b8">3 孔压 · 1~10 个 .prb</text>
+  <rect x="148" y="378" width="86" height="22" rx="11" ry="11" fill="#eaf2fb"/>
+  <text x="191" y="394" font-size="16" fill="#0a4a8c" text-anchor="middle">多 PRB</text>
+  <rect x="240" y="378" width="98" height="22" rx="11" ry="11" fill="#eaf2fb"/>
+  <text x="289" y="394" font-size="16" fill="#0a4a8c" text-anchor="middle">一维角度</text>
+  <text x="540" y="345" font-size="38" fill="#94a3b8" text-anchor="middle">›</text>
+
+  <!-- 探针瓦片 2：五孔 -->
+  <rect x="32" y="420" width="536" height="120" rx="16" ry="16" fill="#ffffff" stroke="#e4e8ee"/>
+  <rect x="56" y="448" width="64" height="64" rx="14" ry="14" fill="url(#hero)"/>
+  <text x="88" y="492" font-size="34" font-weight="700" fill="#ffffff" text-anchor="middle">5</text>
+  <text x="148" y="478" font-size="28" font-weight="600" fill="#0f172a">五孔探针</text>
+  <text x="148" y="508" font-size="20" fill="#94a3b8">5 孔压 · 多马赫 .prb 校准</text>
+  <rect x="148" y="518" width="86" height="22" rx="11" ry="11" fill="#eaf2fb"/>
+  <text x="191" y="534" font-size="16" fill="#0a4a8c" text-anchor="middle">多马赫</text>
+  <rect x="240" y="518" width="98" height="22" rx="11" ry="11" fill="#eaf2fb"/>
+  <text x="289" y="534" font-size="16" fill="#0a4a8c" text-anchor="middle">二维角度</text>
+  <text x="540" y="485" font-size="38" fill="#94a3b8" text-anchor="middle">›</text>
+
+  <!-- 探针瓦片 3：七孔 -->
+  <rect x="32" y="560" width="536" height="120" rx="16" ry="16" fill="#ffffff" stroke="#e4e8ee"/>
+  <rect x="56" y="588" width="64" height="64" rx="14" ry="14" fill="url(#hero)"/>
+  <text x="88" y="632" font-size="34" font-weight="700" fill="#ffffff" text-anchor="middle">7</text>
+  <text x="148" y="618" font-size="28" font-weight="600" fill="#0f172a">七孔探针</text>
+  <text x="148" y="648" font-size="20" fill="#94a3b8">7 孔压 · 大小角度自动判定</text>
+  <rect x="148" y="658" width="86" height="22" rx="11" ry="11" fill="#eaf2fb"/>
+  <text x="191" y="674" font-size="16" fill="#0a4a8c" text-anchor="middle">内外区</text>
+  <rect x="240" y="658" width="110" height="22" rx="11" ry="11" fill="#eaf2fb"/>
+  <text x="295" y="674" font-size="16" fill="#0a4a8c" text-anchor="middle">自动分区</text>
+  <text x="540" y="625" font-size="38" fill="#94a3b8" text-anchor="middle">›</text>
+
+  <!-- 底部说明 -->
+  <text x="300" y="740" font-size="20" fill="#94a3b8" text-anchor="middle">点击上方瓦片进入对应探针工作区</text>
+  <text x="300" y="772" font-size="18" fill="#cbd5e1" text-anchor="middle">校准 .prb 由用户从微信会话上传</text>
+
+  <!-- 底部 Home 指示条 -->
+  <rect x="220" y="838" width="160" height="6" rx="3" ry="3" fill="#94a3b8"/>
+</svg>

@@ -1,10 +1,17 @@
 // 结果分享卡片 —— Canvas 2D 绘制与导出分享（依赖 wx 运行时）。
 // 纯数据模型见 share-card.js（Node 可校验）。本模块无法在 Node 端测试，
 // 绘制逻辑力求健壮并带三级回退：wx.shareFileMessage → saveImageToPhotosAlbum → previewImage。
+//
+// 状态语义对齐桌面端 0.2.1「参考」体系：
+//   model.statusKind = 'ok'（绿）| 'warn'（琥珀）| 'error'（红）
+//   model.statusText = 「参考」|「参考: 原因」|「计算失败: 原因」
+// 旧字段 model.isValid/model.warning 仅作 5/7 孔兼容回退，3 孔已切到 statusText/statusKind。
 
 const CARD_W = 600;        // 逻辑宽度（px）
 const PAD = 28;
-const ACCENT = '#1f2937';
+// 主色与 app.wxss --accent / --accent-ink 一致（科学蓝降饱和）
+const ACCENT = '#0f5cad';
+const ACCENT_INK = '#0a4a8c';
 const ACCENT_BAR_H = 64;
 const LINE_GAP = 30;
 const TITLE_FS = 22;
@@ -12,6 +19,13 @@ const SUB_FS = 13;
 const LABEL_FS = 15;
 const VAL_FS = 15;
 const FOOTER = '探针插值计算器';
+
+// 状态档位 → 颜色（与 app.wxss --ok/--warn/--err 一致，降饱和版）
+const STATUS_COLORS = {
+  ok: '#15803d',     // 绿（参考-范围内）
+  warn: '#a45a00',   // 琥珀（参考-超范围）
+  error: '#b91c1c',  // 红（计算失败）
+};
 
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -46,7 +60,8 @@ function computeHeight(model) {
   h += LABEL_FS;                         // “结果”标题
   h += model.results.length * LINE_GAP;
   h += 10;
-  h += LABEL_FS + LINE_GAP;              // 有效性
+  h += LABEL_FS + LINE_GAP;              // 状态行
+  // 兼容旧 model.warning：3 孔已把原因并入 statusText，warning 通常为空；5/7 孔旧路径仍可能携带
   if (model.warning) h += LINE_GAP;
   h += PAD + 20;                         // 底部留白 + 页脚
   return Math.ceil(h);
@@ -60,8 +75,11 @@ function drawCard(ctx, model, W, H) {
   roundRect(ctx, 0, 0, W, H, 14);
   ctx.fill();
 
-  // 顶部色条（仅上圆角）
-  ctx.fillStyle = ACCENT;
+  // 顶部色条（仅上圆角）—— 与首页 hero / probe-badge 一致的渐变
+  const grad = ctx.createLinearGradient(0, 0, W, ACCENT_BAR_H);
+  grad.addColorStop(0, ACCENT);
+  grad.addColorStop(1, ACCENT_INK);
+  ctx.fillStyle = grad;
   accentBar(ctx, W, ACCENT_BAR_H, 14);
   ctx.fill();
 
@@ -123,17 +141,22 @@ function drawCard(ctx, model, W, H) {
   }
   y += 10;
 
-  // 有效性
+  // 状态行（「参考」/「参考: 原因」/「计算失败: 原因」），按 statusKind 取色
+  // 5/7 孔旧路径若未提供 statusText，则回退到旧「有效/无效」语义以保兼容。
+  const statusText = (model.statusText !== undefined && model.statusText !== '')
+    ? String(model.statusText)
+    : (model.isValid ? '有效' : '无效');
+  const statusKind = model.statusKind || (model.isValid ? 'ok' : 'error');
   ctx.textAlign = 'left';
   ctx.font = '600 ' + LABEL_FS + 'px sans-serif';
-  ctx.fillStyle = model.isValid ? '#16a34a' : '#dc2626';
-  ctx.fillText(model.isValid ? '有效' : '无效', PAD, y);
+  ctx.fillStyle = STATUS_COLORS[statusKind] || STATUS_COLORS.error;
+  ctx.fillText(statusText, PAD, y);
   y += LINE_GAP;
 
-  // 警告
+  // 兼容旧 model.warning（3 孔已并入 statusText，通常为空；5/7 孔旧路径仍可能携带独立警告）
   if (model.warning) {
     ctx.font = SUB_FS + 'px sans-serif';
-    ctx.fillStyle = '#dc2626';
+    ctx.fillStyle = STATUS_COLORS.error;
     const w = model.warning.length > 64 ? model.warning.slice(0, 61) + '...' : model.warning;
     ctx.fillText('⚠ ' + w, PAD, y);
     y += LINE_GAP;
