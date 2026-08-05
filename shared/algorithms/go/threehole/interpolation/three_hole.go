@@ -20,6 +20,10 @@ const (
 	gammaRef  = 1.4    // 20°C时的参考比热比（γ）
 	tempRef   = 20.0   // 参考温度(°C)
 	tempCoeff = 0.0002 // 温度修正系数 γ ≈ gammaRef - tempCoeff*(T-tempRef)
+
+	// airGasConstant 干空气气体常数 R = 287 J/(kg·K)
+	// 用于由马赫数反算气流速度: V = Ma · sqrt(γ · R · T_K)
+	airGasConstant = 287.0
 )
 
 type calibrationItem struct {
@@ -128,6 +132,7 @@ func (t *ThreeHoleInterpolator) Calculate(input InterpolationInput) (Interpolati
 		return InterpolationResult{
 			Alpha:          0,
 			MachNumber:     t.initMa,
+			Velocity:       calcVelocity(t.initMa, tatm),
 			TotalPressure:  p2,
 			StaticPressure: p2,
 			IsValid:        false,
@@ -153,6 +158,7 @@ func (t *ThreeHoleInterpolator) finalizeSingle(kbTemp, p2, deltaP, pa, tatm floa
 		return InterpolationResult{
 			Alpha:          0,
 			MachNumber:     t.initMa,
+			Velocity:       calcVelocity(t.initMa, tatm),
 			TotalPressure:  p2,
 			StaticPressure: p2,
 			IterationCount: 1,
@@ -189,6 +195,7 @@ func (t *ThreeHoleInterpolator) finalizeSingle(kbTemp, p2, deltaP, pa, tatm floa
 	return InterpolationResult{
 		Alpha:          match.Alpha,
 		MachNumber:     mach,
+		Velocity:       calcVelocity(mach, tatm),
 		TotalPressure:  pt,
 		StaticPressure: ps,
 		IterationCount: 1,
@@ -240,6 +247,7 @@ func (t *ThreeHoleInterpolator) calculateMulti(kbTemp, p2, deltaP, pa, tatm floa
 		return InterpolationResult{
 			Alpha:          0,
 			MachNumber:     currentMa,
+			Velocity:       calcVelocity(currentMa, tatm),
 			TotalPressure:  p2,
 			StaticPressure: p2,
 			IterationCount: iteration,
@@ -279,6 +287,7 @@ func (t *ThreeHoleInterpolator) calculateMulti(kbTemp, p2, deltaP, pa, tatm floa
 	return InterpolationResult{
 		Alpha:          finalMatch.Alpha,
 		MachNumber:     mach,
+		Velocity:       calcVelocity(mach, tatm),
 		TotalPressure:  pt,
 		StaticPressure: ps,
 		IterationCount: iteration + 1,
@@ -469,6 +478,31 @@ func calcGamma(tatm float64) float64 {
 		return gammaRef
 	}
 	return gammaRef - tempCoeff*(tatm-tempRef)
+}
+
+// calcVelocity 由马赫数与大气温度计算气流速度（m/s）。
+//
+// 公式: V = Ma · sqrt(γ · R · T_K)
+//   - γ 复用 calcGamma 的温度修正比热比，与 calcMach 内部一致
+//   - R = airGasConstant (287 J/(kg·K))
+//   - T_K = tatm + 273.15
+//
+// 任一输入非法（Ma 非有限或负、T_K 非正、γ 非法）时返回 0，
+// 与 MachNumber 的兜底语义对齐：Ma 有效（含 initMa/currentMa 兜底）则给出对应速度，
+// Ma 为 0/NaN（如输入非法、calcMach 失败）时返回 0。
+func calcVelocity(ma, tatm float64) float64 {
+	if math.IsNaN(ma) || math.IsInf(ma, 0) || ma < 0 {
+		return 0
+	}
+	tempK := tatm + 273.15
+	if math.IsNaN(tempK) || math.IsInf(tempK, 0) || tempK <= 0 {
+		return 0
+	}
+	gamma := calcGamma(tatm)
+	if math.IsNaN(gamma) || math.IsInf(gamma, 0) || gamma <= 1 {
+		return 0
+	}
+	return ma * math.Sqrt(gamma*airGasConstant*tempK)
 }
 
 func (t *ThreeHoleInterpolator) LoadPrbData(fileData []PrbFileData) (*LoadPrbResult, error) {

@@ -11,6 +11,10 @@ type InterpolationInput struct {
 type InterpolationResult struct {
 	Alpha          float64 `json:"alpha"`
 	MachNumber     float64 `json:"machNumber"`
+	// Velocity 气流速度（m/s），由 MachNumber 与 Tatm 经 V=Ma·sqrt(γ·R·T) 推导。
+	// 始终跟随 MachNumber：Ma 有效或兜底（initMa/currentMa）时给出对应速度，
+	// Ma 为 0/NaN（如输入非法、calcMach 失败）时 Velocity=0。
+	Velocity       float64 `json:"velocity"`
 	TotalPressure  float64 `json:"P0"`
 	StaticPressure float64 `json:"Ps"`
 	IterationCount int     `json:"iterationCount"`

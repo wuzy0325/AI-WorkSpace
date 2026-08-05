@@ -41,7 +41,8 @@ type goldenCase struct {
 // goldenExpected 三孔期望输出
 // Alpha = 已知输入角度(校准数据可逆性)
 // MachNumber/IsValid = 当前实现输出快照(回归基线)
-// 注: 三孔无 Beta 字段(只有 Alpha), 无 V 字段(只有 MachNumber/Pt/Ps)
+// 注: 三孔无 Beta 字段(只有 Alpha); Velocity 由 MachNumber 推导(V=Ma·sqrt(γRT)),
+// 黄金基准不单独断言 Velocity(由 MachNumber 唯一确定, 断言 Ma 即覆盖)
 type goldenExpected struct {
 	Alpha      float64 `json:"alpha"`
 	MachNumber float64 `json:"machNumber"`
