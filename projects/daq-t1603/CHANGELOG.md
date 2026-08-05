@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.6.9] - 2026-08-05
+
+### Fixed
+- 修复连接成功后界面显示的采样频率等参数始终是本地 profile 配置值、而非设备端实际值的问题。连接阶段配置同步（`readAllConfig`）此前出于 ADR-009 Windows deadline 失效顾虑不查询 `@fd SPS/AVG/TNUM`（响应无分隔符且长度可变），导致 `cfg.SamplingRate` 一直保留本地值，适配器 `spsMsToHz` 转换后界面显示的频率与机器实际不一致。修复：socket deadline 生效的机器上（`connectLocked` 的 `probeDeadlineBroken` 判定）连接时按 30ms 静默窗口读回设备实际 SPS/AVG/TNUM 并覆盖本地配置，`OnConfigSynced` 把设备实际值镜像到上层 profile；deadline 失效机器保留旧行为（不查询、保留已保存值），避免静默窗口永不触发导致 `SendCommandIdle` 阻塞到 watchdog 毒化连接、整个 Connect 失败。
+- 修复 `readAllConfig` 头注释与容错语义不符的问题：设备应答但值不可解析（如固件回 `E`）时保留原值继续；设备静默不响应时 `SendCommandIdle` 触发 R0-12 毒化连接并中止同步（连接已不可复用，属刻意的 fail-fast）。
+### Internal
+- 新增 `sendCommandIdle`（`protocol.SendCommandIdle` + 30ms 静默窗口）与 `readIdle` 变长查询；`readAllConfig` 增加 `!d.deadlineBroken` 守卫。
+- 回归测试：`TestDAQT1603ReadAllConfigMatchesDelimiterFreeHardwareResponses` 断言设备值覆盖本地；新增 `TestDAQT1603ReadAllConfigSkipsVariableLengthOnDeadlineBroken`（deadline 失效不查询、保留本地值）；6 个 sync 流程测试补充 SPS/AVG/TNUM 响应。
+- 同步 6 个版本号文件到 0.6.9：`VERSION` / `wails.json` / `frontend/package.json` / `frontend/package-lock.json`（含 `packages[""]`）/ `build/windows/installer/project.nsi` / `build/config.yml`。
+### Verification
+- shared device-sdk `go test ./...`: passed（含新增 deadline-broken 用例）。
+- `$env:GOWORK="off"; go test ./... -count=1 -timeout 120s`: passed.
+- `$env:GOWORK="off"; go vet ./...`: passed.
+- `npm run typecheck`: passed.
+- `npm run build`: passed.
+- `task release`: passed.
+- `makensis '-DARG_WAILS_AMD64_BINARY=..\..\bin\daq-t1603.exe' project.nsi`（在 `build/windows/installer/` 目录下执行）: passed.
+### Known Issues
+- ADR-009 故障机器（deadline 失效）上连接阶段仍不查询 SPS/AVG/TNUM，界面显示频率为本地 profile 值（与 0.6.8 一致），属预期行为。
+
 ## [0.6.8] - 2026-08-04
 
 ### Fixed
