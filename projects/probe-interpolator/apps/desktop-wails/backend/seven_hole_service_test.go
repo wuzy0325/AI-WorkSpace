@@ -22,8 +22,8 @@ import (
 // 测试覆盖：
 //   - 输入转换（toSevenHoleCoreInput）：表压直传，无 PressureMode 转换
 //   - 结果映射（toSevenHoleAppResult）：字段一一对应
-//   - 内区插值（boundary.json idx=87，pure sideslip α=15°, β≈0°）
-//   - 外区插值（boundary.json idx=0，sector=3 大角度）
+//   - 内区插值（golden.json idx=87，pure sideslip α=15°, β≈0°）
+//   - 外区插值（golden.json idx=290，sector=3 一般扇区内点）
 //   - 批量计算 Data 数组长度与部分失败容错
 //   - 并发安全（配合 -race 检测 RWMutex 正确性）
 //   - 加载状态查询（IsSevenHolePrbLoaded / GetSevenHoleValidRange）
@@ -185,7 +185,7 @@ func TestToSevenHoleAppResult(t *testing.T) {
 // ==================== 单点计算测试（真实校准工况） ====================
 
 // TestCalculateSevenHoleInnerZone 验证内区插值（小角度模式）。
-// 数据来源：boundary.json idx=87，pure sideslip α=15°, β≈0°。
+// 数据来源：golden.json idx=87，pure sideslip α=15°, β≈0°。
 // 此工况 P7 最大，触发内区插值路径。
 func TestCalculateSevenHoleInnerZone(t *testing.T) {
 	app := setupSevenHoleLoadedApp(t)
@@ -204,36 +204,36 @@ func TestCalculateSevenHoleInnerZone(t *testing.T) {
 		t.Fatalf("内区插值应返回有效结果, got warning: %q", resp.Data.Warning)
 	}
 
-	// 期望值来自 boundary.json golden 数据（与 Python 实现对齐）
+	// 期望值来自 golden.json idx=87（新全精度 PRB；模式 little，网格节点附近）
 	const angleTol = 1e-4
 	const pressTol = 1e-3
-	if math.Abs(resp.Data.Alpha-15.00072914776609) > angleTol {
-		t.Errorf("Alpha = %.8f, want 15.00072915 (内区 pure sideslip)", resp.Data.Alpha)
+	if math.Abs(resp.Data.Alpha-14.999999998880819) > angleTol {
+		t.Errorf("Alpha = %.8f, want 15.00000000 (内区 pure sideslip)", resp.Data.Alpha)
 	}
-	if math.Abs(resp.Data.Beta-0.0060962426340023445) > angleTol {
-		t.Errorf("Beta = %.8f, want 0.00609624 (内区 pure sideslip)", resp.Data.Beta)
+	if math.Abs(resp.Data.Beta-(-0.000000001216380)) > angleTol {
+		t.Errorf("Beta = %.8f, want 0.00000000 (内区 pure sideslip)", resp.Data.Beta)
 	}
-	if math.Abs(resp.Data.P0-4059.0940908805096) > pressTol {
-		t.Errorf("P0 = %.6f, want 4059.09409088", resp.Data.P0)
+	if math.Abs(resp.Data.P0-4060.382999954085790) > pressTol {
+		t.Errorf("P0 = %.6f, want 4060.38300000", resp.Data.P0)
 	}
-	if math.Abs(resp.Data.Ps-(-27.47466693587951)) > pressTol {
-		t.Errorf("Ps = %.6f, want -27.47466694", resp.Data.Ps)
+	if math.Abs(resp.Data.Ps-(-29.233000022617585)) > pressTol {
+		t.Errorf("Ps = %.6f, want -29.23300002", resp.Data.Ps)
 	}
-	if math.Abs(resp.Data.MachNumber-0.2412625960332932) > 1e-6 {
-		t.Errorf("MachNumber = %.8f, want 0.24126260", resp.Data.MachNumber)
+	if math.Abs(resp.Data.MachNumber-0.241353359691929) > 1e-6 {
+		t.Errorf("MachNumber = %.8f, want 0.24135336", resp.Data.MachNumber)
 	}
 }
 
 // TestCalculateSevenHoleOuterZone 验证外区插值（大角度模式）。
-// 数据来源：boundary.json idx=0，sector=3 大角度工况。
+// 数据来源：golden.json idx=290，sector=3 一般扇区内点工况。
 // 此工况 P3 最大，触发外区扇区 3 插值路径。
 func TestCalculateSevenHoleOuterZone(t *testing.T) {
 	app := setupSevenHoleLoadedApp(t)
 
 	input := SevenHoleInterpolationInput{
-		P1: -3095.95, P2: -1290.333, P3: 3809.1, P4: 2715.4,
-		P5: -2133.933, P6: -2859.45, P7: 393.717,
-		Patm: 98869.0, Tatm: 28.0,
+		P1: -2587.667, P2: 1488.2, P3: 3963.717, P4: 835.75,
+		P5: -2521.75, P6: -2647.617, P7: 1338.967,
+		Patm: 98876.0, Tatm: 28.0,
 	}
 
 	resp := app.CalculateSevenHole(input)
@@ -244,20 +244,20 @@ func TestCalculateSevenHoleOuterZone(t *testing.T) {
 		t.Fatalf("外区插值应返回有效结果, got warning: %q", resp.Data.Warning)
 	}
 
-	// 期望值来自 boundary.json golden 数据
+	// 期望值来自 golden.json idx=290（新全精度 PRB；mode big sector=3）
 	const angleTol = 1e-4
 	const pressTol = 1e-3
-	if math.Abs(resp.Data.Alpha-(-30.18734983990938)) > angleTol {
-		t.Errorf("Alpha = %.8f, want -30.18734984 (外区 sector=3)", resp.Data.Alpha)
+	if math.Abs(resp.Data.Alpha-(-33.344110981854953)) > angleTol {
+		t.Errorf("Alpha = %.8f, want -33.34411098 (外区 sector=3)", resp.Data.Alpha)
 	}
-	if math.Abs(resp.Data.Beta-(-29.82201536535757)) > angleTol {
-		t.Errorf("Beta = %.8f, want -29.82201537 (外区 sector=3)", resp.Data.Beta)
+	if math.Abs(resp.Data.Beta-(-13.467834225808051)) > angleTol {
+		t.Errorf("Beta = %.8f, want -13.46783423 (外区 sector=3)", resp.Data.Beta)
 	}
-	if math.Abs(resp.Data.P0-4137.000937546321) > pressTol {
-		t.Errorf("P0 = %.6f, want 4137.00093755", resp.Data.P0)
+	if math.Abs(resp.Data.P0-4069.750000029121566) > pressTol {
+		t.Errorf("P0 = %.6f, want 4069.75000003", resp.Data.P0)
 	}
-	if math.Abs(resp.Data.Ps-(-21.331621335391247)) > pressTol {
-		t.Errorf("Ps = %.6f, want -21.33162134", resp.Data.Ps)
+	if math.Abs(resp.Data.Ps-(-36.500000036759950)) > pressTol {
+		t.Errorf("Ps = %.6f, want -36.50000004", resp.Data.Ps)
 	}
 }
 

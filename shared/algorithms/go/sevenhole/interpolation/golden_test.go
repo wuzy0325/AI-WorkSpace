@@ -10,11 +10,11 @@ import (
 	"testing"
 )
 
-// goldenEntry mirrors one record of testdata/golden/*.json, produced by
-// device-lab/skills/seven-hole-probe/tools/gen_traversal_fixtures.py from
-// the authoritative Python implementation (seven_hole.cal_ab). Regenerate
-// the fixtures (and review the diff) whenever the .prb format, the
-// algorithm, the seven_hole.py API, or the source dataset changes.
+// goldenEntry mirrors one record of testdata/golden/*.json. Calibration-node
+// entries are generated from their defining grid nodes; constructed non-node
+// entries are produced by the authoritative Python seven_hole.cal_ab. Regenerate
+// the fixtures (and review the diff) whenever the .prb format, the algorithm,
+// the seven_hole.py API, or the source dataset changes.
 type goldenEntry struct {
 	Index    int    `json:"index"`
 	Mode     string `json:"mode"` // "little" | "big" | "out" (out = Python beyond_border path)
@@ -162,10 +162,9 @@ func checkGoldenEntry(t *testing.T, p *SevenHolePrbInterpolator, e goldenEntry) 
 	}
 }
 
-// TestGolden is the Go<->Python cross-check gate (spec section 7.1): 481
-// calibration points. 435 inside the legal grid must match Python within
-// tolerance; the 46 out-of-grid points (Python beyond_border path) assert
-// the Go no-extrapolation contract instead (spec section 4).
+// TestGolden is the 481-point calibration round-trip gate (spec section 7.1).
+// Every source row is an exact calibration node: 169 inner nodes and 312
+// outer nodes must reproduce the generated full-precision golden result.
 func TestGolden(t *testing.T) {
 	p := loadGoldenInterpolator(t)
 	entries := loadGoldenEntries(t, "golden.json")
@@ -182,10 +181,8 @@ func TestGolden(t *testing.T) {
 	t.Logf("golden modes: %v", counts)
 }
 
-// TestBoundary runs the constructed boundary cases (all inside the legal
-// grid): inner +/-30 grid lines, the theta=30 junction, the theta=45 outer
-// boundary, ka=kb=0 origin, pure sideslip, pure attack, a second-candidate
-// fallback, a general in-sector point, and P7=0 as a legal input.
+// TestBoundary runs calibration boundaries, guard cases, and independently
+// generated non-node Python parity cases, all inside the legal grid.
 func TestBoundary(t *testing.T) {
 	p := loadGoldenInterpolator(t)
 	entries := loadGoldenEntries(t, "boundary.json")
@@ -199,6 +196,25 @@ func TestBoundary(t *testing.T) {
 			}
 			checkGoldenEntry(t, p, e)
 		})
+	}
+}
+
+func TestPythonParityNonNodeInputs(t *testing.T) {
+	p := loadGoldenInterpolator(t)
+	entries := loadGoldenEntries(t, "boundary.json")
+	want := map[string]bool{"inner": false, "outer": false}
+	for _, e := range entries {
+		for kind := range want {
+			if e.Why == "python parity non-node "+kind {
+				checkGoldenEntry(t, p, e)
+				want[kind] = true
+			}
+		}
+	}
+	for kind, found := range want {
+		if !found {
+			t.Errorf("boundary golden missing Python parity non-node %s case", kind)
+		}
 	}
 }
 
@@ -230,6 +246,118 @@ func TestGoldenNegativeGaugePressure(t *testing.T) {
 	}
 	if !res.IsValid {
 		t.Fatalf("negative gauge pressure must be accepted, got invalid: %q", res.Warning)
+	}
+}
+
+// TestInnerCalibrationNodesStayInner is the regression gate for the
+// self-extracted PRB reverse-inference fix: all 169 small-angle calibration
+// grid nodes (the first 169 golden entries, in dataset row order) must resolve
+// in the INNER zone, never being routed to the large-angle zone (spec: inner
+// zone tried first; a calibration grid node is by construction inside the
+// inner grid).
+//
+// Before the fix, the reference PRB carried 3-decimal-rounded Kalpha/Kbeta
+// (~5e-4 error vs same-source recompute), so 21 boundary nodes were classified
+// outside the inner polygon and fell through to the big-angle zone. Golden now
+// records them as mode=little (grid-node direct hits), so this test asserts
+// that contract directly.
+func TestInnerCalibrationNodesStayInner(t *testing.T) {
+	entries := loadGoldenEntries(t, "golden.json")
+	if len(entries) < 169 {
+		t.Fatalf("golden entries = %d, want >= 169 inner rows", len(entries))
+	}
+	p := loadGoldenInterpolator(t)
+	for i := 0; i < 169; i++ {
+		e := entries[i]
+		in := InterpolationInput{
+			P1: e.Input.P1, P2: e.Input.P2, P3: e.Input.P3, P4: e.Input.P4,
+			P5: e.Input.P5, P6: e.Input.P6, P7: e.Input.P7,
+			PAtm: e.Input.Pa, TAtm: e.Input.T,
+		}
+		res, err := p.Calculate(in)
+		if err != nil {
+			t.Errorf("inner node idx%d: error %v", i, err)
+			continue
+		}
+		if !res.IsValid {
+			t.Errorf("inner node idx%d: invalid %q", i, res.Warning)
+			continue
+		}
+		// Inner mode: Theta==Alpha and Phi==Beta (spec: inner zone theta=alpha).
+		if res.Theta != res.Alpha || res.Phi != res.Beta {
+			t.Errorf("inner node idx%d: routed to outer zone (theta=%.6f phi=%.6f)", i, res.Theta, res.Phi)
+		}
+	}
+}
+
+// TestCalibrationNodesRoundTripExact verifies the defining self-consistency
+// contract of calibration data: pressures from every committed calibration
+// row must resolve to that row's own grid node. Exact-node recognition is
+// intentionally tighter than the interpolation fallback so nearby runtime
+// measurements remain continuous rather than snapping to a node.
+func TestCalibrationNodesRoundTripExact(t *testing.T) {
+	entries := loadGoldenEntries(t, "golden.json")
+	if len(entries) != 481 {
+		t.Fatalf("golden entries = %d, want 481", len(entries))
+	}
+	p := loadGoldenInterpolator(t)
+	for i, e := range entries {
+		in := InterpolationInput{
+			P1: e.Input.P1, P2: e.Input.P2, P3: e.Input.P3, P4: e.Input.P4,
+			P5: e.Input.P5, P6: e.Input.P6, P7: e.Input.P7,
+			PAtm: e.Input.Pa, TAtm: e.Input.T,
+		}
+		res, err := p.Calculate(in)
+		if err != nil {
+			t.Errorf("calibration row %d: Calculate: %v", i, err)
+			continue
+		}
+		if !res.IsValid {
+			t.Errorf("calibration row %d: invalid: %s", i, res.Warning)
+			continue
+		}
+
+		if i < innerPointCount {
+			ia := i % innerGridSide
+			ib := i / innerGridSide
+			gp := p.inner.points[ia][ib]
+			wantPt, wantPs, solveErr := solveInnerPtPs(in, gp.cpt, gp.cps)
+			if solveErr != nil {
+				t.Fatalf("inner row %d: solve expected pressures: %v", i, solveErr)
+			}
+			assertCalibrationResult(t, i, res, gp.a, gp.b, wantPt, wantPs)
+			continue
+		}
+
+		outerIndex := i - innerPointCount
+		sector := outerIndex/52 + 1
+		ka, kb, coeffErr := outerKaKb(in, sector)
+		if coeffErr != nil {
+			t.Fatalf("outer row %d sector %d: coefficients: %v", i, sector, coeffErr)
+		}
+		gp, ok := outerFindGridPointByKaKbWithin(p.outer[sector-1], ka, kb, gridEps)
+		if !ok {
+			t.Fatalf("outer row %d sector %d: pressure coefficients do not match its calibration grid", i, sector)
+		}
+		wantPt, wantPs, solveErr := solveOuterPtPs(in, sector, gp.cpt, gp.cps)
+		if solveErr != nil {
+			t.Fatalf("outer row %d sector %d: solve expected pressures: %v", i, sector, solveErr)
+		}
+		assertCalibrationResult(t, i, res, gp.a, gp.b, wantPt, wantPs)
+	}
+}
+
+func assertCalibrationResult(t *testing.T, row int, got InterpolationResult, theta, phi, pt, ps float64) {
+	t.Helper()
+	const angleTolerance = 1e-8
+	const pressureTolerance = 1e-6
+	if math.Abs(got.Theta-theta) > angleTolerance || math.Abs(got.Phi-phi) > angleTolerance {
+		t.Errorf("calibration row %d: theta/phi=(%.10g,%.10g), want (%.10g,%.10g)",
+			row, got.Theta, got.Phi, theta, phi)
+	}
+	if math.Abs(got.TotalPressure-pt) > pressureTolerance || math.Abs(got.StaticPressure-ps) > pressureTolerance {
+		t.Errorf("calibration row %d: pt/ps=(%.10g,%.10g), want (%.10g,%.10g)",
+			row, got.TotalPressure, got.StaticPressure, pt, ps)
 	}
 }
 

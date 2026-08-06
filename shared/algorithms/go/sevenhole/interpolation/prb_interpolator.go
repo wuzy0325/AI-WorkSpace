@@ -153,6 +153,20 @@ func (p *SevenHolePrbInterpolator) Calculate(input InterpolationInput) (result I
 
 	first, second := maxPressureHoles(input)
 
+	// A pressure row used to build a candidate outer calibration node must round-trip
+	// through that exact node even when its inner coefficients also fall in the
+	// overlapping small-angle polygon. The gridEps match is deliberately much
+	// tighter than interpolation fallbacks, so ordinary nearby measurements
+	// retain the established inner-first routing and continuous interpolation.
+	if sector, gp, ok := p.findExactOuterCalibrationNode(input, first, second); ok {
+		pt, ps, err := solveOuterPtPs(input, sector, gp.cpt, gp.cps)
+		if err != nil {
+			return InterpolationResult{}, err
+		}
+		alpha, beta := convertThetaPhiToAlphaBeta(gp.a, gp.b)
+		return assembleResult(input, alpha, beta, gp.a, gp.b, pt, ps)
+	}
+
 	// Inner-zone try (Python cal_ab branch order: inner first).
 	ka, kb, err := innerKaKb(input)
 	if err != nil {
@@ -200,6 +214,19 @@ func (p *SevenHolePrbInterpolator) Calculate(input InterpolationInput) (result I
 		IsValid: false,
 		Warning: "压力系数超出七孔PRB校准网格范围，不支持外推",
 	}, nil
+}
+
+func (p *SevenHolePrbInterpolator) findExactOuterCalibrationNode(input InterpolationInput, first, second int) (int, gridPoint, bool) {
+	for _, sector := range [2]int{first, second} {
+		ka, kb, err := outerKaKb(input, sector)
+		if err != nil {
+			continue
+		}
+		if gp, ok := outerFindGridPointByKaKbWithin(p.outer[sector-1], ka, kb, gridEps); ok {
+			return sector, gp, true
+		}
+	}
+	return 0, gridPoint{}, false
 }
 
 // assembleResult computes V/Ma and packs the final result.

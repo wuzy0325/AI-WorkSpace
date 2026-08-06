@@ -233,3 +233,84 @@ func TestInnerZoneBoundarySignZero(t *testing.T) {
 		t.Errorf("inversion = (%v,%v), want (0,-30)", got.a, got.b)
 	}
 }
+
+// TestInnerZoneGridPointFallback verifies the locateInvertAB fallback: when a
+// (ka,kb) point lies exactly on a grid node of a self-extracted PRB (reverse
+// inference), float noise can make locateInvertAB miss the enclosing quad even
+// though pointInPolygon accepted the point. The fallback must return the grid
+// node's own (a,b,cpt,cps) instead of erroring, mirroring the outer-zone
+// outerFindGridPointByKaKb path (spec: no extrapolation, direct hit only).
+//
+// 畸变映射（带交叉项）使单元格不是精确平行四边形，边界网格点反推时
+// locateInvertAB 的闭区间边判定会在浮点噪声下漏判——这正是自提取 PRB
+// 反推场景的失败模式。测试先直接调用 locateInvertAB 确认至少一个网格点
+// 无法被四边形定位（found==false），再对同一点调用 innerZoneInterpolate
+// 断言兜底精确返回该网格点；找不到失败点时用 t.Fatal 暴露夹具失效。
+func TestInnerZoneGridPointFallback(t *testing.T) {
+	distortedMap := func(a, b float64) (ka, kb, cpt, cps float64) {
+		ka = 0.05*a + 0.01*b + 0.002*a*b
+		kb = -0.02*a + 0.04*b - 0.001*a*b
+		cpt = 1.1 + 0.03*a - 0.02*b
+		cps = -0.5 - 0.01*a + 0.04*b
+		return ka, kb, cpt, cps
+	}
+	p := buildInnerTestInterpolator(t, distortedMap)
+
+	// 1. Find a grid node whose exact stored (ka,kb) is NOT locatable by
+	// locateInvertAB (the fallback's precondition).
+	var missGP *gridPoint
+	for ia := 0; ia < innerGridSide; ia++ {
+		for ib := 0; ib < innerGridSide; ib++ {
+			gp := &p.inner.points[ia][ib]
+			if _, _, found := locateInvertAB(gp.ka, gp.kb, p.innerQuads); !found {
+				missGP = gp
+				break
+			}
+		}
+		if missGP != nil {
+			break
+		}
+	}
+	if missGP == nil {
+		t.Fatal("distorted map produced no grid node that locateInvertAB misses; " +
+			"the fallback branch would not be exercised — adjust the map")
+	}
+
+	// 2. The polygon must accept this node (sign >= 0), otherwise it would be
+	// routed to the outer zone before the fallback, and the test would be
+	// asserting the wrong contract.
+	if sign := pointInPolygon(missGP.ka, missGP.kb, p.innerPolygon); sign < 0 {
+		t.Fatalf("missed node (%v,%v) has polygon sign %d < 0; fallback would not run",
+			missGP.a, missGP.b, sign)
+	}
+
+	// 3. innerZoneInterpolate must rescue the point via the fallback and return
+	// the exact grid node values.
+	got, inZone, err := p.innerZoneInterpolate(missGP.ka, missGP.kb)
+	if err != nil {
+		t.Fatalf("node (%v,%v): expected fallback hit, got error: %v", missGP.a, missGP.b, err)
+	}
+	if !inZone {
+		t.Fatalf("node (%v,%v): expected inner zone", missGP.a, missGP.b)
+	}
+	if math.Abs(got.a-missGP.a) > 1e-9 || math.Abs(got.b-missGP.b) > 1e-9 {
+		t.Errorf("node (%v,%v): fallback = (%v,%v), want exact grid node", missGP.a, missGP.b, got.a, got.b)
+	}
+	if math.Abs(got.cpt-missGP.cpt) > 1e-9 || math.Abs(got.cps-missGP.cps) > 1e-9 {
+		t.Errorf("node (%v,%v): fallback cpt/cps = (%v,%v), want (%v,%v)",
+			missGP.a, missGP.b, got.cpt, got.cps, missGP.cpt, missGP.cps)
+	}
+}
+
+// TestInnerFindGridPointByKaKbRange checks the fallback helper's tolerance
+// boundary: a point within 1e-6 of a node hits, beyond 1e-6 misses.
+func TestInnerFindGridPointByKaKbRange(t *testing.T) {
+	p := buildInnerTestInterpolator(t, linearInnerMap)
+	ka, kb, _, _ := linearInnerMap(10, 15)
+	if _, ok := innerFindGridPointByKaKb(p.inner, ka+5e-7, kb); !ok {
+		t.Error("within 5e-7: expected hit")
+	}
+	if _, ok := innerFindGridPointByKaKb(p.inner, ka+1.5e-6, kb); ok {
+		t.Error("beyond 1.5e-6: expected miss")
+	}
+}

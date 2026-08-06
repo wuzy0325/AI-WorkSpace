@@ -144,6 +144,9 @@ func (p *SevenHolePrbInterpolator) outerZoneTrySector(sector int, ka, kb float64
 	if sign < 0 {
 		return zoneCoefficients{}, false, nil
 	}
+	if gp, ok := outerFindGridPointByKaKbWithin(p.outer[sector-1], ka, kb, gridEps); ok {
+		return zoneCoefficients{a: gp.a, b: gp.b, cpt: gp.cpt, cps: gp.cps}, true, nil
+	}
 	a, b, found := locateInvertAB(ka, kb, p.outerQuads[sector-1])
 	if !found {
 		// 兜底 1：locateInvertAB 未找到 quad 时，尝试网格点直命中。

@@ -134,8 +134,18 @@ func (p *SevenHolePrbInterpolator) innerZoneInterpolate(ka, kb float64) (zoneCoe
 	if sign < 0 {
 		return zoneCoefficients{}, false, nil
 	}
+	if gp, ok := innerFindGridPointByKaKbWithin(p.inner, ka, kb, gridEps); ok {
+		return zoneCoefficients{a: gp.a, b: gp.b, cpt: gp.cpt, cps: gp.cps}, true, nil
+	}
 	a, b, found := locateInvertAB(ka, kb, p.innerQuads)
 	if !found {
+		// 兜底：locateInvertAB 未找到 quad 时，尝试网格点直命中。
+		// 与 outerZoneTrySector 的 outerFindGridPointByKaKb 同理——当输入
+		// (ka,kb) 与网格点重合（自提取 PRB 反推场景）但 float 噪声使四边形
+		// 闭区间判定失败时，直接返回该网格点的 (a,b,cpt,cps)，跳过双线性插值。
+		if gp, ok := innerFindGridPointByKaKb(p.inner, ka, kb); ok {
+			return zoneCoefficients{a: gp.a, b: gp.b, cpt: gp.cpt, cps: gp.cps}, true, nil
+		}
 		return zoneCoefficients{}, false, fmt.Errorf("小角度模式: (ka,kb)=(%.6g,%.6g) 在边界多边形内但未定位到四边形", ka, kb)
 	}
 	if math.IsNaN(a) || math.IsNaN(b) {
@@ -143,4 +153,33 @@ func (p *SevenHolePrbInterpolator) innerZoneInterpolate(ka, kb float64) (zoneCoe
 	}
 	cpt, cps := p.innerBilinearCptCps(a, b)
 	return zoneCoefficients{a: a, b: b, cpt: cpt, cps: cps}, true, nil
+}
+
+// innerFindGridPointByKaKb 在内区 13×13 网格中查找 (ka,kb) 近似匹配的网格点。
+//
+// 容差选择 1e-6（与 outerFindGridPointByKaKb 一致，远大于 gridEps=1e-9）：
+// 兜底路径用于自提取 PRB 反推场景——由同一份压力按相同公式全精度重算的
+// (ka,kb) 与网格点应逐位一致，仅因浮点运算/序列化（shortest round-trip、
+// 微抖动）产生 1e-9~1e-12 量级的噪声，足以让 locateInvertAB 的闭区间判定
+// 漏掉恰落在单元格边上的网格点。1e-6 容差覆盖该浮点噪声且不会误跨相邻
+// 网格点。
+//
+// 注意：本兜底不用于补偿系数的量化误差（如历史 PRB 中 Kα/Kβ 只保留 3 位
+// 小数，误差 ~5e-4，远超 1e-6）。这类问题应由 PRB 提取链路用压力列全精度
+// 重算系数解决（见 gen_traversal_fixtures.py recompute_inner_coeffs），
+// 而非放大本兜底容差。
+func innerFindGridPointByKaKb(g *innerGrid, ka, kb float64) (gridPoint, bool) {
+	return innerFindGridPointByKaKbWithin(g, ka, kb, 1e-6)
+}
+
+func innerFindGridPointByKaKbWithin(g *innerGrid, ka, kb, tolerance float64) (gridPoint, bool) {
+	for ia := 0; ia < innerGridSide; ia++ {
+		for ib := 0; ib < innerGridSide; ib++ {
+			gp := &g.points[ia][ib]
+			if math.Abs(gp.ka-ka) < tolerance && math.Abs(gp.kb-kb) < tolerance {
+				return *gp, true
+			}
+		}
+	}
+	return gridPoint{}, false
 }

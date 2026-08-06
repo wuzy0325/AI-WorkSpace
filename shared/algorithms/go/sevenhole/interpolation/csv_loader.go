@@ -19,38 +19,37 @@ const (
 //
 // 当前数据集的 inner/outer CSV 均为 18 列基础格式：
 //
-//   inner: 侧滑角α, 迎角β, 马赫数Ma, 来流总压P0, 来流静压Ps,
-//          P1, P2, P3, P4, P5, P6, P7,
-//          α角度系数Kα, β角度系数Kβ, 总压系数K0, 静压系数Ks,
-//          大气压力, 大气温度
+//	inner: 侧滑角α, 迎角β, 马赫数Ma, 来流总压P0, 来流静压Ps,
+//	       P1, P2, P3, P4, P5, P6, P7,
+//	       α角度系数Kα, β角度系数Kβ, 总压系数K0, 静压系数Ks,
+//	       大气压力, 大气温度
 //
-//   outer: 滚转角φ, 俯仰角θ, 马赫数Ma, 来流总压P0, 来流静压Ps,
-//          P1, P2, P3, P4, P5, P6, P7,
-//          θ角度系数Kθ[n], φ角度系数Kφ[n], 总压系数K0[n], 静压系数Ks[n],
-//          大气压力, 大气温度
+//	outer: 滚转角φ, 俯仰角θ, 马赫数Ma, 来流总压P0, 来流静压Ps,
+//	       P1, P2, P3, P4, P5, P6, P7,
+//	       θ角度系数Kθ[n], φ角度系数Kφ[n], 总压系数K0[n], 静压系数Ks[n],
+//	       大气压力, 大气温度
 //
 // 重要：spec §7.3 备注"当前数据集存在历史遗留命名错误"——outer CSV 的表头
 // 仍写成"侧滑角α/迎角β/Kα/Kβ"，但数据实际是"φ/θ/Kθ[n]/Kφ[n]"。
 // 因此必须按列位置读取，不能按表头名称匹配（表头名称不可信）。
 //
-// 列位置契约（0-indexed）：
-//   - col 0:  角度1（inner: α / outer: φ）
-//   - col 1:  角度2（inner: β / outer: θ）
-//   - col 12: ka 系数（inner: Kα / outer: Kθ[n]）
-//   - col 13: kb 系数（inner: Kβ / outer: Kφ[n]）
-//   - col 14: cpt     （inner: K0 / outer: K0[n]）
-//   - col 15: cps     （inner: Ks / outer: Ks[n]）
+// 加载所需的列位置契约（0-indexed）：
+//   - col 0:     角度1（inner: α / outer: φ）
+//   - col 1:     角度2（inner: β / outer: θ）
+//   - col 3..11: P0、Ps、P1..P7，用于全精度重算全部系数
+//
+// 历史基础格式的 col12..15 是三位小数系数，仅用于表头诊断，不参与加载。
 //
 // 26 列证书导出格式（spec §7.5）当前数据集未使用；如未来需要支持，应通过
 // col 0="点位编号" 检测并切换到 26 列位置映射，不在此处隐式兼容。
 const (
 	sevenHoleCSVAngle1Column = 0  // inner: α；outer: φ
 	sevenHoleCSVAngle2Column = 1  // inner: β；outer: θ
-	sevenHoleCSVKaColumn     = 12 // Kα / Kθ[n]
-	sevenHoleCSVKbColumn     = 13 // Kβ / Kφ[n]
-	sevenHoleCSVCptColumn    = 14 // K0 / K0[n]
-	sevenHoleCSVCpsColumn    = 15 // Ks / Ks[n]
-	sevenHoleCSVMinColumns   = 16 // 必需列最大索引 + 1
+	sevenHoleCSVPtColumn     = 3  // 来流总压 P0
+	sevenHoleCSVPsColumn     = 4  // 来流静压 Ps
+	sevenHoleCSVP1Column     = 5  // P1..P7 起始列（col5..col11）
+	sevenHoleCSVP7Column     = 11 // P7（col11）
+	sevenHoleCSVMinColumns   = sevenHoleCSVP7Column + 1
 )
 
 // sevenHoleSectorPhiLines 是 6 个外区扇区的 φ 网格线（每扇区 13 点）。
@@ -73,11 +72,10 @@ type sevenHoleNudgeTarget struct {
 	key   [2]float64
 }
 
-// sevenHoleCSVColumnSet 描述 6 个必需列的索引：[ka, kb, cpt, cps, a, b]。
+// sevenHoleCSVColumnSet 描述两个角度列索引；压力列使用上面的固定位置契约。
 // 由 resolveSevenHoleCSVColumns 按历史位置契约填充（不依赖表头名称）。
 type sevenHoleCSVColumnSet struct {
-	ka, kb, cpt, cps int
-	a, b             int
+	a, b int
 }
 
 // SevenHoleCSVSource 表示已解码的校准 CSV 源数据。
@@ -96,7 +94,7 @@ type SevenHoleCSVSource struct {
 	Data []byte
 }
 
-// resolveSevenHoleCSVColumns 按历史位置契约（spec §7.2/§7.3）填充 6 个必需列索引。
+// resolveSevenHoleCSVColumns 按历史位置契约（spec §7.2/§7.3）填充角度列索引。
 //
 // inner 与 outer 共用 18 列基础格式，列位置稳定；差异仅在于 a/b 字段的语义解释：
 //   - inner: a=侧滑角α(col0), b=迎角β(col1) —— 网格坐标 (a,b)=(alpha,beta)
@@ -113,12 +111,7 @@ func resolveSevenHoleCSVColumns(path string, header []string, inner bool) (seven
 		return sevenHoleCSVColumnSet{}, nil, fmt.Errorf("csv %s: 表头列数 %d < %d（最小必需列数），实际表头: [%s]",
 			path, len(header), sevenHoleCSVMinColumns, strings.Join(header, ", "))
 	}
-	cols := sevenHoleCSVColumnSet{
-		ka:  sevenHoleCSVKaColumn,
-		kb:  sevenHoleCSVKbColumn,
-		cpt: sevenHoleCSVCptColumn,
-		cps: sevenHoleCSVCpsColumn,
-	}
+	cols := sevenHoleCSVColumnSet{}
 	if inner {
 		cols.a = sevenHoleCSVAngle1Column // α
 		cols.b = sevenHoleCSVAngle2Column // β
@@ -161,8 +154,9 @@ func containsHeader(header []string, name string) bool {
 // 共享算法包不执行文件 I/O 与字符编码解码——调用方需通过 SevenHoleCSVSource
 // 传入已解码的 UTF-8 字节。返回插值器、抖动警告与错误。
 //
-// 解析按 spec §7.2/§7.3 的历史位置契约进行（col 0, 1, 12, 13, 14, 15），
-// 不依赖表头名称——避免被 outer CSV 的历史遗留命名错误误导。
+// 角度按 spec §7.2/§7.3 的历史位置契约从 col0/1 读取；系数由
+// col3..11 的 P0/Ps/P1..P7 全精度重算。col12..15 的历史三位小数系数
+// 仅用于表头诊断，不参与网格构建。
 func LoadCalibrationCSVFromUTF8(inner SevenHoleCSVSource, outer []SevenHoleCSVSource) (*SevenHolePrbInterpolator, []string, error) {
 	if len(outer) != 6 {
 		return nil, nil, fmt.Errorf("seven-hole outer calibration csv count must be 6, got %d", len(outer))
@@ -186,7 +180,7 @@ func LoadCalibrationCSVFromUTF8(inner SevenHoleCSVSource, outer []SevenHoleCSVSo
 }
 
 func loadInnerCalibrationCSV(src SevenHoleCSVSource, gridLines []float64) (*SevenHolePrbInterpolator, []string, error) {
-	points, headerWarnings, err := parseSevenHoleCalibrationCSV(src, true)
+	points, headerWarnings, err := parseSevenHoleCalibrationCSV(src, true, 0)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -207,7 +201,7 @@ func loadInnerCalibrationCSV(src SevenHoleCSVSource, gridLines []float64) (*Seve
 }
 
 func loadOuterCalibrationCSV(interpolator *SevenHolePrbInterpolator, sector int, src SevenHoleCSVSource, phi []float64) ([]string, error) {
-	points, headerWarnings, err := parseSevenHoleCalibrationCSV(src, false)
+	points, headerWarnings, err := parseSevenHoleCalibrationCSV(src, false, sector)
 	if err != nil {
 		return nil, err
 	}
@@ -231,10 +225,17 @@ func loadOuterCalibrationCSV(interpolator *SevenHolePrbInterpolator, sector int,
 }
 
 // parseSevenHoleCalibrationCSV 解析已解码的 UTF-8 CSV 字节，返回按 (a,b) 索引的网格点。
+// sector=0 表示内区（用 inner 公式）；sector=1..6 表示外区扇区（用对应扇区公式）。
+//
+// 系数（ka/kb/cpt/cps）由原始压力列（col3=P0, col4=Ps, col5..11=P1..P7）在
+// float64 全精度下按公式重算，而非直接采用 CSV 存储的 3 位小数 K 列（col12..15）。
+// 这样校准 CSV 与按压力重算生成的 PRB（gen_traversal_fixtures.py
+// recompute_inner/outer_coeffs）行为一致，避免 3 位截断导致的边界网格节点
+// 无法定位问题（自提取 PRB 反推场景）。
 //
 // 共享算法包不读文件、不解码 GB18030——调用方通过 SevenHoleCSVSource.Data 传入
 // UTF-8 字节，src.Label 仅用于错误消息标识。返回网格点 map、表头诊断警告与错误。
-func parseSevenHoleCalibrationCSV(src SevenHoleCSVSource, inner bool) (map[[2]float64]*sevenHoleCSVPoint, []string, error) {
+func parseSevenHoleCalibrationCSV(src SevenHoleCSVSource, inner bool, sector int) (map[[2]float64]*sevenHoleCSVPoint, []string, error) {
 	reader := csv.NewReader(bytes.NewReader(src.Data))
 	reader.FieldsPerRecord = -1
 	records, err := reader.ReadAll()
@@ -249,17 +250,17 @@ func parseSevenHoleCalibrationCSV(src SevenHoleCSVSource, inner bool) (map[[2]fl
 	if err != nil {
 		return nil, nil, err
 	}
-	points, err := parseSevenHoleCalibrationRecords(src.Label, records[1:], cols)
+	points, err := parseSevenHoleCalibrationRecords(src.Label, records[1:], cols, inner, sector)
 	if err != nil {
 		return nil, nil, err
 	}
 	return points, headerWarnings, nil
 }
 
-func parseSevenHoleCalibrationRecords(path string, records [][]string, cols sevenHoleCSVColumnSet) (map[[2]float64]*sevenHoleCSVPoint, error) {
+func parseSevenHoleCalibrationRecords(path string, records [][]string, cols sevenHoleCSVColumnSet, inner bool, sector int) (map[[2]float64]*sevenHoleCSVPoint, error) {
 	points := make(map[[2]float64]*sevenHoleCSVPoint, len(records))
 	for i, record := range records {
-		point, key, err := parseSevenHoleCalibrationRecord(path, i+2, record, cols)
+		point, key, err := parseSevenHoleCalibrationRecord(path, i+2, record, cols, inner, sector)
 		if err != nil {
 			return nil, err
 		}
@@ -271,34 +272,35 @@ func parseSevenHoleCalibrationRecords(path string, records [][]string, cols seve
 	return points, nil
 }
 
-func parseSevenHoleCalibrationRecord(path string, line int, record []string, cols sevenHoleCSVColumnSet) (*sevenHoleCSVPoint, [2]float64, error) {
+func parseSevenHoleCalibrationRecord(path string, line int, record []string, cols sevenHoleCSVColumnSet, inner bool, sector int) (*sevenHoleCSVPoint, [2]float64, error) {
 	// 列数校验：取所有必需列索引的最大值+1作为最小列数阈值。
-	// 表头解析阶段已确认所有必需列存在；此处防御数据行截断。
-	required := maxInt(cols.ka, cols.kb, cols.cpt, cols.cps, cols.a, cols.b) + 1
+	// 系数由压力列全精度重算，需要 P1..P7 + P0 + Ps（col3..11），
+	// 加上角度列（col0/1），故最小必需列 = sevenHoleCSVP7Column+1。
+	required := sevenHoleCSVP7Column + 1
 	if len(record) < required {
-		return nil, [2]float64{}, fmt.Errorf("csv %s 第%d行: 至少 %d 列（必需列最大索引+1），实际 %d 列", path, line, required, len(record))
+		return nil, [2]float64{}, fmt.Errorf("csv %s 第%d行: 至少 %d 列（压力+角度必需列），实际 %d 列", path, line, required, len(record))
 	}
-	values := [6]float64{}
-	for i, col := range [6]int{cols.ka, cols.kb, cols.cpt, cols.cps, cols.a, cols.b} {
-		value, err := strconv.ParseFloat(strings.TrimSpace(record[col]), 64)
-		if err != nil {
-			return nil, [2]float64{}, fmt.Errorf("csv %s 第%d行第%d列: 不是有效数字 %q", path, line, col+1, record[col])
-		}
-		values[i] = value
+	// 角度列按位置契约读取（a/b 语义由调用方 inner 决定）。
+	aValue, err := strconv.ParseFloat(strings.TrimSpace(record[cols.a]), 64)
+	if err != nil {
+		return nil, [2]float64{}, fmt.Errorf("csv %s 第%d行第%d列: 不是有效数字 %q", path, line, cols.a+1, record[cols.a])
 	}
-	key := [2]float64{values[4], values[5]}
-	return &sevenHoleCSVPoint{ka: values[0], kb: values[1], cpt: values[2], cps: values[3]}, key, nil
-}
+	bValue, err := strconv.ParseFloat(strings.TrimSpace(record[cols.b]), 64)
+	if err != nil {
+		return nil, [2]float64{}, fmt.Errorf("csv %s 第%d行第%d列: 不是有效数字 %q", path, line, cols.b+1, record[cols.b])
+	}
+	key := [2]float64{aValue, bValue}
 
-// maxInt 返回变参中的最大值，供 parseSevenHoleCalibrationRecord 计算最小列数阈值。
-func maxInt(values ...int) int {
-	m := values[0]
-	for _, v := range values[1:] {
-		if v > m {
-			m = v
-		}
+	var ka, kb, cpt, cps float64
+	if inner {
+		ka, kb, cpt, cps, err = recomputeSevenHoleInnerCoeffs(record)
+	} else {
+		ka, kb, cpt, cps, err = recomputeSevenHoleOuterCoeffs(record, sector)
 	}
-	return m
+	if err != nil {
+		return nil, [2]float64{}, fmt.Errorf("csv %s 第%d行: 系数重算失败: %v", path, line, err)
+	}
+	return &sevenHoleCSVPoint{ka: ka, kb: kb, cpt: cpt, cps: cps}, key, nil
 }
 
 func deriveSevenHoleOuterThetaGrid(points map[[2]float64]*sevenHoleCSVPoint, path string) ([]float64, error) {
