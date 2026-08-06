@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.3.0] - 2026-08-05
+
+### Fixed
+
+- **七孔校准 CSV 系数全精度重算**（对 `shared/algorithms/go/sevenhole/interpolation`）：系数（ka/kb/cpt/cps）不再直接采用 CSV 中 col12..15 的 3 位小数 K 列，改为由原始压力列（col3=P0、col4=Ps、col5..11=P1..P7）在 float64 全精度下按公式重算（`recomputeSevenHoleInnerCoeffs` / `recomputeSevenHoleOuterCoeffs`）。历史 3dp K 列误差最大约 5e-4，全精度重算误差约 1e-6。
+- **七孔网格节点精确往返修复**（对 `shared/algorithms/go/sevenhole/interpolation`）：
+  - 内区 13×13 网格 21 个边界节点此前因 3dp 截断（~5e-4 偏差）被判定在边界多边形外，误路由到大角度区（错误外插结果）；现正确路由到内区并精确命中网格节点。
+  - `Calculate` 新增外区节点直命中短路径 `findExactOuterCalibrationNode`，内/外区插值新增网格点直命中兜底（`innerFindGridPointByKaKb` / `outerFindGridPointByKaKb`）。
+  - 修复自提取 PRB 反推场景：从校准 CSV 重算生成的 PRB，其压力行能精确反推出原网格角度，不再因浮点噪声导致 `locateInvertAB` 漏判网格边界点。
+- 新增 NaN/Inf 压力值拒绝（CSV 加载时），避免脏数据静默进入网格。
+
+### Compatibility
+
+- 配置文件格式：兼容。
+- 数据文件格式：CSV 校准文件兼容（列位置契约不变）；历史 3 位小数 K 列（col12..15）不再参与网格构建，仅用于表头诊断。
+- 历史 PRB 文件：旧 3dp PRB 与新全精度网格存在约 5e-4 差异，建议重新生成后加载。
+- API 契约：兼容（`InterpolationResult` 无字段变更）。
+
+### Verification
+
+- `go test ./...`（shared/algorithms/go/sevenhole/interpolation）: passed
+- `go test ./backend/ -run SevenHole`（probe-interpolator）: passed
+- `go test ./internal/adapters/interpolation/ -run SevenHole`（wind-daq adapter）: passed
+- `npm run typecheck` / `npm run build`: passed
+- `task release`: passed
+- `makensis`: passed
+- `task archive-release`: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名。
+- 内嵌 exe 的 ProductVersion 资源为空（wails3 v3.0.0-alpha2.106 既有行为），installer 的 ProductVersion 为 `0.3.0`。
+
 ## [0.2.2] - 2026-08-05
 
 ### Added

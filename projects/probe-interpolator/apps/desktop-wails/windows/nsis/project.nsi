@@ -39,7 +39,7 @@ Unicode true
 !define INFO_PROJECTNAME "probe-interpolator"
 !define INFO_COMPANYNAME "Wind-DAQ Team"
 !define INFO_PRODUCTNAME "Probe Interpolator"
-!define INFO_PRODUCTVERSION "0.2.2"
+!define INFO_PRODUCTVERSION "0.3.0"
 !define INFO_COPYRIGHT "© 2026, Wind-DAQ Team"
 
 ####

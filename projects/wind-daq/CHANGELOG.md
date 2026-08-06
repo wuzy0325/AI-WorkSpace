@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.13.0] - 2026-08-05
+
+### Fixed
+
+- **七孔插值加载与插值链路修复**（对 `shared/algorithms/go/sevenhole/interpolation`，与 probe-interpolator 0.3.0 同源）：
+  - 七孔校准 CSV 系数全精度重算：系数（ka/kb/cpt/cps）由原始压力列（col3=P0、col4=Ps、col5..11=P1..P7）在 float64 全精度下按公式重算，替代历史 3 位小数 K 列（col12..15，误差最大约 5e-4）。
+  - 网格节点精确往返修复：内区 21 个边界节点此前被误路由到大角度区，现正确路由到内区；校准行按自身网格节点精确往返，自提取 PRB 反推不再漏判网格边界点。
+  - 退化边抖动消除：全精度重算消除了 3dp 截断导致的精确 ka/kb 相等退化边，加载七孔 CSV 不再产生退化边抖动警告（`seven_hole_csv_test.go` 断言同步更新）。
+- 新增 NaN/Inf 压力值拒绝（CSV 加载时），避免脏数据静默进入网格。
+
+### Compatibility
+
+- 配置文件格式：兼容。
+- 数据文件格式：CSV 校准文件兼容（列位置契约不变）；历史 3 位小数 K 列（col12..15）不再参与网格构建，仅用于表头诊断。
+- 历史 PRB 文件：旧 3dp PRB 与新全精度网格存在约 5e-4 差异，建议重新生成后加载。
+- API 契约：兼容。
+- 设备协议行为：不变。
+
+### Verification
+
+- `go test ./...`（shared/algorithms/go/sevenhole/interpolation）: passed
+- `go test ./internal/adapters/interpolation/ -run SevenHole`（wind-daq services/api-go）: passed
+- `go vet ./...` + `go test ./internal/... ./api/...`（wind-daq services/api-go）: passed
+- `npm run typecheck` / `npm run build`: passed
+- `task release`: passed
+- `makensis`: passed
+- `task archive-release`: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名。
+- 内嵌 exe 的 ProductVersion 资源为空（wails3 v3.0.0-alpha2.106 既有行为），installer 的 ProductVersion 为 `0.13.0`。
+
 ## [0.12.4] - 2026-08-05
 
 ### Added
