@@ -123,6 +123,98 @@ func main() {
 		}))
 	}
 
+	// 5) 二分边界增强向量（改善项 E §6.2 / review #4）
+	// 用真实 0.2/0.4Ma PRB 构造多档插值器，对 Kb 输入覆盖：
+	//   - 精确等于混合后内部节点、节点 ±1 ULP
+	//   - 区间内部、边界外
+	// 对 Ma 覆盖：ratio=0/1（精确落在某档）、两档中点（ratio=0.5）、超范围钳位。
+	// 三档场景覆盖 0.2/0.4/0.6 组合与不同加载顺序。
+	{
+		// 合成三档，验证多档 + 加载顺序
+		triSpec := []float64{0.2, 0.4, 0.6}
+		triInterp := interp.NewThreeHoleInterpolator()
+		var triFileData []interp.PrbFileData
+		for _, cma := range triSpec {
+			triFileData = append(triFileData, interp.PrbFileData{
+				FilePath: fmt.Sprintf("%.1fMa.prb", cma),
+				Lines:    threeSynthLines(cma),
+			})
+		}
+		if _, err := triInterp.LoadPrbData(triFileData); err != nil {
+			panic(err)
+		}
+		// 加载顺序反转（等价性校验：不同顺序应得相同结果）
+		revInterp := interp.NewThreeHoleInterpolator()
+		var revFileData []interp.PrbFileData
+		for j := len(triFileData) - 1; j >= 0; j-- {
+			revFileData = append(revFileData, triFileData[j])
+		}
+		if _, err := revInterp.LoadPrbData(revFileData); err != nil {
+			panic(err)
+		}
+
+		// 构造各档混合后 Kb 的精确节点值。对合成 PRB，alpha 网格 -30..30，
+		// Kb(alpha)=sin 曲线；在 Ma=0.3（ratio=0.5 于 0.2/0.4 之间）下混合。
+		// 从 0.2/0.4 档取内部节点 Kb 做精确输入。
+		kbNodes := []float64{}
+		for alpha := -25.0; alpha <= 25; alpha += 5 {
+			kbA := (4 + 2*0.2) * math.Sin(alpha*math.Pi/180)
+			kbB := (4 + 2*0.4) * math.Sin(alpha*math.Pi/180)
+			kbNodes = append(kbNodes, kbA+0.5*(kbB-kbA))
+		}
+
+		// 每档加载顺序各跑一组：triInterp（正序）与 revInterp（逆序）
+		interpPairs := []struct {
+			name      string
+			ip        *interp.ThreeHoleInterpolator
+			loadOrder []float64
+		}{
+			{"tri_order_abc", triInterp, []float64{0.2, 0.4, 0.6}},
+			{"tri_order_cba", revInterp, []float64{0.6, 0.4, 0.2}},
+		}
+		for _, pair := range interpPairs {
+			for _, kb := range kbNodes {
+				// 精确节点
+				in := inputFromKb(kb)
+				refs = append(refs, runMultiOrdered(pair.ip, triSpec, pair.loadOrder, fmt.Sprintf("%s_node_kb_%.6f", pair.name, kb), goldenInput{
+					P1: in.P1, P2: in.P2, P3: in.P3, PAtm: in.PAtm, TAtm: in.TAtm,
+				}))
+				// ±1 ULP
+				ul := math.Nextafter(kb, math.Inf(1))
+				dl := math.Nextafter(kb, math.Inf(-1))
+				inU := inputFromKb(ul)
+				inD := inputFromKb(dl)
+				refs = append(refs, runMultiOrdered(pair.ip, triSpec, pair.loadOrder, fmt.Sprintf("%s_node_kb_ulp1_%.6f", pair.name, ul), goldenInput{
+					P1: inU.P1, P2: inU.P2, P3: inU.P3, PAtm: inU.PAtm, TAtm: inU.TAtm,
+				}))
+				refs = append(refs, runMultiOrdered(pair.ip, triSpec, pair.loadOrder, fmt.Sprintf("%s_node_kb_ulpm1_%.6f", pair.name, dl), goldenInput{
+					P1: inD.P1, P2: inD.P2, P3: inD.P3, PAtm: inD.PAtm, TAtm: inD.TAtm,
+				}))
+			}
+		}
+
+		// 两档 + ratio 边界：0.2/0.4 档，ma 精确 0.2 / 0.4 / 0.3 / 0.0 / 0.5
+		twoSpec := []float64{0.2, 0.4}
+		twoInterp := interp.NewThreeHoleInterpolator()
+		var twoFileData []interp.PrbFileData
+		for _, cma := range twoSpec {
+			twoFileData = append(twoFileData, interp.PrbFileData{
+				FilePath: fmt.Sprintf("%.1fMa.prb", cma),
+				Lines:    threeSynthLines(cma),
+			})
+		}
+		if _, err := twoInterp.LoadPrbData(twoFileData); err != nil {
+			panic(err)
+		}
+		for _, kb := range []float64{-3.0, -1.5, 0.0, 1.5, 3.0} {
+			// 两档 0.2/0.4 下，不同 Kb 输入触发不同插值区间（含边界外）。
+			in := inputFromKb(kb)
+			refs = append(refs, runMulti(twoInterp, twoSpec, fmt.Sprintf("two_ratio_kb_%.3f", kb), goldenInput{
+				P1: in.P1, P2: in.P2, P3: in.P3, PAtm: in.PAtm, TAtm: in.TAtm,
+			}))
+		}
+	}
+
 	b, _ := json.MarshalIndent(refs, "", "  ")
 	if err := os.WriteFile(outPath, b, 0o644); err != nil {
 		panic(err)
@@ -141,16 +233,26 @@ func runReal(ip *interp.ThreeHoleInterpolator, name string, in goldenInput) map[
 }
 
 func runMulti(ip *interp.ThreeHoleInterpolator, cmaList []float64, name string, in goldenInput) map[string]interface{} {
+	return runMultiOrdered(ip, cmaList, nil, name, in)
+}
+
+// runMultiOrdered 与 runMulti 相同，但额外携带 loadOrder（cmaList 的实际加载顺序）。
+// loadOrder 用于让 JS 端按相同顺序构造插值器，验证加载顺序不影响数值结果。
+func runMultiOrdered(ip *interp.ThreeHoleInterpolator, cmaList []float64, loadOrder []float64, name string, in goldenInput) map[string]interface{} {
 	res, err := ip.Calculate(interp.InterpolationInput{
 		P1: in.P1, P2: in.P2, P3: in.P3, PAtm: in.PAtm, TAtm: in.TAtm,
 	})
 	if err != nil {
 		panic(fmt.Sprintf("case %s: %v", name, err))
 	}
-	return baseRef(name, cmaList, in, res)
+	return baseRefOrdered(name, cmaList, loadOrder, in, res)
 }
 
 func baseRef(name string, cmaList []float64, in goldenInput, res interp.InterpolationResult) map[string]interface{} {
+	return baseRefOrdered(name, cmaList, nil, in, res)
+}
+
+func baseRefOrdered(name string, cmaList, loadOrder []float64, in goldenInput, res interp.InterpolationResult) map[string]interface{} {
 	ref := map[string]interface{}{
 		"name": name,
 		"input": map[string]interface{}{
@@ -170,6 +272,9 @@ func baseRef(name string, cmaList []float64, in goldenInput, res interp.Interpol
 	}
 	if cmaList != nil {
 		ref["cmaList"] = cmaList
+	}
+	if loadOrder != nil {
+		ref["loadOrder"] = loadOrder
 	}
 	return ref
 }

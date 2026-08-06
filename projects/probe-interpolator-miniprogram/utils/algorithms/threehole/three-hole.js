@@ -17,6 +17,8 @@
 //   - B1：单 PRB 文件快速路径，跳过空转迭代与每帧排序，IterationCount=1。
 //   - B2：加载时预计算 Kb 排序表，单文件热路径免去每帧排序/分配。
 //   - C2：单文件快速路径不再发 maClamped 警告。
+//   - E：多文件 interpolateWithWarning 移除运行时排序，改用二分查找
+//     （docs/three-hole-algorithm-improvements.md §6；凸组合保持 Kb 严格递增）。
 //   - 结果对象新增 Calculated 字段，区分"是否计算过"与"是否有效"。
 
 const MAX_ITERATIONS = 20;
@@ -571,8 +573,21 @@ class ThreeHoleInterpolator {
       entries.push({ Kb: kb, Alpha: this.alphaSeq[i], K0: k0, Kv: kv });
     }
 
-    entries.sort((a, b) => a.Kb - b.Kb);
+    // 改善项 E：混合后的 Kb 序列是两档严格递增序列的凸组合，在实数数学下仍
+    // 严格递增（docs/three-hole-algorithm-improvements.md §6.1）。但 IEEE-754
+    // 舍入在相邻值仅差 1 ULP、或两档数量级差异悬殊时，混合结果可能被舍入成
+    // 相同值或逆序，使"区间存在且唯一"的前提失效。加载器允许任意有限浮点值，
+    // 故此处对实际混合结果做防御性校验：一旦发现非严格递增即返回 match=null
+    // （由调用方转为"最终插值未能返回有效结果"的明确失败），不继续二分，
+    // 避免在非单调区间上产生未定义行为。Go 与 JS 采用相同策略。
+    for (let i = 1; i < entries.length; i++) {
+      if (entries[i].Kb <= entries[i - 1].Kb) {
+        return { match: null, kbExtrapolated };
+      }
+    }
 
+    // 二分定位第一个满足 entries[j+1].Kb >= kbMeasured 的左区间，与既有线性
+    // 扫描的区间语义一致；内部节点沿用原插值表达式，保持浮点运算路径不变。
     if (kbMeasured <= entries[0].Kb) {
       if (kbMeasured < entries[0].Kb) kbExtrapolated = true;
       return {
@@ -586,22 +601,29 @@ class ThreeHoleInterpolator {
       return { match: { Kb: last.Kb, K0: last.K0, Kv: last.Kv, Alpha: last.Alpha }, kbExtrapolated };
     }
 
-    for (let j = 0; j < entries.length - 1; j++) {
-      if (kbMeasured >= entries[j].Kb && kbMeasured <= entries[j + 1].Kb) {
-        const r = (kbMeasured - entries[j].Kb) / (entries[j + 1].Kb - entries[j].Kb);
-        return {
-          match: {
-            Kb: kbMeasured,
-            K0: entries[j].K0 + r * (entries[j + 1].K0 - entries[j].K0),
-            Kv: entries[j].Kv + r * (entries[j + 1].Kv - entries[j].Kv),
-            Alpha: entries[j].Alpha + r * (entries[j + 1].Alpha - entries[j].Alpha),
-          },
-          kbExtrapolated,
-        };
+    // 二分：entries 严格递增，寻找第一个使 entries[j+1].Kb >= kbMeasured 的 j。
+    // 由 §6.1 凸组合单调性保证存在且唯一；lo/hi 边界处理与线性扫描语义一致。
+    let lo = 0;
+    let hi = entries.length - 2;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (entries[mid + 1].Kb < kbMeasured) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
       }
     }
-
-    return { match: null, kbExtrapolated };
+    const j = lo;
+    const r = (kbMeasured - entries[j].Kb) / (entries[j + 1].Kb - entries[j].Kb);
+    return {
+      match: {
+        Kb: kbMeasured,
+        K0: entries[j].K0 + r * (entries[j + 1].K0 - entries[j].K0),
+        Kv: entries[j].Kv + r * (entries[j + 1].Kv - entries[j].Kv),
+        Alpha: entries[j].Alpha + r * (entries[j + 1].Alpha - entries[j].Alpha),
+      },
+      kbExtrapolated,
+    };
   }
 
   // 解析三孔 .prb 文本行：首行 CMa，次行 Nalpha，随后 Nalpha 行 "Kb K0 Kv Alpha"

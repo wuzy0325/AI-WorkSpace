@@ -35,11 +35,13 @@ function buildRealInterp() {
   return interp;
 }
 
-function getMultiMaInterp(cmaList) {
-  const key = cmaList.join(',');
+function getMultiMaInterp(cmaList, loadOrder) {
+  // loadOrder 表示档位实际加载顺序；未提供时按 cmaList 顺序。
+  const order = loadOrder || cmaList;
+  const key = order.join(',');
   if (!getMultiMaInterp._cache) getMultiMaInterp._cache = {};
   if (getMultiMaInterp._cache[key]) return getMultiMaInterp._cache[key];
-  const fileData = cmaList.map((cma) => ({
+  const fileData = order.map((cma) => ({
     filePath: cma.toFixed(1) + 'Ma.prb',
     lines: threeSynthLines(cma),
   }));
@@ -65,7 +67,7 @@ function main() {
   for (const c of refs) {
     const input = c.input;
     const go = c.go;
-    const interp = c.cmaList ? getMultiMaInterp(c.cmaList) : realInterp;
+    const interp = c.cmaList ? getMultiMaInterp(c.cmaList, c.loadOrder) : realInterp;
     const { result, error } = interp.calculate(input);
 
     if (error) {
