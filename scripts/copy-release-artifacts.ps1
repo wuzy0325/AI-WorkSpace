@@ -59,7 +59,7 @@ foreach ($proj in $Project) {
     $installerDst = Join-Path $releasesBinDir $installerName
 
     if (-not (Test-Path $installerSrc)) {
-        $errors.Add("$tag | installer missing -> $installerSrc  run makensis build\windows\installer\project.nsi first")
+        $errors.Add("$tag | installer missing -> $installerSrc  run makensis in apps\desktop-wails\windows\nsis first (e.g. makensis -DARG_WAILS_AMD64_BINARY=..\..\build\bin\probe-interpolator.exe project.nsi)")
         continue
     }
 
