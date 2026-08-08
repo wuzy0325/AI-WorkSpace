@@ -33,7 +33,7 @@ ok(formatValue('angle', 'rad', 180) === '3.141593 rad', '180 deg -> "3.141593 ra
 ok(formatValue('temp', '°C', 293.15) === '20 °C', '293.15 K -> "20 °C"', formatValue('temp', '°C', 293.15));
 ok(formatValue('temp', '°F', 293.15) === '68 °F', '293.15 K -> "68 °F"', formatValue('temp', '°F', 293.15));
 ok(formatValue('none', undefined, 0.52345) === '0.523', 'machNumber none -> "0.523"', formatValue('none', undefined, 0.52345));
-ok(formatValue('none', undefined, 7) === '7', 'iterationCount none -> "7" (整数去尾零)', formatValue('none', undefined, 7));
+ok(formatValue('none', undefined, 7) === '7', 'none 整数 -> "7" (去尾零)', formatValue('none', undefined, 7));
 
 console.log('== units.js 单位后缀标签 ==');
 ok(unitLabelShort('pressure', 'kPa') === 'kPa', 'pressure kPa short', unitLabelShort('pressure', 'kPa'));
@@ -42,10 +42,10 @@ ok(unitLabelShort('angle', 'rad') === 'rad', 'angle rad short', unitLabelShort('
 ok(unitLabelShort('velocity', 'km/h') === 'kmh', 'velocity km/h short', unitLabelShort('velocity', 'km/h'));
 
 console.log('== csv-batch runBatch 单位回调 ==');
-const COLUMN_UNIT = { alpha: 'angle', machNumber: 'none', P0: 'pressure', Ps: 'pressure', iterationCount: 'none', sat: 'temp', v: 'velocity' };
+const COLUMN_UNIT = { alpha: 'angle', machNumber: 'none', P0: 'pressure', Ps: 'pressure', sat: 'temp', v: 'velocity' };
 const UNITS_KPA = { pressure: 'kPa', velocity: 'm/s', angle: 'deg', temp: '°C' };
 const UNITS_MPA = { pressure: 'MPa', velocity: 'm/s', angle: 'deg', temp: '°C' };
-const mockResult = { alpha: 5.123456, machNumber: 0.52345, P0: 120000, Ps: 100000, iterationCount: 7, isValid: true };
+const mockResult = { alpha: 5.123456, machNumber: 0.52345, P0: 120000, Ps: 100000, isValid: true };
 
 function runWith(units) {
   const text = 'P1,P2,P3\n1,2,3\n';
@@ -54,7 +54,7 @@ function runWith(units) {
     defaults: { PAtm: 101325, TAtm: 20 },
     interp: {},
     calculateRow: () => mockResult,
-    resultColumns: ['alpha', 'machNumber', 'P0', 'Ps', 'iterationCount'],
+    resultColumns: ['alpha', 'machNumber', 'P0', 'Ps'],
     formatResultValue: (col, raw) => formatValue(COLUMN_UNIT[col] || 'none', units[COLUMN_UNIT[col] || 'none'], raw),
     resultColumnHeader: (col) => {
       const t = COLUMN_UNIT[col] || 'none';
@@ -77,8 +77,8 @@ console.log('== 各探针结果列定义完整性 ==');
 // 与页面内 RESULT_COLUMNS + COLUMN_UNIT 保持一致（此处内联校验覆盖度）
 const PROBES = {
   three: {
-    cols: ['alpha', 'machNumber', 'P0', 'Ps', 'iterationCount'],
-    unit: { alpha: 'angle', machNumber: 'none', P0: 'pressure', Ps: 'pressure', iterationCount: 'none' },
+    cols: ['alpha', 'machNumber', 'P0', 'Ps'],
+    unit: { alpha: 'angle', machNumber: 'none', P0: 'pressure', Ps: 'pressure' },
   },
   five: {
     cols: ['alpha', 'beta', 'machNumber', 'v', 'vx', 'vy', 'vz', 'cas', 'sat', 'dynamicPressure', 'density', 'P0', 'Ps'],

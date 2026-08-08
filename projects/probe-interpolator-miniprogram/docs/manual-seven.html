@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>七孔探针插值 · 使用说明</title>
+<style>
+  :root {
+    --accent: #0f5cad;
+    --accent-ink: #0a4a8c;
+    --accent-soft: #eaf2fb;
+    --ink: #0f172a;
+    --ink-2: #475569;
+    --ink-3: #94a3b8;
+    --border: #e4e8ee;
+    --surface: #ffffff;
+    --bg: #f5f7fa;
+    --ok: #15803d;
+    --warn: #a45a00;
+    --err: #b91c1c;
+    --ok-soft: #ecfaf0;
+    --warn-soft: #fdf2e0;
+    --err-soft: #fdecec;
+    --radius: 12px;
+    --shadow: 0 2px 6px rgba(15, 23, 42, .05), 0 8px 24px -12px rgba(15, 23, 42, .12);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    line-height: 1.6;
+    font-size: 16px;
+  }
+  .layout { display: flex; max-width: 1280px; margin: 0 auto; gap: 32px; padding: 24px; }
+  nav.toc {
+    flex: 0 0 240px;
+    position: sticky;
+    top: 24px;
+    align-self: flex-start;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: var(--shadow);
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+    font-size: 14px;
+  }
+  nav.toc h3 { margin: 0 0 12px; font-size: 14px; color: var(--ink-3); font-weight: 600; letter-spacing: .5px; }
+  nav.toc ol { margin: 0; padding-left: 18px; }
+  nav.toc li { margin: 6px 0; }
+  nav.toc a { color: var(--ink-2); text-decoration: none; transition: color .15s; }
+  nav.toc a:hover { color: var(--accent); }
+  nav.toc .back { display: inline-block; margin-top: 14px; color: var(--accent); font-weight: 600; text-decoration: none; font-size: 13px; }
+
+  main { flex: 1; min-width: 0; }
+  header.hero {
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-ink) 100%);
+    color: #fff;
+    padding: 36px 32px;
+    border-radius: 0 0 var(--radius) var(--radius);
+    margin-bottom: 24px;
+    box-shadow: 0 12px 32px -16px rgba(15, 92, 173, .4);
+  }
+  header.hero h1 { margin: 0; font-size: 32px; letter-spacing: 1px; }
+  header.hero p { margin: 8px 0 0; opacity: .88; font-size: 16px; }
+  header.hero .tags { display: flex; gap: 10px; margin-top: 14px; font-size: 13px; }
+  header.hero .tag { background: rgba(255, 255, 255, .14); padding: 4px 12px; border-radius: 999px; }
+
+  section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px 32px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow);
+    scroll-margin-top: 24px;
+  }
+  section h2 {
+    margin: 0 0 18px;
+    font-size: 22px;
+    color: var(--ink);
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--accent-soft);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  section h2::before {
+    content: '';
+    width: 4px;
+    height: 22px;
+    background: var(--accent);
+    border-radius: 2px;
+  }
+  section h3 { margin: 24px 0 10px; font-size: 17px; color: var(--accent-ink); }
+  p { margin: 10px 0; color: var(--ink-2); }
+  ul, ol { padding-left: 22px; color: var(--ink-2); }
+  li { margin: 6px 0; }
+  code { background: var(--accent-soft); color: var(--accent-ink); padding: 2px 6px; border-radius: 4px; font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 13px; }
+  pre { background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
+  pre code { background: transparent; color: inherit; padding: 0; }
+  strong { color: var(--ink); }
+
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  th, td { padding: 10px 12px; border: 1px solid var(--border); text-align: left; }
+  th { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
+  td code { font-size: 12px; }
+
+  .shot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; margin: 18px 0; }
+  .shot {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    text-align: center;
+  }
+  .shot img { width: 100%; max-width: 280px; height: auto; display: block; margin: 0 auto; border-radius: 8px; box-shadow: var(--shadow); }
+  .shot .cap { margin-top: 10px; font-size: 13px; color: var(--ink-3); }
+
+  .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; margin: 0 4px; }
+  .badge.ok { background: var(--ok-soft); color: var(--ok); }
+  .badge.warn { background: var(--warn-soft); color: var(--warn); }
+  .badge.err { background: var(--err-soft); color: var(--err); }
+  .badge::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+
+  .note { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 16px; border-radius: 6px; margin: 14px 0; font-size: 14px; }
+  .warn { background: var(--warn-soft); border-left: 4px solid var(--warn); padding: 12px 16px; border-radius: 6px; margin: 14px 0; font-size: 14px; }
+
+  footer { text-align: center; color: var(--ink-3); font-size: 13px; padding: 24px 0 8px; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav class="toc">
+    <h3>目录</h3>
+    <ol>
+      <li><a href="#overview">概述</a></li>
+      <li><a href="#home">首页入口</a></li>
+      <li><a href="#prb">校准文件加载（.prb / .csv）</a></li>
+      <li><a href="#input">手动单点输入</a></li>
+      <li><a href="#result">单点计算结果</a></li>
+      <li><a href="#csv">CSV 批量导入/导出</a></li>
+      <li><a href="#units">单位切换</a></li>
+      <li><a href="#share">复制与分享卡片</a></li>
+      <li><a href="#status">结果状态语义</a></li>
+      <li><a href="#faq">常见问题</a></li>
+    </ol>
+    <a href="../README.md" class="back">← 返回 README</a>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <h1>七孔探针插值 · 使用说明</h1>
+      <p>7 个孔压 + 大气参数 · 7.prb 内区 + 1~6.prb 外区 · 大小角度自动判定</p>
+      <div class="tags">
+        <span class="tag">内外区</span>
+        <span class="tag">自动分区</span>
+        <span class="tag">支持 CSV 校准</span>
+      </div>
+    </header>
+
+    <section id="overview">
+      <h2>1. 概述</h2>
+      <p>七孔探针插值用于风洞试验中<strong>大角度范围</strong>下的二维角度（侧滑角 α + 迎角 β）求解。通过内外区双套校准网格，自动判定大小角度模式，输出 9 项气动参数。</p>
+      <ul>
+        <li><strong>校准数据</strong>：7 个文件——<code>7.prb</code>（内区，小角度）+ <code>1~6.prb</code>（外区扇区，大角度）。或 7 份校准 CSV（与 .prb 等效）。</li>
+        <li><strong>输入</strong>：7 个孔压 P1~P7（Pa，表压）+ 大气压 Patm + 大气温度 Tatm（℃）。</li>
+        <li><strong>输出</strong>：α、β、θ、φ、马赫数、速度 V、总压 P0、静压 Ps、动压 q（共 9 项）。</li>
+        <li><strong>大小角度判定</strong>：内区角度覆盖范围小时用内区，超出后自动切到外区扇区。</li>
+        <li><strong>数值校验</strong>：JS 端口与 Go 原版逐位一致，最大误差 α/β ~1e-14、Ma ~1e-15（490 用例全 PASS）。</li>
+      </ul>
+      <div class="note">小程序版本与桌面端 <code>probe-interpolator</code> 共享同一套 Go 算法核心（<code>shared/algorithms/go/sevenhole/interpolation</code>），结果数值完全一致。</div>
+    </section>
+
+    <section id="home">
+      <h2>2. 首页入口</h2>
+      <p>打开小程序后，首页（探针选择页）会列出三种探针瓦片。点击「七孔探针」进入工作区。</p>
+      <div class="shot-grid">
+        <div class="shot">
+          <img src="screenshots/01_home.svg" alt="首页">
+          <div class="cap">图 2-1 首页探针选择瓦片</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="prb">
+      <h2>3. 校准文件加载（.prb / .csv）</h2>
+      <p>七孔探针需加载<strong>正好 7 个文件</strong>：<code>7.prb</code> 内区 + <code>1~6.prb</code> 外区扇区。也可加载 7 份校准 CSV（与 .prb 等效）。</p>
+      <h3>3.1 操作步骤</h3>
+      <ol>
+        <li>把 7 个 <code>.prb</code>（或 7 份 <code>.csv</code>）发到<strong>微信聊天</strong>或「文件传输助手」。</li>
+        <li>在小程序「校准文件」卡片点「加载校准文件（.prb / .csv）」按钮。</li>
+        <li>从微信会话文件列表中选择 7 个文件，加载完成后会显示文件标签。</li>
+        <li>加载成功后会显示「内区：7.prb · 外区：1~6.prb」。</li>
+      </ol>
+      <h3>3.2 文件路由规则</h3>
+      <ul>
+        <li>按 basename 路由：<code>7</code> = 内区；<code>1~6</code> = 外区扇区。</li>
+        <li>若 basename 无法识别，按选择顺序首文件 = 内区，其余按顺序分配为外区 1~6。</li>
+        <li>支持 <code>.prb</code> 与 <code>.csv</code> 混合加载（不推荐，建议同一种格式）。</li>
+      </ul>
+      <h3>3.3 校准 CSV 格式要求</h3>
+      <ul>
+        <li>按列位置读取（col 0, 1, 12, 13, 14, 15），不依赖表头名称（outer CSV 表头有历史遗留命名错误）。</li>
+        <li>每份 CSV 必需 ≥16 列。</li>
+        <li>外区 theta 网格派生：起点 30°、步长 5° 校验。</li>
+        <li>退化边确定性抖动：相邻网格点 ka/kb 相等导致 bilinear 不可逆时，施加 1e-9 × nudge 偏移，最多 100 轮；仍有退化边则报错。</li>
+      </ul>
+      <div class="warn">
+        <strong>编码提示</strong>：以 UTF-8 读取。校准软件常见 GB18030 导出，但其数字列与逗号/换行为 ASCII，GB18030 不会把逗号/换行编入多字节序列，故数字列仍能正确切分。仅中文表头可能乱码（触发一条非致命 warning）。若数值列因编码异常无法解析，请用 Excel/记事本另存为 UTF-8。
+      </div>
+    </section>
+
+    <section id="input">
+      <h2>4. 手动单点输入</h2>
+      <p>在「手动单点」Tab 中输入 7 个孔压与大气参数，点「计算」按钮。</p>
+      <div class="shot-grid">
+        <div class="shot">
+          <img src="screenshots/07_seven_input.svg" alt="七孔输入界面">
+          <div class="cap">图 4-1 七孔输入界面</div>
+        </div>
+      </div>
+      <h3>4.1 输入字段</h3>
+      <table>
+        <thead>
+          <tr><th>字段</th><th>含义</th><th>单位</th><th>缺省值</th><th>必填</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>P1</code></td><td>第 1 孔压力（外区扇区 1）</td><td>Pa（表压）</td><td>—</td><td>是</td></tr>
+          <tr><td><code>P2</code></td><td>第 2 孔压力（外区扇区 2）</td><td>Pa（表压）</td><td>—</td><td>是</td></tr>
+          <tr><td><code>P3</code></td><td>第 3 孔压力（外区扇区 3）</td><td>Pa（表压）</td><td>—</td><td>是</td></tr>
+          <tr><td><code>P4</code></td><td>第 4 孔压力（外区扇区 4）</td><td>Pa（表压）</td><td>—</td><td>是</td></tr>
+          <tr><td><code>P5</code></td><td>第 5 孔压力（外区扇区 5）</td><td>Pa（表压）</td><td>—</td><td>是</td></tr>
+          <tr><td><code>P6</code></td><td>第 6 孔压力（外区扇区 6）</td><td>Pa（表压）</td><td>—</td><td>是</td></tr>
+          <tr><td><code>P7</code></td><td>第 7 孔压力（中心孔，内区总压方向）</td><td>Pa（表压）</td><td>—</td><td>是</td></tr>
+          <tr><td><code>Patm</code></td><td>大气压</td><td>Pa</td><td>101325</td><td>是</td></tr>
+          <tr><td><code>Tatm</code></td><td>大气温度</td><td>℃</td><td>20</td><td>是</td></tr>
+        </tbody>
+      </table>
+      <div class="warn">
+        <strong>空字段会拒绝</strong>：空串/空白/非数字会直接报错（合法 0 仍允许），不会静默按 0 Pa 处理。
+      </div>
+    </section>
+
+    <section id="result">
+      <h2>5. 单点计算结果</h2>
+      <p>点「计算」后，结果卡片显示在页面下方。卡片顶部有状态胶囊，下方是 9 项结果行。</p>
+      <div class="shot-grid">
+        <div class="shot">
+          <img src="screenshots/08_seven_result.svg" alt="七孔计算结果">
+          <div class="cap">图 5-1 七孔计算结果（9 项气动参数）</div>
+        </div>
+      </div>
+      <h3>5.1 输出字段</h3>
+      <table>
+        <thead>
+          <tr><th>字段</th><th>含义</th><th>默认单位</th><th>可切换单位</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>alpha</code></td><td>侧滑角 α</td><td>deg</td><td>rad</td></tr>
+          <tr><td><code>beta</code></td><td>迎角 β</td><td>deg</td><td>rad</td></tr>
+          <tr><td><code>theta</code></td><td>流场坐标角 θ</td><td>deg</td><td>rad</td></tr>
+          <tr><td><code>phi</code></td><td>流场坐标角 φ</td><td>deg</td><td>rad</td></tr>
+          <tr><td><code>machNumber</code></td><td>马赫数</td><td>—</td><td>—</td></tr>
+          <tr><td><code>velocity</code></td><td>速度 V</td><td>m/s</td><td>km/h</td></tr>
+          <tr><td><code>totalPressure</code></td><td>总压 P0</td><td>Pa</td><td>kPa / MPa</td></tr>
+          <tr><td><code>staticPressure</code></td><td>静压 Ps</td><td>Pa</td><td>kPa / MPa</td></tr>
+          <tr><td><code>dynamicPressure</code></td><td>动压 q</td><td>Pa</td><td>kPa / MPa</td></tr>
+        </tbody>
+      </table>
+      <h3>5.2 结果卡片操作</h3>
+      <ul>
+        <li><strong>复制</strong>：把当前结果（按显示单位）整理为制表符分隔文本写入剪贴板。</li>
+        <li><strong>分享卡片</strong>：把当前结果绘制成一张图片，调起「分享到会话」/「保存相册」/「预览」三级回退。</li>
+      </ul>
+    </section>
+
+    <section id="csv">
+      <h2>6. CSV 批量导入/导出</h2>
+      <p>切到「CSV 批量」Tab，可一次性灌入多组孔压，结果回写为 CSV。</p>
+      <div class="shot-grid">
+        <div class="shot">
+          <img src="screenshots/04_csv_batch.svg" alt="CSV 批量结果">
+          <div class="cap">图 6-1 CSV 批量结果（截图以五孔为例，七孔结构相同）</div>
+        </div>
+      </div>
+      <h3>6.1 导入（计算）</h3>
+      <ul>
+        <li>点「导入 CSV 并计算」，从微信会话选 <code>.csv</code>。</li>
+        <li>必需列：<code>P1, P2, P3, P4, P5, P6, P7</code>（单位 Pa）。</li>
+        <li>可选列：<code>Patm</code> / <code>TAtm</code>（缺省回退到页面当前大气输入）。</li>
+        <li>表头容错：支持 <code>P1 (Pa)</code>、<code>大气压</code>、<code>气温(℃)</code>、<code>Patm</code>、<code>TAtm</code> 等写法。</li>
+        <li>解析按 RFC4180 风格：支持引号、<code>""</code> 转义、引号内逗号/换行、UTF-8 BOM 剥离。</li>
+      </ul>
+      <h3>6.2 输出列</h3>
+      <p>表头固定为：<code>P1..P7, Patm, TAtm, alpha, beta, theta, phi, machNumber, velocity, totalPressure, staticPressure, dynamicPressure, isValid, warning</code></p>
+      <ul>
+        <li><code>isValid = 1/0</code>：1 表示有效；0 表示超范围（仍输出参考值）。</li>
+        <li>解析或计算失败的行：<code>isValid = ERROR</code>，<code>warning</code> 列写明原因。</li>
+      </ul>
+      <h3>6.3 导出（分享）</h3>
+      <p>点「导出结果」按钮，把全部结果行写成 <code>probe_batch_seven_&lt;时间戳&gt;.csv</code>。</p>
+      <ul>
+        <li>优先调起 <code>wx.shareFileMessage</code> 分享到会话。</li>
+        <li>PC 端不可用时回退到 <code>wx.saveFileToDisk</code> 存盘。</li>
+        <li>用户取消分享面板时显示中性提示「已取消分享，未导出」。</li>
+      </ul>
+      <div class="note">CSV 解析与批量逻辑在 <code>utils/csv-batch.js</code> 中与 <code>wx</code> 解耦，可在 Node 端用 <code>verify/verify_csv.js</code> 直接校验。</div>
+    </section>
+
+    <section id="units">
+      <h2>7. 单位切换</h2>
+      <p>工作区顶部「显示单位」卡片可分别切换四类单位，<strong>只作用于结果展示与 CSV 导出结果列</strong>，输入固定国际单位。</p>
+      <table>
+        <thead>
+          <tr><th>类型</th><th>可切换单位</th><th>影响范围</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>压力</td><td>Pa / kPa / MPa</td><td>P0、Ps、动压 q</td></tr>
+          <tr><td>角度</td><td>deg / rad</td><td>α、β、θ、φ</td></tr>
+          <tr><td>温度</td><td>℃ / K / °F</td><td>SAT</td></tr>
+          <tr><td>速度</td><td>m/s / km/h</td><td>V</td></tr>
+        </tbody>
+      </table>
+      <ul>
+        <li>切换后 CSV 表头结果列自动加单位后缀，例如 <code>totalPressure_kPa</code>、<code>alpha_rad</code>。</li>
+        <li>单位偏好存入 <code>app.js</code> 的 <code>globalData.units</code>，跨三/五/七孔页面共享。</li>
+      </ul>
+    </section>
+
+    <section id="share">
+      <h2>8. 复制与分享卡片</h2>
+      <h3>8.1 复制结果</h3>
+      <p>结果卡片右上角「复制」按钮 → 制表符分隔文本，可直接粘贴到微信/Excel/文档。</p>
+      <h3>8.2 分享卡片</h3>
+      <p>结果卡片右上角「分享卡片」按钮 → 把当前结果（含输入摘要、按显示单位的结果、有效性、警告、生成时间）绘制成一张图片。</p>
+      <ul>
+        <li>卡片数据模型由 <code>utils/share-card.js</code> 的 <code>buildCardModel</code> 构建。</li>
+        <li>真正的 Canvas 绘制在 <code>utils/share-canvas.js</code>，仅在真机/开发者工具运行时执行。</li>
+        <li>导出与分享走三级回退：<code>wx.shareFileMessage</code> → <code>wx.saveImageToPhotosAlbum</code> → <code>wx.previewImage</code>。</li>
+      </ul>
+    </section>
+
+    <section id="status">
+      <h2>9. 结果状态语义</h2>
+      <p>结果卡片顶部的状态胶囊有三档：</p>
+      <table>
+        <thead>
+          <tr><th>状态</th><th>颜色</th><th>含义</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="badge ok">参考</span></td><td>绿色</td><td>已计算且在校准范围内（内区或外区）</td></tr>
+          <tr><td><span class="badge warn">参考: 原因</span></td><td>琥珀色</td><td>超出校准网格，结果仅供参考（CSV 同步输出「参考: 原因」）</td></tr>
+          <tr><td><span class="badge err">计算失败: 原因</span></td><td>红色</td><td>输入非法或无法收敛，结果值显示为「-」</td></tr>
+        </tbody>
+      </table>
+      <div class="note">七孔大小角度模式自动判定：内区角度覆盖范围小时用内区，超出后自动切到外区扇区。超出校准网格不支持外推，会标记为「参考: 超范围」。</div>
+    </section>
+
+    <section id="faq">
+      <h2>10. 常见问题</h2>
+      <h3>Q1：为什么必须 7 个文件？</h3>
+      <p>七孔探针校准网格由内区 + 6 个外区扇区组成。内区 <code>7.prb</code> 覆盖小角度，外区 <code>1~6.prb</code> 分别覆盖大角度的 6 个 60° 扇区。少一个文件都会导致部分角度范围无法求解。</p>
+      <h3>Q2：CSV 校准文件格式有什么要求？</h3>
+      <p>必需 ≥16 列，按列位置读取（col 0, 1, 12, 13, 14, 15）。外区 CSV 表头有历史遗留命名错误，故必须按位置而非表头名。外区 theta 网格起点 30°、步长 5° 校验。详见 README「阶段 6：七孔校准 CSV 导入」。</p>
+      <h3>Q3：结果状态显示「参考: 超范围」是什么意思？</h3>
+      <p>输入的孔压组合对应的 α/β 角度超出了 7 个校准网格的覆盖范围（内区 + 外区都不匹配），结果仅供参考。CSV 同步输出「参考: 原因」并附诊断数值。</p>
+      <h3>Q4：θ/φ 和 α/β 有什么区别？</h3>
+      <p>α/β 是探针体轴系下的角度（侧滑角/迎角），θ/φ 是流场坐标角度（流速方向在球面投影下的极角/方位角）。两者通过探针姿态转换关联，详见桌面端 <code>shared/algorithms/go/sevenhole/interpolation</code> 文档。</p>
+      <h3>Q5：导出 CSV 时点了「取消分享」没生成文件？</h3>
+      <p>取消分享面板会显示「已取消分享，未导出」，结果数据仍保留在小程序内存中，可重新点「导出结果」再次调起分享面板。</p>
+      <h3>Q6：加载 CSV 报「退化边」警告怎么办？</h3>
+      <p>校准 CSV 中相邻网格点 ka/kb 相等导致 bilinear 不可逆时，会施加 1e-9 偏移最多 100 轮。仍有退化边则报错。这通常是 CSV 数据质量问题（网格点重复或过于接近），建议检查校准数据。</p>
+    </section>
+
+    <footer>探针插值计算器 · 微信小程序版本 · 与桌面端共享 Go 算法核心</footer>
+  </main>
+</div>
+</body>
+</html>

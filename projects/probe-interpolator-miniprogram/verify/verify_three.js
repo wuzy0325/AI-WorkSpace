@@ -18,7 +18,8 @@ function threeSynthLines(cma) {
   return lines;
 }
 
-const FIELDS = ['alpha', 'machNumber', 'P0', 'Ps', 'iterationCount'];
+// velocity 与 machNumber/P0/Ps 同为 double 数值字段，统一纳入跨实现数值比对
+const FIELDS = ['alpha', 'machNumber', 'velocity', 'P0', 'Ps'];
 const TOL = 1e-9; // 纯 double 数学，Go 与 JS 应逐位一致
 
 function buildRealInterp() {
@@ -34,11 +35,13 @@ function buildRealInterp() {
   return interp;
 }
 
-function getMultiMaInterp(cmaList) {
-  const key = cmaList.join(',');
+function getMultiMaInterp(cmaList, loadOrder) {
+  // loadOrder 表示档位实际加载顺序；未提供时按 cmaList 顺序。
+  const order = loadOrder || cmaList;
+  const key = order.join(',');
   if (!getMultiMaInterp._cache) getMultiMaInterp._cache = {};
   if (getMultiMaInterp._cache[key]) return getMultiMaInterp._cache[key];
-  const fileData = cmaList.map((cma) => ({
+  const fileData = order.map((cma) => ({
     filePath: cma.toFixed(1) + 'Ma.prb',
     lines: threeSynthLines(cma),
   }));
@@ -64,12 +67,18 @@ function main() {
   for (const c of refs) {
     const input = c.input;
     const go = c.go;
-    const interp = c.cmaList ? getMultiMaInterp(c.cmaList) : realInterp;
+    const interp = c.cmaList ? getMultiMaInterp(c.cmaList, c.loadOrder) : realInterp;
     const { result, error } = interp.calculate(input);
 
     if (error) {
       fail++;
       failures.push(`[${c.name}] JS 计算报错: ${error}`);
+      continue;
+    }
+    // calculated 必须一致（区分"未计算"与"已计算-参考"）
+    if (!!result.calculated !== !!go.calculated) {
+      fail++;
+      failures.push(`[${c.name}] calculated 不一致: JS=${result.calculated} Go=${go.calculated} (warning_JS=${result.warning})`);
       continue;
     }
     // isValid 必须一致

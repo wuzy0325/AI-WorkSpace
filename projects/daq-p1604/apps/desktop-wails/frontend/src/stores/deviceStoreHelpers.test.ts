@@ -174,7 +174,7 @@ describe('planScannedAdditions', () => {
           port: 9000,
           macAddress: '00:1A:2B:3A:5F:1B',
           serialNumber: 'SN1',
-          overrideName: '工位A',
+          name: '工位A',
         },
       ],
       existingProfiles: [],
@@ -191,7 +191,7 @@ describe('planScannedAdditions', () => {
           port: 9000,
           macAddress: '00:1A:2B:3A:5F:1B',
           serialNumber: 'SN1',
-          overrideName: '工位A',
+          name: '工位A',
         },
       ],
       existingProfiles: [
@@ -200,5 +200,47 @@ describe('planScannedAdditions', () => {
       defaultAutoConnect: true,
     })
     expect(plan.toAdd[0]!.name).toBe('工位A (2)')
+  })
+
+  /**
+   * 回归测试：ScanResultList 的 ScanSelectionItem 通过 v-model 传到 AppShell，
+   * 再原样传入 addScannedProfiles → planScannedAdditions。
+   * ScanSelectionItem.name 字段必须被识别为用户覆盖名，不能因字段名不匹配
+   * 而静默回退到默认名（曾因 overrideName 与 name 不一致导致改名不生效）。
+   */
+  it('ScanSelectionItem 结构（含 id + name）直接传入时名字生效', () => {
+    const plan = planScannedAdditions({
+      inputs: [
+        {
+          id: 'p1604-001a2b3a5f1b',
+          name: '风洞北侧',
+          address: '192.168.3.101',
+          port: 9000,
+          macAddress: '00:1A:2B:3A:5F:1B',
+          serialNumber: 'SN1',
+        } as any,
+      ],
+      existingProfiles: [],
+      defaultAutoConnect: true,
+    })
+    expect(plan.toAdd[0]!.name).toBe('风洞北侧')
+  })
+
+  it('ScanSelectionItem.name 为空字符串时回退到默认名', () => {
+    const plan = planScannedAdditions({
+      inputs: [
+        {
+          id: 'p1604-001a2b3a5f1b',
+          name: '',
+          address: '192.168.3.101',
+          port: 9000,
+          macAddress: '00:1A:2B:3A:5F:1B',
+          serialNumber: 'SN1',
+        } as any,
+      ],
+      existingProfiles: [],
+      defaultAutoConnect: true,
+    })
+    expect(plan.toAdd[0]!.name).toBe('DAQ-P-1604-3A5F1B')
   })
 })

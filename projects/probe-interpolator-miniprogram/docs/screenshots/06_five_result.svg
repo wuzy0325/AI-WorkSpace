@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f5cad"/>
+      <stop offset="100%" stop-color="#0a4a8c"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="900" rx="44" ry="44" fill="#0f172a"/>
+  <rect x="14" y="14" width="572" height="872" rx="34" ry="34" fill="#eef1f5"/>
+  <rect x="14" y="14" width="572" height="44" rx="34" ry="34" fill="#ffffff"/>
+  <text x="44" y="42" font-size="22" fill="#0f172a" font-weight="600">9:41</text>
+  <circle cx="500" cy="36" r="14" fill="none" stroke="#94a3b8" stroke-width="2"/>
+  <circle cx="540" cy="36" r="14" fill="none" stroke="#94a3b8" stroke-width="2"/>
+
+  <!-- 页面 header -->
+  <rect x="14" y="58" width="572" height="92" fill="#ffffff" stroke="#e4e8ee"/>
+  <text x="48" y="106" font-size="34" font-weight="700" fill="#0f172a">五孔探针插值</text>
+  <text x="48" y="138" font-size="20" fill="#94a3b8">5 个孔压 + 大气参数 · 多马赫 .prb 校准</text>
+
+  <!-- 计算结果卡片 -->
+  <rect x="32" y="170" width="536" height="620" rx="16" ry="16" fill="#ffffff" stroke="#e4e8ee"/>
+  <text x="60" y="206" font-size="26" font-weight="600" fill="#0f172a">计算结果</text>
+  <rect x="380" y="184" width="76" height="32" rx="16" ry="16" fill="#ffffff" stroke="#d0d6de"/>
+  <text x="418" y="206" font-size="18" fill="#475569" text-anchor="middle">复制</text>
+  <rect x="466" y="184" width="100" height="32" rx="16" ry="16" fill="#ffffff" stroke="#d0d6de"/>
+  <text x="516" y="206" font-size="18" fill="#475569" text-anchor="middle">分享卡片</text>
+
+  <!-- 状态胶囊：参考 -->
+  <rect x="60" y="230" width="92" height="32" rx="16" ry="16" fill="#ecfaf0" stroke="#22c55e" stroke-opacity="0.2"/>
+  <circle cx="80" cy="246" r="6" fill="#15803d"/>
+  <text x="142" y="252" font-size="18" font-weight="600" fill="#15803d" text-anchor="end">参考</text>
+
+  <!-- 结果行（13 项） -->
+  <text x="60" y="298" font-size="22" fill="#475569">偏角 α</text>
+  <text x="540" y="298" font-size="24" font-weight="600" fill="#0f172a" text-anchor="end">0.000 deg</text>
+  <line x1="60" y1="316" x2="540" y2="316" stroke="#e4e8ee" stroke-dasharray="4 4"/>
+
+  <text x="60" y="346" font-size="22" fill="#475569">俯仰角 β</text>
+  <text x="540" y="346" font-size="24" font-weight="600" fill="#0f172a" text-anchor="end">0.000 deg</text>
+  <line x1="60" y1="364" x2="540" y2="364" stroke="#e4e8ee" stroke-dasharray="4 4"/>
+
+  <text x="60" y="394" font-size="22" fill="#475569">马赫数 Ma</text>
+  <text x="540" y="394" font-size="24" font-weight="600" fill="#0f172a" text-anchor="end">0.8012</text>
+  <line x1="60" y1="412" x2="540" y2="412" stroke="#e4e8ee" stroke-dasharray="4 4"/>
+
+  <text x="60" y="442" font-size="22" fill="#475569">速度 V</text>
+  <text x="540" y="442" font-size="24" font-weight="600" fill="#0f172a" text-anchor="end">272.18 m/s</text>
+  <line x1="60" y1="460" x2="540" y2="460" stroke="#e4e8ee" stroke-dasharray="4 4"/>
+
+  <text x="60" y="490" font-size="22" fill="#475569">总压 P0</text>
+  <text x="540" y="490" font-size="24" font-weight="600" fill="#0f172a" text-anchor="end">49.987 kPa</text>
+  <line x1="60" y1="508" x2="540" y2="508" stroke="#e4e8ee" stroke-dasharray="4 4"/>
+
+  <text x="60" y="538" font-size="22" fill="#475569">静压 Ps</text>
+  <text x="540" y="538" font-size="24" font-weight="600" fill="#0f172a" text-anchor="end">-2.209 kPa</text>
+  <line x1="60" y1="556" x2="540" y2="556" stroke="#e4e8ee" stroke-dasharray="4 4"/>
+
+  <text x="60" y="586" font-size="22" fill="#475569">动压 q</text>
+  <text x="540" y="586" font-size="24" font-weight="600" fill="#0f172a" text-anchor="end">3.742 kPa</text>
+  <line x1="60" y1="604" x2="540" y2="604" stroke="#e4e8ee" stroke-dasharray="4 4"/>
+
+  <text x="60" y="634" font-size="22" fill="#475569">密度 ρ</text>
+  <text x="540" y="634" font-size="24" font-weight="600" fill="#0f172a" text-anchor="end">1.204 kg/m³</text>
+  <line x1="60" y1="652" x2="540" y2="652" stroke="#e4e8ee" stroke-dasharray="4 4"/>
+
+  <text x="60" y="682" font-size="22" fill="#475569">CAS</text>
+  <text x="540" y="682" font-size="24" font-weight="600" fill="#0f172a" text-anchor="end">272.18 m/s</text>
+  <line x1="60" y1="700" x2="540" y2="700" stroke="#e4e8ee" stroke-dasharray="4 4"/>
+
+  <text x="60" y="730" font-size="22" fill="#475569">SAT</text>
+  <text x="540" y="730" font-size="24" font-weight="600" fill="#0f172a" text-anchor="end">20.00 °C</text>
+  <line x1="60" y1="748" x2="540" y2="748" stroke="#e4e8ee" stroke-dasharray="4 4"/>
+
+  <text x="60" y="778" font-size="22" fill="#475569">vx / vy / vz</text>
+  <text x="540" y="778" font-size="22" font-weight="600" fill="#0f172a" text-anchor="end">0.0 / 0.0 / 272.2</text>
+
+  <!-- 底部提示 -->
+  <text x="300" y="820" font-size="18" fill="#94a3b8" text-anchor="middle">结果列：α / β / Ma / v / vx / vy / vz / cas / sat / q / ρ / P0 / Ps</text>
+
+  <rect x="220" y="838" width="160" height="6" rx="3" ry="3" fill="#94a3b8"/>
+</svg>

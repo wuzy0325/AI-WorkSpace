@@ -7,7 +7,7 @@ import type { SelectOption } from './CustomSelect.vue'
 import {
   Settings2, Activity,
   Save, RotateCcw, CheckCircle2, AlertCircle,
-  SlidersHorizontal, Hash, Clock, Wifi, Zap,
+  SlidersHorizontal, Hash, Clock, Wifi, Zap, Tag,
 } from '@lucide/vue'
 
 const props = defineProps<{ deviceId: string }>()
@@ -29,6 +29,8 @@ const samplingRate = ref(10)
 const showTimestamp = ref(false)
 const autoConnect = ref(false) // 启动时自动连接
 const globalTcType = ref('K') // 全局热电偶类型，用于统一设置所有通道
+// 设备名：用户可自定义，留空时 UI 显示"未命名"（sidebar 兜底逻辑）
+const deviceName = ref('')
 const channelNames = ref<string[]>(Array(16).fill(''))
 const channelEnabled = ref<boolean[]>(Array(16).fill(true))
 const channelColors = ref<string[]>(Array(16).fill(''))
@@ -52,6 +54,8 @@ function syncFormFromProfile(profileData: typeof profile.value, force = false) {
   samplingRate.value = profileData.t1603Config?.samplingRate || 10
   showTimestamp.value = profileData.t1603Config?.showTimestamp ?? false
   autoConnect.value = profileData.t1603Config?.autoConnect ?? false
+  // 设备名回填：profile.name 可能为空字符串，与"未命名"占位区分
+  deviceName.value = profileData.name || ''
   channelNames.value = profileData.channels.map((c) => c.name || '')
   channelEnabled.value = profileData.channels.map((c) => c.enabled)
   channelColors.value = profileData.channels.map((c) => c.color || '')
@@ -71,7 +75,7 @@ watch(
   { immediate: true }
 )
 
-watch([samplingRate, showTimestamp, autoConnect, channelNames, channelEnabled, channelColors, channelTcTypes], () => {
+watch([samplingRate, showTimestamp, autoConnect, deviceName, channelNames, channelEnabled, channelColors, channelTcTypes], () => {
   // 保存同步中跳过，避免覆盖 saveStatus
   if (syncing.value) return
   hasChanges.value = true
@@ -114,6 +118,23 @@ function hasHardwareConfigChanged(current: typeof profile.value, next: typeof cu
 
 async function saveConfig() {
   if (!profile.value) return
+
+  // 设备名唯一性校验：daq-t1603 扫描路径不提供内联改名，用户通过添加对话框
+  // 手动命名，addProfile 仅按 IP:port 去重不校验名字；配置面板是显式单设备
+  // 改名，用户应感知冲突，故阻断并提示，避免改名后 sidebar/monitor 出现
+  // 多个同名设备无法区分。排除当前 profile 自身：用户未改名直接保存不应触发冲突。
+  const trimmedName = deviceName.value.trim()
+  if (trimmedName !== '') {
+    const nameConflict = deviceStore.profiles.some(
+      (p) => p.id !== props.deviceId && p.name === trimmedName,
+    )
+    if (nameConflict) {
+      saveStatus.value = 'error'
+      saveMessage.value = i18n.t('config.error.nameExists')
+      return
+    }
+  }
+
   saveStatus.value = 'saving'
   saveMessage.value = ''
   syncing.value = true
@@ -128,6 +149,8 @@ async function saveConfig() {
     const tcTypesStr = channelTcTypes.value.join('')
     const nextProfile = {
       ...previousProfile,
+      // 设备名：trim 后写入，空字符串由 sidebar/monitor 的兜底逻辑显示为"未命名"
+      name: deviceName.value.trim(),
       t1603Config: {
         ...previousProfile.t1603Config,
         thermocoupleTypes: tcTypesStr,
@@ -231,6 +254,22 @@ function onRateInput(e: Event) {
           <h4 class="config__section-title">{{ i18n.t('config.hardwareParams') }}</h4>
         </div>
         <div class="config__section-body">
+          <!-- 设备名称：用户可自定义，留空时 UI 兜底显示"未命名" -->
+          <div class="config__field">
+            <label class="config__label">
+              <Tag class="config__label-icon" />
+              <span>{{ i18n.t('config.deviceName') }}</span>
+            </label>
+            <input
+              v-model="deviceName"
+              type="text"
+              class="config__name-input"
+              :placeholder="i18n.t('config.deviceNamePlaceholder')"
+              :disabled="isAcquiring"
+              maxlength="64"
+            />
+          </div>
+
           <div class="config__field">
             <label class="config__label">
               <Hash class="config__label-icon" />
@@ -594,6 +633,31 @@ function onRateInput(e: Event) {
 }
 
 .config__rate-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 设备名输入框：text 类型，左对齐，宽度自适应 */
+.config__name-input {
+  flex: 1;
+  max-width: 14rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input, var(--bg-panel));
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  outline: none;
+  transition: border-color var(--motion-fast) var(--easing-standard);
+}
+
+.config__name-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
+.config__name-input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

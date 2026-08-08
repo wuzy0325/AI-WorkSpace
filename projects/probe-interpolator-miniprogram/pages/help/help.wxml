@@ -1,0 +1,128 @@
+<!-- 使用说明页：与其它探针页共用 page-header 设计语言，下方接 tab + 说明卡片 -->
+<view class="page-header">
+  <view class="title">使用说明</view>
+  <view class="sub">三 / 五 / 七孔探针的输入输出与常见问题</view>
+</view>
+
+<!-- tab 切换：复用 .input-tabs 视觉风格，避免新增样式 -->
+<view class="card help-tabs-card">
+  <view class="input-tabs help-tabs">
+    <view
+      class="input-tab {{activeTab === item.key ? 'active' : ''}}"
+      wx:for="{{tabs}}"
+      wx:key="key"
+      data-tab="{{item.key}}"
+      bindtap="onSwitchTab"
+    >{{item.label}}</view>
+  </view>
+</view>
+
+<!-- 仅在 current 已就绪时渲染（onLoad 后立刻 setData，正常情况下不会为空） -->
+<block wx:if="{{current}}">
+  <!-- 概览 -->
+  <view class="card">
+    <view class="card-title">概览</view>
+    <view class="help-overview">{{current.overview}}</view>
+  </view>
+
+  <!-- 校准文件准备步骤 -->
+  <view class="card">
+    <view class="card-title">校准文件准备</view>
+    <view class="help-steps">
+      <view class="help-step" wx:for="{{current.calib}}" wx:key="*this">
+        <view class="help-step-no">{{index + 1}}</view>
+        <view class="help-step-text">{{item}}</view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 输入字段 -->
+  <view class="card">
+    <view class="card-title">
+      <text>输入字段</text>
+      <text class="hint">单位固定 Pa / ℃</text>
+    </view>
+    <view class="help-table">
+      <view class="help-tr help-th">
+        <view class="help-td help-td-name">字段</view>
+        <view class="help-td help-td-unit">单位</view>
+        <view class="help-td help-td-desc">说明</view>
+      </view>
+      <view class="help-tr" wx:for="{{current.inputs}}" wx:key="name">
+        <view class="help-td help-td-name">
+          <text class="help-field-name">{{item.name}}</text>
+          <text class="help-req" wx:if="{{item.req}}">*</text>
+        </view>
+        <view class="help-td help-td-unit">{{item.unit}}</view>
+        <view class="help-td help-td-desc">{{item.desc}}</view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 输出字段 -->
+  <view class="card">
+    <view class="card-title">
+      <text>输出字段</text>
+      <text class="hint">单位可通过页面顶部「显示单位」切换</text>
+    </view>
+    <view class="help-table">
+      <view class="help-tr help-th">
+        <view class="help-td help-td-name">字段</view>
+        <view class="help-td help-td-unit">单位</view>
+        <view class="help-td help-td-desc">说明</view>
+      </view>
+      <view class="help-tr" wx:for="{{current.outputs}}" wx:key="name">
+        <view class="help-td help-td-name"><text class="help-field-name">{{item.name}}</text></view>
+        <view class="help-td help-td-unit">{{item.unit}}</view>
+        <view class="help-td help-td-desc">{{item.desc}}</view>
+      </view>
+    </view>
+  </view>
+
+  <!-- CSV 批量导入格式 -->
+  <view class="card">
+    <view class="card-title">
+      <text>CSV 批量导入格式</text>
+      <text class="hint">「CSV 批量」tab</text>
+    </view>
+    <view class="help-overview">{{current.csv.note}}</view>
+
+    <view class="field-label help-sec">列约定（第一行为表头）</view>
+    <view class="help-table">
+      <view class="help-tr help-th">
+        <view class="help-td help-td-name">字段</view>
+        <view class="help-td help-td-req">必填</view>
+        <view class="help-td help-td-desc">说明</view>
+      </view>
+      <view class="help-tr" wx:for="{{current.csv.columns}}" wx:key="name">
+        <view class="help-td help-td-name"><text class="help-field-name">{{item.name}}</text></view>
+        <view class="help-td help-td-req">{{item.req ? '是' : '否'}}</view>
+        <view class="help-td help-td-desc">{{item.desc}}</view>
+      </view>
+    </view>
+
+    <view class="field-label help-sec">表头容错</view>
+    <view class="help-tol">
+      <view class="help-tol-item" wx:for="{{current.csv.headerTol}}" wx:key="*this">{{item}}</view>
+    </view>
+
+    <view class="field-label help-sec">输出列</view>
+    <view class="help-output">{{current.csv.outputNote}}</view>
+  </view>
+
+  <!-- 常见问题 -->
+  <view class="card">
+    <view class="card-title">常见问题</view>
+    <view class="help-faq">
+      <view class="help-faq-item" wx:for="{{current.faq}}" wx:key="q">
+        <view class="help-faq-q">Q · {{item.q}}</view>
+        <view class="help-faq-a">{{item.a}}</view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 底部回首页提示 -->
+  <view class="help-footer hint">
+    更多细节可查看仓库 docs/ 目录下的 HTML 说明书
+  </view>
+</block>

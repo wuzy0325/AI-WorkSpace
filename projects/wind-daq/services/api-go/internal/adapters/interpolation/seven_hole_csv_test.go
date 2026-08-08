@@ -51,8 +51,10 @@ func TestLoadSevenHoleCalibrationCsvFiles_Success(t *testing.T) {
 }
 
 // TestSevenHoleCsvDitherConsistency 退化边抖动与夹具脚本一致：
-// 已知数据集在 7.prb/1.prb/3.prb/4.prb 各有 1/1/3/1 处精确 ka 相等退化边
-// （gen_traversal_fixtures.py 生成记录），Go 抖动扫描应命中相同数量。
+// 校准 CSV 系数现在由原始压力列全精度重算（csv_loader.go
+// recomputeSevenHoleInnerCoeffs / recomputeSevenHoleOuterCoeffs），3 位小数
+// 截断造成的精确 ka/kb 相等退化边被消除（历史 3dp PRB 有 1/1/3/1 处），
+// 因此不应出现任何退化边抖动警告。
 //
 // 直接调用共享包的 LoadCalibrationCSVFromUTF8（绕过 adapter 的文件 I/O 包装），
 // 以验证抖动警告透传——adapter 默认丢弃 warnings，此处需读取它们。
@@ -75,25 +77,10 @@ func TestSevenHoleCsvDitherConsistency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCalibrationCSVFromUTF8: %v", err)
 	}
-	// 历史数据集表头沿用 inner 命名，outer 表头与历史别名不符会触发 6 条表头诊断警告。
-	// 这里只断言抖动相关的 4 条子串存在，不限制总警告数（表头诊断警告可能变化）。
-	wantSubstrings := []string{
-		"内区 CSV 已对 1 处退化边",
-		"扇区 1 CSV 已对 1 处退化边",
-		"扇区 3 CSV 已对 3 处退化边",
-		"扇区 4 CSV 已对 1 处退化边",
-	}
-	matched := make([]bool, len(wantSubstrings))
+	// 全精度压力重算消除了 3dp 截断的退化边，不应有任何退化边抖动警告。
 	for _, w := range warnings {
-		for i, want := range wantSubstrings {
-			if !matched[i] && strings.Contains(w, want) {
-				matched[i] = true
-			}
-		}
-	}
-	for i, ok := range matched {
-		if !ok {
-			t.Errorf("missing warning substring %q in warnings: %v", wantSubstrings[i], warnings)
+		if strings.Contains(w, "退化边") {
+			t.Errorf("全精度重算后不应有退化边抖动警告: %q", w)
 		}
 	}
 }

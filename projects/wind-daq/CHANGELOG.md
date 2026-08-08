@@ -1,5 +1,102 @@
 # Changelog
 
+## [0.13.0] - 2026-08-05
+
+### Fixed
+
+- **七孔插值加载与插值链路修复**（对 `shared/algorithms/go/sevenhole/interpolation`，与 probe-interpolator 0.3.0 同源）：
+  - 七孔校准 CSV 系数全精度重算：系数（ka/kb/cpt/cps）由原始压力列（col3=P0、col4=Ps、col5..11=P1..P7）在 float64 全精度下按公式重算，替代历史 3 位小数 K 列（col12..15，误差最大约 5e-4）。
+  - 网格节点精确往返修复：内区 21 个边界节点此前被误路由到大角度区，现正确路由到内区；校准行按自身网格节点精确往返，自提取 PRB 反推不再漏判网格边界点。
+  - 退化边抖动消除：全精度重算消除了 3dp 截断导致的精确 ka/kb 相等退化边，加载七孔 CSV 不再产生退化边抖动警告（`seven_hole_csv_test.go` 断言同步更新）。
+- 新增 NaN/Inf 压力值拒绝（CSV 加载时），避免脏数据静默进入网格。
+
+### Compatibility
+
+- 配置文件格式：兼容。
+- 数据文件格式：CSV 校准文件兼容（列位置契约不变）；历史 3 位小数 K 列（col12..15）不再参与网格构建，仅用于表头诊断。
+- 历史 PRB 文件：旧 3dp PRB 与新全精度网格存在约 5e-4 差异，建议重新生成后加载。
+- API 契约：兼容。
+- 设备协议行为：不变。
+
+### Verification
+
+- `go test ./...`（shared/algorithms/go/sevenhole/interpolation）: passed
+- `go test ./internal/adapters/interpolation/ -run SevenHole`（wind-daq services/api-go）: passed
+- `go vet ./...` + `go test ./internal/... ./api/...`（wind-daq services/api-go）: passed
+- `npm run typecheck` / `npm run build`: passed
+- `task release`: passed
+- `makensis`: passed
+- `task archive-release`: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名。
+- 内嵌 exe 的 ProductVersion 资源为空（wails3 v3.0.0-alpha2.106 既有行为），installer 的 ProductVersion 为 `0.13.0`。
+
+## [0.12.4] - 2026-08-05
+
+### Added
+
+- **三孔探针插值算法输出气流速度 Velocity**（对应 `shared/algorithms/go/threehole/interpolation`，与 probe-interpolator-miniprogram 同源同步）：`InterpolationResult` 新增 `Velocity` 字段（m/s），由 `MachNumber` 与 `Tatm` 经 `V = Ma · sqrt(γ · R · T_K)` 推导（R=287 J/(kg·K)，γ 复用 `calcGamma` 温度修正）。
+  - 业务背景：三孔探针风洞验证需要"速度误差范围"作为验收指标，原先算法只输出 Ma，调用方需各自离线换算 V，跨实现一致性无法保证。
+  - 兜底语义：Velocity 严格跟随 MachNumber——Ma 有效或兜底（initMa/currentMa）时给出对应速度，Ma 为 0/NaN（输入非法、calcMach 失败）时返回 0。
+  - 5 个返回点全部填充 Velocity，与现有 MachNumber 行为对齐。
+
+### Fixed
+
+- 本版本无 Wind-DAQ 自有 bug 修复，仅因共享算法包新增 Velocity 输出重新打包。
+
+### Compatibility
+
+- 配置文件格式：兼容。
+- 数据文件格式：兼容（CSV 暂未新增 Velocity 列，未来 wind-daq 校准 CSV 接入时再扩展）。
+- API 契约：兼容（`InterpolationResult` 新增字段为可选，旧调用方无需改动）。
+- 设备协议行为：不变。
+
+### Verification
+
+- `go vet ./...`（shared/algorithms/go/threehole）: passed
+- `go test ./...`（shared/algorithms/go/threehole，含新增 4 个测试）: passed
+- `node verify_three.js`（50 用例 Go↔JS 跨实现数值一致，容差 1e-9）: passed
+- `node verify_csv.js / verify_units.js / verify_share_card.js`（103 项断言）: passed
+- `task release`: passed
+- `makensis '-DARG_WAILS_AMD64_BINARY=..\..\bin\wind-daq.exe' project.nsi`（在 `build/windows/installer/` 目录下执行）: passed
+- `task archive-release`: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名，Windows 可能显示"未知发布者"提示。
+- wind-daq 前端校准 CSV 暂未接入 Velocity 列输出，仍由前端独立计算；后续接入时统一来源。
+
+## [0.12.3] - 2026-08-04
+
+### Fixed
+
+- **共享驱动 MCH 掩码覆盖修复**（对应 `shared/device-sdk` `daq_t1603.go`，daq-t1603 0.6.8 同源修复）：连接同步阶段 `@fd MCH` 读取的设备端持久化历史通道掩码（如出厂遗留 `0000`）不再写回 `cfg.ChannelMask`。此前若设备端掩码非 `FFFF`，T1603 设备启动采集会发出 `@f0 0000 2`（零通道），导致无数据帧且停止采集报 `invalid Stop response boundary`。现应用配置/profile 才是权威，mask 为空时仍回退 `FFFF`。
+- 本版本无 Wind-DAQ 自有代码变更，仅因共享 device-sdk 修复重新打包。
+
+### Compatibility
+
+- 配置文件格式：兼容。
+- 数据文件格式：兼容。
+- 设备协议行为：`@fd MCH` 仍会被读取以维持协议响应边界，仅不再回写应用配置；协议命令链无变化。
+- API 契约：兼容。
+
+### Verification
+
+- `go build ./services/api-go/...`: passed
+- `go test ./services/api-go/internal/...`: passed
+- `go vet ./services/api-go/...`: passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+- `task release`: passed
+- `makensis '-DARG_WAILS_AMD64_BINARY=..\..\bin\wind-daq.exe' project.nsi`（在 `build/windows/installer/` 目录下执行）: passed
+- `task archive-release`: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名，Windows 可能显示"未知发布者"提示。
+
 ## [0.12.2] - 2026-08-03
 
 ### Changed

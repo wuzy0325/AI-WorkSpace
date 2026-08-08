@@ -151,6 +151,22 @@ func (p *SevenHolePrbInterpolator) Calculate(input InterpolationInput) (result I
 		return InterpolationResult{}, fmt.Errorf("七孔PRB校准数据未加载")
 	}
 
+	first, second := maxPressureHoles(input)
+
+	// A pressure row used to build a candidate outer calibration node must round-trip
+	// through that exact node even when its inner coefficients also fall in the
+	// overlapping small-angle polygon. The gridEps match is deliberately much
+	// tighter than interpolation fallbacks, so ordinary nearby measurements
+	// retain the established inner-first routing and continuous interpolation.
+	if sector, gp, ok := p.findExactOuterCalibrationNode(input, first, second); ok {
+		pt, ps, err := solveOuterPtPs(input, sector, gp.cpt, gp.cps)
+		if err != nil {
+			return InterpolationResult{}, err
+		}
+		alpha, beta := convertThetaPhiToAlphaBeta(gp.a, gp.b)
+		return assembleResult(input, alpha, beta, gp.a, gp.b, pt, ps)
+	}
+
 	// Inner-zone try (Python cal_ab branch order: inner first).
 	ka, kb, err := innerKaKb(input)
 	if err != nil {
@@ -165,12 +181,12 @@ func (p *SevenHolePrbInterpolator) Calculate(input InterpolationInput) (result I
 		if err != nil {
 			return InterpolationResult{}, err
 		}
-		return assembleResult(input, zc.a, zc.b, pt, ps)
+		// 内区网格坐标 (a,b) 即 (alpha,beta)，theta/phi 与之同值。
+		return assembleResult(input, zc.a, zc.b, zc.a, zc.b, pt, ps)
 	}
 
 	// Large-angle mode: try the largest-pressure hole's sector first, then
 	// the second-largest (Python first/second candidate logic).
-	first, second := maxPressureHoles(input)
 	for _, sector := range [2]int{first, second} {
 		kaO, kbO, err := outerKaKb(input, sector)
 		if err != nil {
@@ -189,8 +205,9 @@ func (p *SevenHolePrbInterpolator) Calculate(input InterpolationInput) (result I
 		}
 		// zc.a/zc.b are grid coordinates (theta,phi); transform to output
 		// angles (Python big_ab_convert, SKILL.md section 3.7).
+		// 保留原始 (theta,phi) 供前端展示，Alpha/Beta 是投影后的风洞坐标系角度。
 		alpha, beta := convertThetaPhiToAlphaBeta(zc.a, zc.b)
-		return assembleResult(input, alpha, beta, pt, ps)
+		return assembleResult(input, alpha, beta, zc.a, zc.b, pt, ps)
 	}
 
 	return InterpolationResult{
@@ -199,8 +216,24 @@ func (p *SevenHolePrbInterpolator) Calculate(input InterpolationInput) (result I
 	}, nil
 }
 
+func (p *SevenHolePrbInterpolator) findExactOuterCalibrationNode(input InterpolationInput, first, second int) (int, gridPoint, bool) {
+	for _, sector := range [2]int{first, second} {
+		ka, kb, err := outerKaKb(input, sector)
+		if err != nil {
+			continue
+		}
+		if gp, ok := outerFindGridPointByKaKbWithin(p.outer[sector-1], ka, kb, gridEps); ok {
+			return sector, gp, true
+		}
+	}
+	return 0, gridPoint{}, false
+}
+
 // assembleResult computes V/Ma and packs the final result.
-func assembleResult(input InterpolationInput, alpha, beta, pt, ps float64) (InterpolationResult, error) {
+// theta/phi 是 PRB 网格原始角度坐标，与 alpha/beta 一起传入：
+//   - 内区模式：theta=alpha、phi=beta（小角度下两套坐标系重合）
+//   - 外区模式：theta/phi 是探头坐标系俯仰/方位角，alpha/beta 是投影后的风洞坐标系角度
+func assembleResult(input InterpolationInput, alpha, beta, theta, phi, pt, ps float64) (InterpolationResult, error) {
 	v, ma, err := calVelocityMach(pt, ps, input.PAtm, input.TAtm)
 	if err != nil {
 		return InterpolationResult{}, err
@@ -208,6 +241,8 @@ func assembleResult(input InterpolationInput, alpha, beta, pt, ps float64) (Inte
 	return InterpolationResult{
 		Alpha:           alpha,
 		Beta:            beta,
+		Theta:           theta,
+		Phi:             phi,
 		MachNumber:      ma,
 		Velocity:        v,
 		TotalPressure:   pt,

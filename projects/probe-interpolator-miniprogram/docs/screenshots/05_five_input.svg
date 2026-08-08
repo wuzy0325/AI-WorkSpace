@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f5cad"/>
+      <stop offset="100%" stop-color="#0a4a8c"/>
+    </linearGradient>
+  </defs>
+  <!-- 手机外框 -->
+  <rect width="600" height="900" rx="44" ry="44" fill="#0f172a"/>
+  <rect x="14" y="14" width="572" height="872" rx="34" ry="34" fill="#eef1f5"/>
+  <!-- 顶部状态栏 -->
+  <rect x="14" y="14" width="572" height="44" rx="34" ry="34" fill="#ffffff"/>
+  <text x="44" y="42" font-size="22" fill="#0f172a" font-weight="600">9:41</text>
+  <circle cx="500" cy="36" r="14" fill="none" stroke="#94a3b8" stroke-width="2"/>
+  <circle cx="540" cy="36" r="14" fill="none" stroke="#94a3b8" stroke-width="2"/>
+
+  <!-- 页面 header -->
+  <rect x="14" y="58" width="572" height="92" fill="#ffffff" stroke="#e4e8ee"/>
+  <text x="48" y="106" font-size="34" font-weight="700" fill="#0f172a">五孔探针插值</text>
+  <text x="48" y="138" font-size="20" fill="#94a3b8">5 个孔压 + 大气参数 · 多马赫 .prb 校准</text>
+
+  <!-- 校准文件卡片（含 Ma 输入） -->
+  <rect x="32" y="170" width="536" height="200" rx="16" ry="16" fill="#ffffff" stroke="#e4e8ee"/>
+  <text x="60" y="206" font-size="26" font-weight="600" fill="#0f172a">校准文件</text>
+  <!-- 文件行 1：0.8Ma.prb -->
+  <text x="60" y="240" font-size="20" fill="#475569">· 0.8Ma.prb</text>
+  <rect x="380" y="222" width="140" height="32" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="396" y="244" font-size="16" font-weight="600" fill="#475569">Ma</text>
+  <text x="510" y="244" font-size="18" fill="#0f172a" text-anchor="end">0.8</text>
+  <line x1="60" y1="258" x2="540" y2="258" stroke="#e4e8ee"/>
+  <!-- 文件行 2：0.6Ma.prb -->
+  <text x="60" y="284" font-size="20" fill="#475569">· 0.6Ma.prb</text>
+  <rect x="380" y="266" width="140" height="32" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="396" y="288" font-size="16" font-weight="600" fill="#475569">Ma</text>
+  <text x="510" y="288" font-size="18" fill="#0f172a" text-anchor="end">0.6</text>
+  <line x1="60" y1="302" x2="540" y2="302" stroke="#e4e8ee"/>
+  <!-- 文件行 3：1.0Ma.prb -->
+  <text x="60" y="328" font-size="20" fill="#475569">· 1.0Ma.prb</text>
+  <rect x="380" y="310" width="140" height="32" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="396" y="332" font-size="16" font-weight="600" fill="#475569">Ma</text>
+  <text x="510" y="332" font-size="18" fill="#0f172a" text-anchor="end">1.0</text>
+  <text x="60" y="358" font-size="17" fill="#a45a00">文件名含 0.8Ma 等将自动识别，否则请手动填写</text>
+
+  <!-- 数据输入卡片 -->
+  <rect x="32" y="390" width="536" height="426" rx="16" ry="16" fill="#ffffff" stroke="#e4e8ee"/>
+  <!-- tab 切换 -->
+  <line x1="60" y1="432" x2="540" y2="432" stroke="#e4e8ee"/>
+  <rect x="60" y="428" width="120" height="4" rx="2" ry="2" fill="#0f5cad"/>
+  <text x="120" y="422" font-size="22" font-weight="600" fill="#0f5cad" text-anchor="middle">手动单点</text>
+  <text x="480" y="422" font-size="22" fill="#94a3b8" text-anchor="middle">CSV 批量</text>
+
+  <!-- 5 个孔压 -->
+  <text x="60" y="468" font-size="20" font-weight="600" fill="#475569">孔压输入 (Pa)</text>
+  <!-- P1 -->
+  <rect x="60" y="482" width="156" height="48" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="80" y="512" font-size="18" font-weight="600" fill="#475569">P1</text>
+  <text x="200" y="512" font-size="22" fill="#0f172a" text-anchor="end">37227.7</text>
+  <!-- P2 -->
+  <rect x="224" y="482" width="156" height="48" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="244" y="512" font-size="18" font-weight="600" fill="#475569">P2</text>
+  <text x="364" y="512" font-size="22" fill="#0f172a" text-anchor="end">49908.4</text>
+  <!-- P3 -->
+  <rect x="388" y="482" width="152" height="48" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="408" y="512" font-size="18" font-weight="600" fill="#475569">P3</text>
+  <text x="524" y="512" font-size="22" fill="#0f172a" text-anchor="end">36503.7</text>
+  <!-- P4 -->
+  <rect x="60" y="540" width="240" height="48" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="80" y="570" font-size="18" font-weight="600" fill="#475569">P4</text>
+  <text x="284" y="570" font-size="22" fill="#0f172a" text-anchor="end">39800.5</text>
+  <!-- P5 -->
+  <rect x="312" y="540" width="228" height="48" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="332" y="570" font-size="18" font-weight="600" fill="#475569">P5</text>
+  <text x="524" y="570" font-size="22" fill="#0f172a" text-anchor="end">36400.2</text>
+
+  <!-- 大气压 / 温度 -->
+  <text x="60" y="618" font-size="20" font-weight="600" fill="#475569">大气参数</text>
+  <rect x="60" y="632" width="240" height="48" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="80" y="662" font-size="18" font-weight="600" fill="#475569">Patm</text>
+  <text x="284" y="662" font-size="22" fill="#0f172a" text-anchor="end">101325</text>
+  <rect x="312" y="632" width="228" height="48" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="332" y="662" font-size="18" font-weight="600" fill="#475569">Tatm</text>
+  <text x="524" y="662" font-size="22" fill="#0f172a" text-anchor="end">20</text>
+
+  <!-- 计算按钮 -->
+  <rect x="60" y="708" width="480" height="56" rx="10" ry="10" fill="url(#hero)"/>
+  <text x="300" y="744" font-size="24" font-weight="500" fill="#ffffff" text-anchor="middle">计算</text>
+
+  <!-- 底部提示 -->
+  <text x="300" y="792" font-size="17" fill="#94a3b8" text-anchor="middle">多马赫 .prb 校准：Ma 自动从文件名识别或手动填写</text>
+
+  <!-- Home 指示条 -->
+  <rect x="220" y="838" width="160" height="6" rx="3" ry="3" fill="#94a3b8"/>
+</svg>

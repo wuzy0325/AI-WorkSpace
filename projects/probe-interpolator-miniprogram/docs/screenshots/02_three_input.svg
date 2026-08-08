@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f5cad"/>
+      <stop offset="100%" stop-color="#0a4a8c"/>
+    </linearGradient>
+  </defs>
+  <!-- 手机外框 -->
+  <rect width="600" height="900" rx="44" ry="44" fill="#0f172a"/>
+  <rect x="14" y="14" width="572" height="872" rx="34" ry="34" fill="#eef1f5"/>
+  <!-- 顶部状态栏 -->
+  <rect x="14" y="14" width="572" height="44" rx="34" ry="34" fill="#ffffff"/>
+  <text x="44" y="42" font-size="22" fill="#0f172a" font-weight="600">9:41</text>
+  <circle cx="500" cy="36" r="14" fill="none" stroke="#94a3b8" stroke-width="2"/>
+  <circle cx="540" cy="36" r="14" fill="none" stroke="#94a3b8" stroke-width="2"/>
+
+  <!-- 页面 header -->
+  <rect x="14" y="58" width="572" height="92" fill="#ffffff" stroke="#e4e8ee"/>
+  <text x="48" y="106" font-size="34" font-weight="700" fill="#0f172a">三孔探针插值</text>
+  <text x="48" y="138" font-size="20" fill="#94a3b8">输入 3 个孔压与大气参数 · 1~10 个 .prb 跨马赫数档</text>
+
+  <!-- 校准文件卡片 -->
+  <rect x="32" y="170" width="536" height="180" rx="16" ry="16" fill="#ffffff" stroke="#e4e8ee"/>
+  <text x="60" y="206" font-size="26" font-weight="600" fill="#0f172a">校准文件</text>
+  <text x="60" y="244" font-size="20" fill="#475569">· 0.8.prb</text>
+  <line x1="60" y1="258" x2="540" y2="258" stroke="#e4e8ee"/>
+  <text x="60" y="288" font-size="18" fill="#94a3b8">操作步骤：先把 .prb 发到微信聊天或「文件传输助手」</text>
+  <text x="60" y="312" font-size="18" fill="#94a3b8">→ 点下方按钮从聊天中选择</text>
+  <text x="60" y="334" font-size="17" fill="#a45a00">提示：PC 微信兼容性较差，建议用手机微信扫码预览</text>
+
+  <!-- 数据输入卡片 -->
+  <rect x="32" y="370" width="536" height="446" rx="16" ry="16" fill="#ffffff" stroke="#e4e8ee"/>
+  <!-- tab 切换 -->
+  <line x1="60" y1="412" x2="540" y2="412" stroke="#e4e8ee"/>
+  <rect x="60" y="408" width="120" height="4" rx="2" ry="2" fill="#0f5cad"/>
+  <text x="120" y="402" font-size="22" font-weight="600" fill="#0f5cad" text-anchor="middle">手动单点</text>
+  <text x="480" y="402" font-size="22" fill="#94a3b8" text-anchor="middle">CSV 批量</text>
+
+  <!-- 孔压输入 -->
+  <text x="60" y="448" font-size="20" font-weight="600" fill="#475569">孔压输入 (Pa)</text>
+  <!-- P1 -->
+  <rect x="60" y="462" width="156" height="48" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="80" y="492" font-size="18" font-weight="600" fill="#475569">P1</text>
+  <text x="200" y="492" font-size="22" fill="#0f172a" text-anchor="end">37227.7</text>
+  <!-- P2 -->
+  <rect x="224" y="462" width="156" height="48" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="244" y="492" font-size="18" font-weight="600" fill="#475569">P2</text>
+  <text x="364" y="492" font-size="22" fill="#0f172a" text-anchor="end">49908.4</text>
+  <!-- P3 -->
+  <rect x="388" y="462" width="152" height="48" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="408" y="492" font-size="18" font-weight="600" fill="#475569">P3</text>
+  <text x="524" y="492" font-size="22" fill="#0f172a" text-anchor="end">36503.7</text>
+
+  <!-- 大气压 / 温度 -->
+  <text x="60" y="544" font-size="20" font-weight="600" fill="#475569">大气参数</text>
+  <rect x="60" y="558" width="240" height="48" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="80" y="588" font-size="18" font-weight="600" fill="#475569">Patm</text>
+  <text x="284" y="588" font-size="22" fill="#0f172a" text-anchor="end">101325</text>
+  <rect x="312" y="558" width="228" height="48" rx="8" ry="8" fill="#f5f7fa" stroke="#e4e8ee"/>
+  <text x="332" y="588" font-size="18" font-weight="600" fill="#475569">Tatm</text>
+  <text x="524" y="588" font-size="22" fill="#0f172a" text-anchor="end">20</text>
+
+  <!-- 计算按钮 -->
+  <rect x="60" y="640" width="480" height="56" rx="10" ry="10" fill="url(#hero)"/>
+  <text x="300" y="676" font-size="24" font-weight="500" fill="#ffffff" text-anchor="middle">计算</text>
+
+  <!-- 底部提示 -->
+  <text x="300" y="730" font-size="18" fill="#94a3b8" text-anchor="middle">空字段会被拒绝（不会静默按 0 Pa 处理）</text>
+  <text x="300" y="756" font-size="17" fill="#cbd5e1" text-anchor="middle">所有压力均以 Pa 表压输入</text>
+  <text x="300" y="782" font-size="17" fill="#cbd5e1" text-anchor="middle">大气压 Patm 与气温 Tatm 用于马赫数计算</text>
+
+  <!-- Home 指示条 -->
+  <rect x="220" y="838" width="160" height="6" rx="3" ry="3" fill="#94a3b8"/>
+</svg>

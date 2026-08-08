@@ -121,6 +121,8 @@ const zh = {
 
   // ---- 配置面板 ----
   'config.deviceConfig': '设备配置',
+  'config.deviceName': '设备名称',
+  'config.deviceNamePlaceholder': '例如: 温度采集器 1',
   'config.hardwareParams': '硬件参数',
   'config.channelConfig': '通道配置',
   'config.samplingRate': '采样频率',
@@ -139,6 +141,7 @@ const zh = {
   'config.hardwareApplyFailed': '配置已保存，但硬件应用失败：{reason}',
   'config.saved': '配置已保存',
   'config.saveFailed': '保存失败',
+  'config.error.nameExists': '设备名称已被其他设备占用，请修改后重试',
 
   // ---- 扫描结果列表 ----
   'scan.scanning': '正在扫描...',
@@ -330,6 +333,8 @@ const en = {
 
   // ---- config ----
   'config.deviceConfig': 'Device Config',
+  'config.deviceName': 'Device Name',
+  'config.deviceNamePlaceholder': 'e.g., Temperature DAQ 1',
   'config.hardwareParams': 'Hardware',
   'config.channelConfig': 'Channels',
   'config.samplingRate': 'Sampling Rate',
@@ -348,6 +353,7 @@ const en = {
   'config.hardwareApplyFailed': 'Config saved, but failed to apply to hardware: {reason}',
   'config.saved': 'Config saved',
   'config.saveFailed': 'Save failed',
+  'config.error.nameExists': 'Device name is already used by another device. Please rename and retry.',
 
   // ---- scan ----
   'scan.scanning': 'Scanning...',

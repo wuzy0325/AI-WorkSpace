@@ -87,6 +87,9 @@ func NewSevenHolePrbInterpolator() *SevenHolePrbInterpolator {
 // Header contract (spec section 2.1): the first line must exist and is
 // skipped without parsing, accepting both dimension headers ("13 13") and
 // column-name headers ("ka kb cpt cps a b"), mirroring Python next(file).
+// Legacy files with rounded coefficients remain format-compatible and load as
+// written. Their lost precision cannot be recovered from PRB alone; regenerate
+// them from the source pressure CSV to match the full-precision CSV load path.
 func (p *SevenHolePrbInterpolator) LoadInnerPrbLines(lines []string, source string) error {
 	rows, err := parsePrbDataLines(lines, source)
 	if err != nil {
@@ -142,6 +145,8 @@ func (p *SevenHolePrbInterpolator) LoadInnerPrbLines(lines []string, source stri
 // 动态 theta 维度：数据行数 = thetaCount × outerPhiCount（phi 固定 13 条线，
 // 物理设计）。loader 按实际数据行数推断 thetaCount，校验整除且 ≥2
 // （至少两个 theta 点才能形成 cpt/cps 插值单元格）。不再强制 52 行。
+// As with the inner loader, rounded legacy coefficients are accepted verbatim;
+// matching the CSV path requires regeneration from the original pressures.
 func (p *SevenHolePrbInterpolator) LoadOuterPrbLines(sector int, lines []string, source string) error {
 	if sector < 1 || sector > outerSectorCount {
 		return fmt.Errorf("%s: 扇区编号 %d 非法，必须在 1..%d 之间", source, sector, outerSectorCount)

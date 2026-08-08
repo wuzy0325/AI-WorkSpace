@@ -294,6 +294,40 @@ func TestCalculateSecondCandidateFallback(t *testing.T) {
 	}
 }
 
+func TestCalculateExactOuterNodeMustBePressureCandidate(t *testing.T) {
+	shifted := func(center float64) func(theta, phi float64) (ka, kb, cpt, cps float64) {
+		return func(theta, phi float64) (ka, kb, cpt, cps float64) {
+			ka, kb, cpt, cps = linearOuterMap(center)(theta, phi)
+			return ka + 100, kb + 100, cpt, cps
+		}
+	}
+	p := buildInnerTestInterpolator(t, func(a, b float64) (ka, kb, cpt, cps float64) {
+		ka, kb, cpt, cps = linearInnerMap(a, b)
+		return ka + 100, kb + 100, cpt, cps
+	})
+	for sector := 1; sector <= outerSectorCount; sector++ {
+		mapping := shifted(float64(sector-1) * 60)
+		if sector == 2 {
+			mapping = linearOuterMap(60)
+		}
+		loadOuterSector(t, p, sector, mapping)
+	}
+
+	// Sector 2 retains the exact coefficients from TestCalculateOuterEndToEnd,
+	// but unrelated P4/P5 spikes make sectors 4 and 5 the pressure candidates.
+	in := InterpolationInput{
+		P1: 100, P2: 1000, P3: 100, P4: 3000, P5: 2000, P6: 100, P7: 100,
+		PAtm: 101325, TAtm: 20,
+	}
+	res, err := p.Calculate(in)
+	if err != nil {
+		t.Fatalf("Calculate: %v", err)
+	}
+	if res.IsValid {
+		t.Fatalf("non-candidate sector 2 must not route through its exact node: %+v", res)
+	}
+}
+
 // TestGetPointCount 验证 GetInnerPointCount/GetOuterPointCount 在动态
 // thetaCount 下返回真实点数：内区固定 169，外区随 thetaCount 变化。
 func TestGetPointCount(t *testing.T) {

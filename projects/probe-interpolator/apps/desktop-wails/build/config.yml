@@ -1,0 +1,45 @@
+# Wails v3 项目配置（Probe Interpolator）
+# 参考 wails3 v3.0.0-alpha.95 模板 schema，
+# 各字段含义见 wails3 命令源码（internal/commands/build_assets/config.yml）。
+version: '3'
+
+info:
+  companyName: "Wind-DAQ Team"
+  productName: "Probe Interpolator"
+  productIdentifier: "com.wind-daq.probe-interpolator"
+  description: "探针插值器（五孔/三孔/七孔）"
+  copyright: "(c) 2026, Wind-DAQ Team"
+  comments: "Wails v3 desktop edition"
+  version: "0.3.0"
+
+# wails3 dev 监听 Go 源代码变化时的配置
+dev_mode:
+  root_path: .
+  log_level: warn
+  debounce: 1000
+  ignore:
+    dir:
+      - .git
+      - node_modules
+      - frontend
+      - bin
+      - build
+    file:
+      - .DS_Store
+      - .gitignore
+      - .gitkeep
+    watched_extension:
+      - "*.go"
+    git_ignore: true
+  executes:
+    - cmd: wails3 build DEV=true
+      type: blocking
+    - cmd: wails3 task dev:frontend
+      type: background
+    - cmd: wails3 task run
+      type: primary
+
+# 文件关联（保留占位，按需启用）
+fileAssociations: []
+
+other: []

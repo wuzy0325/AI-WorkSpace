@@ -1,0 +1,44 @@
+version: '3'
+
+info:
+  companyName: "Motion Controller Team"
+  productName: "Motion Controller"
+  productIdentifier: "com.motion-controller.app"
+  description: "Standalone motion controller desktop app"
+  copyright: "(c) 2026, Motion Controller Team"
+  comments: "Wails v3 desktop edition"
+  version: "0.3.4"
+
+dev_mode:
+  root_path: .
+  log_level: warn
+  debounce: 1000
+  ignore:
+    dir:
+      - .git
+      - node_modules
+      - frontend
+      - bin
+      - build
+    file:
+      - .DS_Store
+      - .gitignore
+      - .gitkeep
+    watched_extension:
+      - "*.go"
+    git_ignore: true
+  executes:
+    - cmd: build\dev_install.cmd
+      type: once
+    - cmd: build\dev_vite.cmd
+      type: background
+    - cmd: build\dev_tidy.cmd
+      type: blocking
+    - cmd: build\dev_build.cmd
+      type: blocking
+    - cmd: build\dev_run.cmd
+      type: primary
+
+fileAssociations: []
+
+other: []

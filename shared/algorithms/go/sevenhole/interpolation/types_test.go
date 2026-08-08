@@ -62,9 +62,12 @@ func jsonKeys(t *testing.T, v any) map[string]bool {
 // TestInterpolationResultJSONTags locks the JSON contract shared with the
 // five-hole package; the "P0"/"Ps" tags are load-bearing for API response
 // and CSV computed-column reuse (spec-seven-hole-traversal section 2.2).
+//
+// Theta/Phi 是 7 孔新增字段（PRB 网格原始角度坐标），与 5 孔结果不共享，
+// 但JSON tag 与 Alpha/Beta 同形态，便于前端结果表格组件复用列定义。
 func TestInterpolationResultJSONTags(t *testing.T) {
 	keys := jsonKeys(t, InterpolationResult{})
-	want := []string{"alpha", "beta", "machNumber", "velocity", "dynamicPressure", "P0", "Ps", "isValid"}
+	want := []string{"alpha", "beta", "theta", "phi", "machNumber", "velocity", "dynamicPressure", "P0", "Ps", "isValid"}
 	if len(keys) != len(want) {
 		t.Errorf("key count = %d (%v), want %d", len(keys), keys, len(want))
 	}

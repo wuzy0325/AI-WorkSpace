@@ -6,15 +6,16 @@ dist/
 # dist2/：360 主动防御锁定 dist/win-unpacked/resources/app.asar 时改用的备选输出目录
 dist2/
 build/
-# Wails 工具链约定的入版本控制配置（NSIS 安装脚本 + 应用元数据），其他 build/ 产物不入库
-!projects/wind-daq/apps/desktop-wails/build/
-projects/wind-daq/apps/desktop-wails/build/*
-!projects/wind-daq/apps/desktop-wails/build/config.yml
-!projects/wind-daq/apps/desktop-wails/build/windows/
-projects/wind-daq/apps/desktop-wails/build/windows/*
-!projects/wind-daq/apps/desktop-wails/build/windows/installer/
-projects/wind-daq/apps/desktop-wails/build/windows/installer/*
-!projects/wind-daq/apps/desktop-wails/build/windows/installer/project.nsi
+# Wails 工具链约定的入版本控制配置（NSIS 安装脚本 + 构建配置），其他 build/ 产物不入库
+# 通配符规则：wind-daq / daq-p1604 / daq-t1603 等所有项目共用
+!projects/*/apps/desktop-wails/build/
+projects/*/apps/desktop-wails/build/*
+!projects/*/apps/desktop-wails/build/config.yml
+!projects/*/apps/desktop-wails/build/windows/
+projects/*/apps/desktop-wails/build/windows/*
+!projects/*/apps/desktop-wails/build/windows/installer/
+projects/*/apps/desktop-wails/build/windows/installer/*
+!projects/*/apps/desktop-wails/build/windows/installer/project.nsi
 target/
 *.exe
 *.syso
