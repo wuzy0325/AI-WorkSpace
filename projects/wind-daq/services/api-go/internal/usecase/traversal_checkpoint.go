@@ -7,9 +7,10 @@ package usecase
 
 import (
 	"encoding/json"
-	"log/slog"
 	"math"
 	"time"
+
+	"shared.local/device-sdk/go/pkg/slog"
 
 	"wind-daq/services/api-go/internal/core/traversal"
 )

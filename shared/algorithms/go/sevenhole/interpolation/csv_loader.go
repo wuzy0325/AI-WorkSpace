@@ -379,7 +379,7 @@ func appendSevenHoleVerticalNudges(bad []sevenHoleNudgeTarget, points map[[2]flo
 //     会除零或产生 NaN，让加载流程整体失败比静默失真更安全。
 func ditherSevenHoleCSVGrid(points map[[2]float64]*sevenHoleCSVPoint, aValues, bValues []float64) (int, error) {
 	nudges := 0
-	for range sevenHoleDitherPasses {
+	for i := 0; i < sevenHoleDitherPasses; i++ {
 		bad := findDegenerateSevenHoleCSVEdges(points, aValues, bValues)
 		if len(bad) == 0 {
 			return nudges, nil

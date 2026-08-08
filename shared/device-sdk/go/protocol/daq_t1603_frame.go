@@ -6,13 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"math"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"shared.local/device-sdk/go/pkg/slog"
 )
 
 // -- DAQ-T-1603 serial frame parsing --

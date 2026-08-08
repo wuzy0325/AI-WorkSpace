@@ -7,7 +7,6 @@ import (
 	"math"
 	"net"
 	"reflect"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +19,15 @@ import (
 
 // testReadTimeout bounds test-side peer reads without controlling production I/O.
 const testReadTimeout = time.Second
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}
 
 func readWithTimeout(conn net.Conn, timeout time.Duration) (string, error) {
 	type result struct {
@@ -154,7 +162,7 @@ func TestDAQT1603ApplyConfigForcesShowSequenceToDeviceState(t *testing.T) {
 			client.Close()
 
 			commands := <-commandsCh
-			if !slices.Contains(commands, tc.wantCommand) {
+			if !containsString(commands, tc.wantCommand) {
 				t.Fatalf("commands = %#v, 应包含 %q", commands, tc.wantCommand)
 			}
 			got, err := device.GetDaqT1603Config()
