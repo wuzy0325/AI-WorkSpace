@@ -1676,3 +1676,47 @@ func TestWaitForStabilization_ArrivedNoFailure(t *testing.T) {
 		t.Fatal("waitForStabilization did not return within 5s")
 	}
 }
+
+func TestWaitForStabilization_PauseDoesNotConsumeDwellTime(t *testing.T) {
+	mgr, ma := motionSafetyTestManager()
+	setMotionSafetyConfig(mgr, []traversal.MotionAxisBinding{{ControllerID: "mc-1", Axis: "X"}}, nil)
+	setStabilizationConfig(mgr, "fixed", 1000)
+	ma.statuses = makeConnectedStoppedStatus("mc-1", "X", 30.005)
+	mgr.mu.Lock()
+	mgr.status.State = traversal.StateRunning
+	mgr.mu.Unlock()
+
+	done := make(chan *traversal.MotionSafetyFailure, 1)
+	go func() {
+		done <- mgr.waitForStabilization("test-task", traversal.Point{X: 30}, 0, nil)
+	}()
+
+	// 进入 dwell 后暂停，且暂停时长必须越过剩余 dwell（1000ms）截止点——
+	// 旧实现（稳定阶段不响应暂停）会在暂停期间按固定 dwell 截止提前返回，
+	// 下面的 select 因此会从 done 收到结果并触发 "completed while paused"；
+	// 新实现（暂停不消耗 dwell 时间）在暂停期间不应返回。
+	time.Sleep(2 * motionCompletePoll)
+	mgr.mu.Lock()
+	mgr.isPaused = true
+	mgr.status.State = traversal.StatePaused
+	mgr.mu.Unlock()
+	time.Sleep(1200 * time.Millisecond)
+	select {
+	case <-done:
+		t.Fatal("stabilization completed while paused")
+	default:
+	}
+
+	mgr.mu.Lock()
+	mgr.isPaused = false
+	mgr.status.State = traversal.StateRunning
+	mgr.mu.Unlock()
+	select {
+	case failure := <-done:
+		if failure != nil {
+			t.Fatalf("stabilization returned failure after resume: %v", failure)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stabilization did not complete after resume")
+	}
+}

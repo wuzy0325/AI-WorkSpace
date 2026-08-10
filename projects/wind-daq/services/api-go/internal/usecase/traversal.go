@@ -59,22 +59,28 @@ const (
 	// 设备死透/断链场景仍能正常超时——stallDeadline 仅按"完成样本"重置，无新帧时
 	// 永远不会重置，最多 10s 即报错退出。
 	acquisitionStallTimeout = 10 * time.Second
-	// acquisitionNotAcquiringTimeout 设备未采集累计时长上限（I-3 修复）。
-	//
-	// 原实现：notAcquiring=true 时每次循环都重置 stallDeadline = now+10s，
-	// 导致 stallDeadline 永远不会到期，10s 兜底形同虚设。设计动机是允许用户
-	// 临时停采集后恢复继续，但代价是设备永久故障（断链/driver 死锁）+ 用户不点 Stop
-	// → 遍历永久卡死。
-	//
-	// 修复：保留"用户主动暂停可恢复"语义（stallDeadline 仍重置），但引入独立的
-	// notAcquiringTotal 累计时长上限。累计未采集时长超过此阈值即判失败，避免
-	// 设备永久故障时遍历卡死。取 60s 平衡"用户短暂停采恢复"与"设备故障有界退出"。
-	acquisitionNotAcquiringTimeout = 60 * time.Second
-	cancelCheckPoll                = 100 * time.Millisecond // 任务取消检查间隔
-	pausedLoopIdle                 = 200 * time.Millisecond // 暂停态主循环空转间隔
-	retryWaitInterval              = 200 * time.Millisecond // 数据校验失败后重试等待间隔（让设备产出新帧）
-	checkpointInterval             = 10                     // 每完成10个点保存一次断点
+	cancelCheckPoll         = 100 * time.Millisecond // 任务取消检查间隔
+	pausedLoopIdle          = 200 * time.Millisecond // 暂停态主循环空转间隔
+	retryWaitInterval       = 200 * time.Millisecond // 数据校验失败后重试等待间隔（让设备产出新帧）
+	checkpointInterval      = 10                     // 每完成10个点保存一次断点
 )
+
+// acquisitionNotAcquiringTimeout 设备未采集时长上限（I-3 修复 + I-4 语义修正）。
+//
+// 原实现：notAcquiring=true 时每次循环都重置 stallDeadline = now+10s，
+// 导致 stallDeadline 永远不会到期，10s 兜底形同虚设。设计动机是允许用户
+// 临时停采集后恢复继续，但代价是设备永久故障（断链/driver 死锁）+ 用户不点 Stop
+// → 遍历永久卡死。
+//
+// 修复：保留"用户主动暂停可恢复"语义（stallDeadline 仍重置），但引入独立的
+// notAcquiringTotal 上限。I-4 语义修正：设备恢复采集后累计值清零，只有"连续"
+// 未采集时长超过此阈值才判失败——短暂可恢复的停采（换探头/设备重连/误停）不再
+// 跨段累计成误判；设备永久故障（连续未采集）仍会 60s 有界退出。
+// 取 60s 平衡"用户短暂停采恢复"与"设备故障有界退出"。
+//
+// 用 var 而非 const：测试需要覆盖为小值加速验证"连续超限失败 / 恢复清零"语义
+// （与 device-sdk 的 noDataTimeout 测试覆盖模式一致）。
+var acquisitionNotAcquiringTimeout = 60 * time.Second
 
 type TraversalRunSession struct {
 	taskID   string
@@ -1205,6 +1211,11 @@ func (m *TraversalManager) Pause() error {
 	if stopErr != nil {
 		emergencyErr := m.emergencyStopMotionControllersLocked()
 		m.motionCommandMu.Unlock()
+		// A failed pause is an error state, not a resumable pause. Clear the
+		// flag before publishing the failure so sampling cannot wait forever.
+		m.mu.Lock()
+		m.isPaused = false
+		m.mu.Unlock()
 		if emergencyErr != nil {
 			return m.failWithCode(
 				"pause traversal motion failed: %v; emergency stop fallback also failed: %v",

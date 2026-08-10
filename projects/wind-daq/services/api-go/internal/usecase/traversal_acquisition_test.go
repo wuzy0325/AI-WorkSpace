@@ -177,6 +177,224 @@ func TestCollectAveragedSamplesWaitsWhenAcquisitionStopsAndResumes(t *testing.T)
 	}
 }
 
+// TestCollectAveragedSamplesBriefStopsDoNotAccumulate 回归测试（I-4 修复）：
+// 单点采样中设备多次"短暂停采-恢复"，累计未采集时长超过 acquisitionNotAcquiringTimeout
+// 也不应判失败——设备恢复采集后 notAcquiringTotal 必须清零。
+//
+// 原实现只重置 notAcquiringLastSample，notAcquiringTotal 在整个点位期间持续累计；
+// 双探针模式共享设备 + 点位耗时更长时，若干次可恢复的停采会累计出 60s 误判失败
+// （"devices not acquiring for 1m0s; traversal aborted"）。清零后仅"连续"未采集超限才失败。
+func TestCollectAveragedSamplesBriefStopsDoNotAccumulate(t *testing.T) {
+	origTimeout := acquisitionNotAcquiringTimeout
+	acquisitionNotAcquiringTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { acquisitionNotAcquiringTimeout = origTimeout })
+
+	reader := &stoppingLatestDataReader{}
+	controller := &resumableAcquisitionController{acquiring: false}
+	manager := NewTraversalManager(reader, nil, nil, nil, nil)
+	manager.status = traversal.Status{TaskID: "trav-brief-stops", State: traversal.StateRunning}
+	manager.SetAcquisitionController(controller)
+
+	type result struct {
+		values map[int]float64
+		err    error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		values, err := manager.collectAveragedSamples("trav-brief-stops",
+			[]deviceChannelGroup{{deviceID: "dev-1", keys: []int{0}, hwIndices: []int{0}}}, 20)
+		resultCh <- result{values, err}
+	}()
+
+	// 两段各 250ms 的短暂停采（均 < 300ms 上限），中间恢复采集 100ms。
+	// 旧实现：notAcquiringTotal 跨段累计 500ms > 300ms → 误判失败。
+	// 新实现：每段恢复后清零，两段均短于上限 → 不失败。
+	for i := 0; i < 2; i++ {
+		time.Sleep(250 * time.Millisecond)
+		controller.SetAcquiring(true)
+		time.Sleep(100 * time.Millisecond)
+		controller.SetAcquiring(false)
+	}
+	// 最后保持采集，让采样凑满 samplesPerPoint 完成。
+	controller.SetAcquiring(true)
+
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			t.Fatalf("brief recoverable stops must not fail the point, got error: %v", r.err)
+		}
+		if r.values[0] <= 0 {
+			t.Fatalf("averaged channel 0 = %v, want > 0", r.values[0])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("collectAveragedSamples did not complete within 5s")
+	}
+}
+
+// TestCollectAveragedSamplesContiguousNotAcquiringStillFails 回归测试（I-4 修复）：
+// 清零语义只放过"可恢复"的停采；设备连续未采集时长超过 acquisitionNotAcquiringTimeout
+// 仍必须判失败，否则 I-3 修复的"设备永久故障有界退出"会退化回永久卡死。
+func TestCollectAveragedSamplesContiguousNotAcquiringStillFails(t *testing.T) {
+	origTimeout := acquisitionNotAcquiringTimeout
+	acquisitionNotAcquiringTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { acquisitionNotAcquiringTimeout = origTimeout })
+
+	reader := &stoppingLatestDataReader{}
+	controller := &resumableAcquisitionController{acquiring: false}
+	manager := NewTraversalManager(reader, nil, nil, nil, nil)
+	manager.status = traversal.Status{TaskID: "trav-contiguous", State: traversal.StateRunning}
+	manager.SetAcquisitionController(controller)
+
+	start := time.Now()
+	_, err := manager.collectAveragedSamples("trav-contiguous",
+		[]deviceChannelGroup{{deviceID: "dev-1", keys: []int{0}, hwIndices: []int{0}}}, 2)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected failure when device stays not acquiring beyond the limit")
+	}
+	if !contains(err.Error(), "not acquiring") {
+		t.Fatalf("expected 'not acquiring' error, got %q", err)
+	}
+	if elapsed < acquisitionNotAcquiringTimeout || elapsed > acquisitionNotAcquiringTimeout+2*time.Second {
+		t.Fatalf("elapsed = %v, want ≈ acquisitionNotAcquiringTimeout(%v)", elapsed, acquisitionNotAcquiringTimeout)
+	}
+}
+
+// TestCollectAveragedSamplesAllowsPermanentTraversalPause 回归测试：
+// 遍历暂停不应受设备未采集超时限制，暂停超过该限制后仍可恢复并完成采样。
+func TestCollectAveragedSamplesAllowsPermanentTraversalPause(t *testing.T) {
+	origTimeout := acquisitionNotAcquiringTimeout
+	acquisitionNotAcquiringTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { acquisitionNotAcquiringTimeout = origTimeout })
+
+	reader := &stoppingLatestDataReader{}
+	controller := &resumableAcquisitionController{acquiring: false}
+	manager := NewTraversalManager(reader, nil, nil, nil, nil)
+	manager.status = traversal.Status{TaskID: "trav-permanent-pause", State: traversal.StatePaused}
+	manager.isPaused = true
+	manager.SetAcquisitionController(controller)
+
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := manager.collectAveragedSamples("trav-permanent-pause",
+			[]deviceChannelGroup{{deviceID: "dev-1", keys: []int{0}, hwIndices: []int{0}}}, 2)
+		resultCh <- err
+	}()
+
+	// 停留在暂停态超过设备未采集保护阈值，验证暂停不会触发异常退出。
+	time.Sleep(2 * acquisitionNotAcquiringTimeout)
+	manager.mu.Lock()
+	manager.isPaused = false
+	manager.status.State = traversal.StateRunning
+	manager.mu.Unlock()
+	controller.SetAcquiring(true)
+
+	select {
+	case err := <-resultCh:
+		if err != nil {
+			t.Fatalf("permanent traversal pause must be resumable, got error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("collectAveragedSamples did not complete after traversal resumed")
+	}
+}
+
+// staleAfterPauseReader 验证暂停后首个样本不得并入暂停前已就绪的旧帧：
+//   - dev-a 首次读返回 100（进入 pending），之后返回 aValue（测试在暂停期间切为 200）；
+//   - dev-b 在 bOn=true 前不产帧，使 dev-a 已就绪但样本始终凑不齐。
+type staleAfterPauseReader struct {
+	mu     sync.Mutex
+	aRead  chan struct{}
+	aValue float64
+	bOn    bool
+	aCalls int
+	bCalls int
+}
+
+func newStaleAfterPauseReader() *staleAfterPauseReader {
+	return &staleAfterPauseReader{aRead: make(chan struct{}), aValue: 100}
+}
+
+func (r *staleAfterPauseReader) GetLatestData(deviceID string) (device.DataPayload, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if deviceID == "dev-a" {
+		r.aCalls++
+		value := 100.0
+		if r.aCalls > 1 {
+			value = r.aValue
+		}
+		if r.aCalls == 1 {
+			close(r.aRead)
+		}
+		return device.DataPayload{DeviceID: deviceID, Timestamp: int64(r.aCalls), Channels: []float64{value}, ChannelIndices: []int{0}}, true
+	}
+	if !r.bOn {
+		return device.DataPayload{}, false
+	}
+	r.bCalls++
+	return device.DataPayload{DeviceID: deviceID, Timestamp: int64(r.bCalls), Channels: []float64{1}, ChannelIndices: []int{0}}, true
+}
+
+func (*staleAfterPauseReader) GetLatestTimestamp(string) (int64, bool) { return 0, false }
+
+// TestCollectAveragedSamplesPauseDoesNotReuseStalePendingFrame 回归测试：
+// 暂停期间当前样本已就绪的旧帧（fresh/pending）必须被丢弃，
+// 恢复后首个样本从暂停后的新帧重新起算，不得把暂停前旧值并入均值。
+func TestCollectAveragedSamplesPauseDoesNotReuseStalePendingFrame(t *testing.T) {
+	reader := newStaleAfterPauseReader()
+	manager := NewTraversalManager(reader, nil, nil, nil, nil)
+	manager.status = traversal.Status{TaskID: "trav-pause-stale", State: traversal.StateRunning}
+
+	type result struct {
+		values map[int]float64
+		err    error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		values, err := manager.collectAveragedSamples("trav-pause-stale",
+			[]deviceChannelGroup{
+				{deviceID: "dev-a", keys: []int{0}, hwIndices: []int{0}},
+				{deviceID: "dev-b", keys: []int{1}, hwIndices: []int{0}},
+			}, 2)
+		resultCh <- result{values, err}
+	}()
+
+	// 等 dev-a 已把旧值 100 写入 pending，且 dev-b 未产帧使样本凑不齐
+	<-reader.aRead
+	time.Sleep(50 * time.Millisecond)
+	manager.mu.Lock()
+	manager.isPaused = true
+	manager.status.State = traversal.StatePaused
+	manager.mu.Unlock()
+
+	// 暂停期间切换 dev-a 值，模拟换探头/设备重连
+	time.Sleep(50 * time.Millisecond)
+	reader.mu.Lock()
+	reader.aValue = 200
+	reader.bOn = true
+	reader.mu.Unlock()
+
+	manager.mu.Lock()
+	manager.isPaused = false
+	manager.status.State = traversal.StateRunning
+	manager.mu.Unlock()
+
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			t.Fatalf("collectAveragedSamples returned error: %v", r.err)
+		}
+		// 通道 0 对应 dev-a：两个样本都应为 200，暂停前的 100 不得并入
+		if got := r.values[0]; got != 200 {
+			t.Fatalf("averaged channel 0 = %v, want 200 (pre-pause stale frame must not be merged into post-resume sample)", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("collectAveragedSamples did not complete within 5s")
+	}
+}
+
 // TestCollectAveragedSamplesReturnsCancelledWhenAcquisitionStaysStoppedAndTaskCancelled 回归测试：
 // 设备持续未采集且用户停止 traversal 时，等待恢复循环应即时响应 isTaskCancelled，
 // 立即返回 "acquisition cancelled" 错误，而不是无限挂起。
