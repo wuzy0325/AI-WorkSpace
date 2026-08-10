@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.13.1] - 2026-08-10
+
+### Fixed
+
+- **遍历测试暂停语义修复**：
+  - 暂停为永久暂停：遍历暂停期间无限期等待，不再受设备未采集 60s 累计超时影响；`Resume` 后设备仍未采集才重新进入异常保护。
+  - 稳定等待阶段响应暂停：暂停不消耗固定 dwell / 自适应 minWait / maxWait / 检查间隔的活跃时间预算，恢复后按剩余活跃时间继续。
+  - 暂停期间丢弃已就绪的旧采样帧（fresh/pending），恢复后首个样本从暂停后的新帧重新起算，避免把暂停前数据（如换探头前）混入均值。
+  - `Pause` 运动停止失败时清除暂停标志并置错误状态，避免残留标志导致后续点位静默跳过。
+- **设备未采集超时语义修正（I-4）**：短暂可恢复的停采（换探头 / 设备重连 / 误停）不再跨段累计触发 60s 误判失败；仅设备"连续"未采集超过 60s 才判失败，保留设备永久故障时的有界退出防卡死保护。
+
+### Verification
+
+- `go build ./...` + `go vet ./internal/usecase/`: passed
+- `go test ./internal/usecase/`: passed（含 `-race` 暂停/恢复回归测试）
+- `npm run typecheck` / `npm run build`: passed
+- `task release`: passed
+- `makensis`（build/windows/installer 下执行）: passed
+- `task archive-release`: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名。
+- 内嵌 exe 的 ProductVersion 资源为空（wails3 v3.0.0-alpha2.106 既有行为），installer 的 ProductVersion 为 `0.13.1`。
+
 ## [0.13.0] - 2026-08-05
 
 ### Fixed
