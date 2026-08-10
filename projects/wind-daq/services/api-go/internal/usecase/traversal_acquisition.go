@@ -855,6 +855,63 @@ func resolveEffectiveDwellMs(point traversal.Point, globalMs int) int {
 	return globalMs
 }
 
+// waitWhilePaused blocks without consuming stabilization time while traversal is paused.
+// It returns the paused duration so callers can extend their active-time deadline.
+func (m *TraversalManager) waitWhilePaused(taskID string) (time.Duration, bool) {
+	start := time.Time{}
+	for {
+		if m.isTaskCancelled(taskID) {
+			if start.IsZero() {
+				return 0, true
+			}
+			return time.Since(start), true
+		}
+		m.mu.RLock()
+		paused := m.isPaused && m.status.State == traversal.StatePaused
+		m.mu.RUnlock()
+		if !paused {
+			if start.IsZero() {
+				return 0, false
+			}
+			return time.Since(start), false
+		}
+		if start.IsZero() {
+			start = time.Now()
+		}
+		time.Sleep(pausedLoopIdle)
+	}
+}
+
+// sleepStabilizationInterval waits for active stabilization time and suspends
+// the interval while traversal is paused.
+func (m *TraversalManager) sleepStabilizationInterval(taskID string, d time.Duration) (time.Duration, bool) {
+	deadline := time.Now().Add(d)
+	var pausedTotal time.Duration
+	for time.Now().Before(deadline) {
+		if m.isTaskCancelled(taskID) {
+			return pausedTotal, true
+		}
+		m.mu.RLock()
+		paused := m.isPaused && m.status.State == traversal.StatePaused
+		m.mu.RUnlock()
+		if paused {
+			pausedFor, cancelled := m.waitWhilePaused(taskID)
+			pausedTotal += pausedFor
+			if cancelled {
+				return pausedTotal, true
+			}
+			deadline = deadline.Add(pausedFor)
+			continue
+		}
+		remaining := time.Until(deadline)
+		if remaining > cancelCheckPoll {
+			remaining = cancelCheckPoll
+		}
+		time.Sleep(remaining)
+	}
+	return pausedTotal, false
+}
+
 func (m *TraversalManager) waitForStabilization(taskID string, point traversal.Point, pointIndex int, channelGroups []deviceChannelGroup) *traversal.MotionSafetyFailure {
 	m.mu.RLock()
 	stab := m.stabilization
@@ -882,6 +939,11 @@ func (m *TraversalManager) waitForStabilization(taskID string, point traversal.P
 		ticker := time.NewTicker(motionCompletePoll)
 		defer ticker.Stop()
 		for time.Now().Before(deadline) {
+			if pausedFor, cancelled := m.waitWhilePaused(taskID); cancelled {
+				return nil
+			} else {
+				deadline = deadline.Add(pausedFor)
+			}
 			if m.isTaskCancelled(taskID) {
 				return nil
 			}
@@ -902,6 +964,11 @@ func (m *TraversalManager) waitForStabilization(taskID string, point traversal.P
 		ticker := time.NewTicker(motionCompletePoll)
 		defer ticker.Stop()
 		for time.Now().Before(deadline) {
+			if pausedFor, cancelled := m.waitWhilePaused(taskID); cancelled {
+				return nil
+			} else {
+				deadline = deadline.Add(pausedFor)
+			}
 			if m.isTaskCancelled(taskID) {
 				return nil
 			}
@@ -936,6 +1003,11 @@ func (m *TraversalManager) waitForStabilization(taskID string, point traversal.P
 	minTicker := time.NewTicker(motionCompletePoll)
 	defer minTicker.Stop()
 	for time.Now().Before(minDeadline) {
+		if pausedFor, cancelled := m.waitWhilePaused(taskID); cancelled {
+			return nil
+		} else {
+			minDeadline = minDeadline.Add(pausedFor)
+		}
 		if m.isTaskCancelled(taskID) {
 			return nil
 		}
@@ -951,6 +1023,11 @@ func (m *TraversalManager) waitForStabilization(taskID string, point traversal.P
 	stableCount := 0
 
 	for time.Since(start) < maxWait && stableCount < adaptive.ConsecutiveChecks {
+		if pausedFor, cancelled := m.waitWhilePaused(taskID); cancelled {
+			return nil
+		} else {
+			start = start.Add(pausedFor)
+		}
 		if m.isTaskCancelled(taskID) {
 			return nil
 		}
@@ -958,7 +1035,11 @@ func (m *TraversalManager) waitForStabilization(taskID string, point traversal.P
 		if f := m.recheckMotionSafety(motionAxes, safetyCfg, point, pointIndex, watchdog, statusMissCounter); f != nil {
 			return f
 		}
-		m.sleepWithTaskCheck(taskID, checkInterval)
+		if pausedFor, cancelled := m.sleepStabilizationInterval(taskID, checkInterval); cancelled {
+			return nil
+		} else {
+			start = start.Add(pausedFor)
+		}
 
 		// 读取当前值并判断稳定性
 		curValues := m.readCurrentValues(channelGroups)
@@ -1281,11 +1362,13 @@ func (m *TraversalManager) collectAveragedSamples(taskID string, groups []device
 	// 注意按"完成样本"而非"任意新帧"重置：多设备混采时若某台设备死透，
 	// 其余设备的新帧不会掩盖停滞，凑不齐样本仍会超时。
 	stallDeadline := time.Now().Add(acquisitionStallTimeout)
-	// I-3 修复：notAcquiring 累计时长上限。
+	// I-3 修复 + I-4 语义修正：notAcquiring 连续未采集时长上限。
 	// 原实现：notAcquiring=true 时每次循环重置 stallDeadline，导致 stallDeadline 永远
 	// 不会到期，设备永久故障+用户不 Stop 时遍历永久卡死。
-	// 修复：保留 stallDeadline 重置语义（允许用户短暂停采恢复），但累计 notAcquiring
-	// 时长超过 acquisitionNotAcquiringTimeout 即判失败，避免设备永久故障时卡死。
+	// 修复：保留 stallDeadline 重置语义（允许用户短暂停采恢复），但引入 notAcquiringTotal
+	// 上限——设备恢复采集后累计值清零（I-4），只有"连续"未采集时长超过
+	// acquisitionNotAcquiringTimeout 才判失败：短暂可恢复停采不跨段累计，设备永久
+	// 故障（连续未采集）仍会 60s 有界退出，避免遍历卡死。
 	notAcquiringTotal := time.Duration(0)
 	notAcquiringLastSample := time.Now()
 
@@ -1328,6 +1411,25 @@ func (m *TraversalManager) collectAveragedSamples(taskID string, groups []device
 				"target_samples", samplesPerPoint,
 			)
 			return nil, fmt.Errorf("acquisition cancelled")
+		}
+		// 遍历暂停是用户主动控制，允许无限期等待；只有 Resume 后设备仍未采集，
+		// 才进入 acquisitionNotAcquiringTimeout 的异常保护。
+		m.mu.RLock()
+		paused := m.isPaused && m.status.State == traversal.StatePaused
+		m.mu.RUnlock()
+		if paused {
+			stallDeadline = time.Now().Add(acquisitionStallTimeout)
+			notAcquiringTotal = 0
+			notAcquiringLastSample = time.Now()
+			// 丢弃暂停前正在攒的当前样本（fresh/pending 中已就绪的旧帧）。
+			// 换探头/设备重连等暂停场景下，恢复后必须从暂停后的新帧重新起算，
+			// 否则第一个样本会把暂停前的旧值并入均值。lastTimestamps 保留：
+			// 让恢复后首帧以"时间戳更新"判定 fresh，而不是回退消费 hub 中
+			// 暂停前的最后一帧。
+			fresh = make(map[string]bool, len(groups))
+			pending = make(map[string]map[int]float64, len(groups))
+			time.Sleep(pausedLoopIdle)
+			continue
 		}
 		// 设备采集态检查：未在采集时进入"等待恢复"循环，不立即判失败。
 		//
@@ -1381,7 +1483,12 @@ func (m *TraversalManager) collectAveragedSamples(taskID string, groups []device
 				time.Sleep(acquisitionBatchPoll)
 				continue
 			}
-			// 设备恢复采集后重置 notAcquiring 累计计时器，避免短暂停采累计成误判
+			// 设备恢复采集后清零 notAcquiring 累计值（I-4 修复）。
+			// 原实现只重置 notAcquiringLastSample，notAcquiringTotal 在整个点位期间
+			// 持续累计——若干次短暂可恢复的停采（换探头/设备重连/误停）会跨段累计出
+			// 60s 误判失败。清零后只有"连续"未采集超过 acquisitionNotAcquiringTimeout
+			// 才判失败（设备永久故障仍会 60s 有界退出），短暂停采不再累计成误判。
+			notAcquiringTotal = 0
 			notAcquiringLastSample = time.Now()
 		}
 		if time.Now().After(stallDeadline) {

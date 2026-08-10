@@ -138,6 +138,12 @@ func TestTraversal_BoundControllers_PauseEmergencyStopsWhenNormalStopFails(t *te
 	if status.LastErrorCode != traversal.ErrMotionFailed {
 		t.Fatalf("error code = %s, want %s", status.LastErrorCode, traversal.ErrMotionFailed)
 	}
+	mgr.mu.RLock()
+	paused := mgr.isPaused
+	mgr.mu.RUnlock()
+	if paused {
+		t.Fatal("failed Pause must clear the resumable pause flag")
+	}
 }
 
 // 快照绑定 ctrl-a：EmergencyStop 只发 ctrl-a（运行期配置漂移不影响）。
