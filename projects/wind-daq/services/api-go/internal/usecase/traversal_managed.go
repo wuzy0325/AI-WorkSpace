@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"wind-daq/services/api-go/internal/core/traversal"
+	"wind-daq/services/api-go/internal/ports"
 )
 
 // TraversalManager 的 registry-managed 入口（Task 8）。
@@ -44,8 +45,11 @@ func (m *TraversalManager) StartManaged(config traversal.Config, opts ManagedSes
 	m.mu.RLock()
 	acqController := m.acquisitionController
 	m.mu.RUnlock()
-	if deviceName, stopped := firstNonAcquiringDevice(acqController, config); stopped {
-		return fmt.Errorf("device %s is not acquiring; start acquisition before traversal", deviceName)
+	if dev, abnormal := firstAbnormalAcquisitionDevice(acqController, config); abnormal {
+		if dev.state == ports.AcquisitionReconnectRequired {
+			return fmt.Errorf("device %s is not connected; reconnect it and start acquisition before traversal", dev.name)
+		}
+		return fmt.Errorf("device %s is not acquiring; start acquisition before traversal", dev.name)
 	}
 	if err := m.startInternal(config, &opts); err != nil {
 		return err

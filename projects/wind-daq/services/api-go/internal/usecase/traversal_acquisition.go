@@ -62,18 +62,27 @@ func (m *TraversalManager) RunCurrentPoint() error {
 	// waitForStabilization 内部也通过 resolveEffectiveDwellMs 读取同一语义
 	effectiveDwellMs := resolveEffectiveDwellMs(point, config.DwellTimeMs)
 	m.mu.Unlock()
+	taskID := config.TaskID
 	// 多设备采集态校验：通道可能跨设备绑定（如五孔在 A、大气压/温度在 B），
-	// 逐台去重校验，任一设备未采集都在动设备前失败。
+	// 任一设备非 Acquiring 时进入"类暂停"无限期等待恢复（spec-traversal-acquisition-stop）。
+	// 等待前显式置 StateMoving + waiting_acquisition（首点/后续点公开状态一致，
+	// 避免上一点残留 StateSaving），设备恢复后置 PhaseMoving 继续；恢复前不下发运动命令。
+	// 点位开始等待时采样尚未开始，恢复后无需重建 freshness 基线（lastTimestamps 在采样入口建立）。
 	if acqController != nil {
-		if deviceName, stopped := firstNonAcquiringDevice(acqController, config); stopped {
-			return m.failWithCode("device %s is not acquiring; traversal will not move to point %d", traversal.ErrAcquisitionFailed, deviceName, pointIndex+1)
+		if len(abnormalAcquisitionDevices(acqController, config)) > 0 {
+			m.updatePhase(taskID, traversal.StateMoving, traversal.PhaseWaitingForAcquisition, pointIndex, len(config.Path))
+		}
+		classify := func() []acquisitionDeviceState {
+			return abnormalAcquisitionDevices(acqController, config)
+		}
+		if _, err := m.waitForAcquisitionResume(taskID, classify); err != nil {
+			return err
 		}
 	}
 	// 采样通道按设备分组：每组内部键 ↔ 硬件索引一一对应，
 	// 采集/稳定等待共用，避免每次调用重复解析 ChannelRefs。
 	channelGroups := groupChannelsByDevice(config.Channels, config.ResolvedChannelRefs())
 
-	taskID := config.TaskID
 	// motionAxes 决定哪些轴参与遍历运动；为空时（旧配置）保持原行为对所有轴发 MoveTo
 	motionAxes := config.MotionAxes
 
@@ -1344,6 +1353,129 @@ func groupChannelsByDevice(channels []int, refs map[int]traversal.ChannelRef) []
 	return groups
 }
 
+// waitForAcquisitionResume 等待全部引用设备恢复采集（spec-traversal-acquisition-stop §等待恢复阶段）。
+//
+// 语义：
+//   - **无限期等待，无时间预算**。退出路径：全部设备恢复 Acquiring / Stop（返回错误）/ Pause（语义等同暂停）。
+//   - 每个 tick 通过 classify 重新分类（返回当前异常设备列表）。
+//   - 期间维护 Status.WaitingForAcquisition / WaitingDevices / WaitingForAcquisitionSinceMs /
+//     CurrentPointPhase=waiting_acquisition：进入等待置位，SinceMs 记录会话起点；
+//     Pause 保留字段（横幅被暂停 UI 取代）；Resume 后仍异常 → 新会话（SinceMs 重新计时）。
+//   - **不持有 stallDeadline**（采样局部变量，helper 访问不到），由采样调用方返回后重置；
+//     不管理顶层 State（调用方负责，点位开始进入前须显式置 StateMoving）。
+//
+// 返回：恢复前最后一次观察到的异常设备列表（空 = 无需等待即全部 Acquiring）。
+// 调用方据此按设备重建 freshness 基线（Stopped 清 fresh/pending；
+// ReconnectRequired 重置 lastTimestamps=-1 并丢弃首帧）。
+func (m *TraversalManager) waitForAcquisitionResume(taskID string, classify func() []acquisitionDeviceState) ([]acquisitionDeviceState, error) {
+	m.mu.RLock()
+	savedPhase := m.status.CurrentPointPhase
+	m.mu.RUnlock()
+	lastAbnormal := classify()
+	if len(lastAbnormal) == 0 {
+		// 全部设备已在采集，无需等待。
+		m.clearWaitingForAcquisition()
+		return lastAbnormal, nil
+	}
+	var sessionStart time.Time
+	wasPaused := false
+	for {
+		if m.isTaskCancelled(taskID) {
+			m.clearWaitingForAcquisition()
+			return nil, fmt.Errorf("acquisition cancelled")
+		}
+		m.mu.RLock()
+		paused := m.isPaused && m.status.State == traversal.StatePaused
+		m.mu.RUnlock()
+		if paused {
+			wasPaused = true
+			time.Sleep(pausedLoopIdle)
+			continue
+		}
+		abnormal := classify()
+		if len(abnormal) == 0 {
+			m.clearWaitingForAcquisition()
+			m.restoreCurrentPointPhase(taskID, savedPhase)
+			return lastAbnormal, nil
+		}
+		lastAbnormal = abnormal
+		// 首次进入等待，或从暂停恢复后仍异常：开启新等待会话。
+		if sessionStart.IsZero() || wasPaused {
+			sessionStart = time.Now()
+			wasPaused = false
+		}
+		m.setWaitingForAcquisition(taskID, abnormal, sessionStart)
+		time.Sleep(acquisitionBatchPoll)
+	}
+}
+
+// setWaitingForAcquisition 写入等待状态字段并置 waiting_acquisition 阶段。
+func (m *TraversalManager) setWaitingForAcquisition(taskID string, abnormal []acquisitionDeviceState, since time.Time) {
+	devices := make([]traversal.AcquisitionDeviceStatus, 0, len(abnormal))
+	for _, s := range abnormal {
+		devices = append(devices, traversal.AcquisitionDeviceStatus{
+			Name:    s.name,
+			State:   acquisitionStateString(s.state),
+			SinceMs: since.UnixMilli(),
+		})
+	}
+	m.mu.Lock()
+	if m.status.TaskID != taskID {
+		m.mu.Unlock()
+		return
+	}
+	m.status.WaitingForAcquisition = true
+	m.status.WaitingDevices = devices
+	m.status.WaitingForAcquisitionSinceMs = since.UnixMilli()
+	m.status.CurrentPointPhase = traversal.PhaseWaitingForAcquisition
+	m.mu.Unlock()
+}
+
+// clearWaitingForAcquisition 清空等待状态字段（不动 CurrentPointPhase，由调用方/restore 负责）。
+func (m *TraversalManager) clearWaitingForAcquisition() {
+	m.mu.Lock()
+	m.status.WaitingForAcquisition = false
+	m.status.WaitingDevices = nil
+	m.status.WaitingForAcquisitionSinceMs = 0
+	m.mu.Unlock()
+}
+
+// restoreCurrentPointPhase 还原等待前的 CurrentPointPhase（taskID 守卫）。
+func (m *TraversalManager) restoreCurrentPointPhase(taskID string, phase traversal.PointPhase) {
+	m.mu.Lock()
+	if m.status.TaskID != taskID {
+		m.mu.Unlock()
+		return
+	}
+	m.status.CurrentPointPhase = phase
+	m.mu.Unlock()
+}
+
+// acquisitionStateString 三态 → API 字符串（仅异常设备出现在 WaitingDevices）。
+func acquisitionStateString(s ports.AcquisitionState) string {
+	switch s {
+	case ports.AcquisitionStopped:
+		return "stopped"
+	case ports.AcquisitionReconnectRequired:
+		return "reconnect_required"
+	default:
+		return "acquiring"
+	}
+}
+
+// groupDeviceIDs 提取分组中的去重设备 ID（顺序无关，classify 内部已去重语义）。
+func groupDeviceIDs(groups []deviceChannelGroup) []string {
+	ids := make([]string, 0, len(groups))
+	seen := make(map[string]bool, len(groups))
+	for _, g := range groups {
+		if !seen[g.deviceID] {
+			seen[g.deviceID] = true
+			ids = append(ids, g.deviceID)
+		}
+	}
+	return ids
+}
+
 // collectAveragedSamples 多设备分组采样取平均（带总体超时保护、暂停/停止响应）。
 //
 // 有效样本语义（多设备）：
@@ -1362,15 +1494,6 @@ func (m *TraversalManager) collectAveragedSamples(taskID string, groups []device
 	// 注意按"完成样本"而非"任意新帧"重置：多设备混采时若某台设备死透，
 	// 其余设备的新帧不会掩盖停滞，凑不齐样本仍会超时。
 	stallDeadline := time.Now().Add(acquisitionStallTimeout)
-	// I-3 修复 + I-4 语义修正：notAcquiring 连续未采集时长上限。
-	// 原实现：notAcquiring=true 时每次循环重置 stallDeadline，导致 stallDeadline 永远
-	// 不会到期，设备永久故障+用户不 Stop 时遍历永久卡死。
-	// 修复：保留 stallDeadline 重置语义（允许用户短暂停采恢复），但引入 notAcquiringTotal
-	// 上限——设备恢复采集后累计值清零（I-4），只有"连续"未采集时长超过
-	// acquisitionNotAcquiringTimeout 才判失败：短暂可恢复停采不跨段累计，设备永久
-	// 故障（连续未采集）仍会 60s 有界退出，避免遍历卡死。
-	notAcquiringTotal := time.Duration(0)
-	notAcquiringLastSample := time.Now()
 
 	// 自诊断：无有效样本时区分"设备未在采集"与"通道索引对不上"两类根因。
 	// everOk=false → 所有设备 GetLatestData 始终 ok=false（设备未采集或 deviceID 不匹配）；
@@ -1387,6 +1510,9 @@ func (m *TraversalManager) collectAveragedSamples(taskID string, groups []device
 	lastTimestamps := make(map[string]int64, len(groups))
 	fresh := make(map[string]bool, len(groups))
 	pending := make(map[string]map[int]float64, len(groups)) // deviceID → hwIndex → value
+	// rebaseDropFirst 重连恢复后需丢弃首帧的设备（仅 ReconnectRequired 恢复时置位）：
+	// 首帧只作为时间戳基线消费、不计入样本，防 hub 残留旧连接缓存帧当样本。
+	rebaseDropFirst := make(map[string]bool, len(groups))
 	for _, g := range groups {
 		lastTs := int64(-1)
 		if ts, ok := m.reader.GetLatestTimestamp(g.deviceID); ok {
@@ -1412,84 +1538,47 @@ func (m *TraversalManager) collectAveragedSamples(taskID string, groups []device
 			)
 			return nil, fmt.Errorf("acquisition cancelled")
 		}
-		// 遍历暂停是用户主动控制，允许无限期等待；只有 Resume 后设备仍未采集，
-		// 才进入 acquisitionNotAcquiringTimeout 的异常保护。
+		// 遍历暂停是用户主动控制，允许无限期等待；暂停期间旁路一切采集态判定。
 		m.mu.RLock()
 		paused := m.isPaused && m.status.State == traversal.StatePaused
 		m.mu.RUnlock()
 		if paused {
 			stallDeadline = time.Now().Add(acquisitionStallTimeout)
-			notAcquiringTotal = 0
-			notAcquiringLastSample = time.Now()
 			// 丢弃暂停前正在攒的当前样本（fresh/pending 中已就绪的旧帧）。
-			// 换探头/设备重连等暂停场景下，恢复后必须从暂停后的新帧重新起算，
-			// 否则第一个样本会把暂停前的旧值并入均值。lastTimestamps 保留：
-			// 让恢复后首帧以"时间戳更新"判定 fresh，而不是回退消费 hub 中
-			// 暂停前的最后一帧。
+			// 恢复后必须从新帧重新起算，否则第一个样本会把暂停前旧值并入均值。
 			fresh = make(map[string]bool, len(groups))
 			pending = make(map[string]map[int]float64, len(groups))
 			time.Sleep(pausedLoopIdle)
 			continue
 		}
-		// 设备采集态检查：未在采集时进入"等待恢复"循环，不立即判失败。
-		//
-		// 设计动机：用户在采样过程中临时停止设备采集（查看设备 / 换探头 / 误操作）
-		// 是合理的运行时操作——只要后续重启采集，traversal 应当继续完成本点采样，
-		// 而不是直接判测试失败。这与运动阶段"用户停止返回 nil 等待恢复"的语义对齐，
-		// 避免出现"误停一次采集，整个遍历就报废"的不可恢复局面。
-		//
-		// 等待期间持续响应 isTaskCancelled（用户停止遍历），并重置 stallDeadline：
-		// 用户主动停采集不应被计入"采集停滞"超时，否则等待恢复的间隙会触发 10s 超时
-		// 仍然判失败，违背"可恢复"语义。
-		//
-		// 注意：设备真异常（断链 / 帧不再更新但状态未更新）仍由下方 stallTimeout 兜底，
-		// 因为 IsAcquiring=true 但 GetLatestData 持续返回旧帧时 notAcquiring=false，
-		// stallDeadline 不会被重置，10s 后仍触发超时失败。
+		// 设备采集态检查：任一设备非 Acquiring 时进入"类暂停"无限期等待恢复
+		// （spec-traversal-acquisition-stop）。不自动判失败，退出路径 =
+		// 设备全部恢复 / Stop / Pause。
 		if acqController != nil {
-			notAcquiring := false
-			for _, g := range groups {
-				if !acqController.IsAcquiring(g.deviceID) {
-					notAcquiring = true
-					break
-				}
+			classify := func() []acquisitionDeviceState {
+				return abnormalAcquisitionDevicesForIDs(acqController, groupDeviceIDs(groups))
 			}
-			if notAcquiring {
-				// I-3 修复：保留 stallDeadline 重置语义（允许用户短暂停采恢复），
-				// 但累计 notAcquiring 时长，超过 acquisitionNotAcquiringTimeout 即判失败。
-				// 避免设备永久故障（断链/driver 死锁）+ 用户不 Stop 时遍历永久卡死。
-				now := time.Now()
-				notAcquiringTotal += now.Sub(notAcquiringLastSample)
-				notAcquiringLastSample = now
-				if notAcquiringTotal >= acquisitionNotAcquiringTimeout {
-					slog.Error("traversal averaged sampling failed: devices not acquiring for too long",
-						"component", "traversal",
-						"task_id", taskID,
-						"valid_samples", validSamples,
-						"target_samples", samplesPerPoint,
-						"not_acquiring_total", notAcquiringTotal.String(),
-						"limit", acquisitionNotAcquiringTimeout.String(),
-					)
-					return nil, fmt.Errorf("devices not acquiring for %s (limit %s); traversal aborted to prevent hang",
-						notAcquiringTotal, acquisitionNotAcquiringTimeout)
+			recovered, err := m.waitForAcquisitionResume(taskID, classify)
+			if err != nil {
+				return nil, err
+			}
+			if len(recovered) > 0 {
+				// 设备恢复采集：按等待前状态重建 freshness 基线。
+				// - Stopped 设备：清 fresh/pending（保留 lastTimestamps），
+				//   避免停采前旧帧并入恢复后首个样本；
+				// - ReconnectRequired 设备：重置 lastTimestamps=-1 并丢弃恢复后首帧，
+				//   防重连后时间戳归零/回绕导致新帧永不够新而被误判停滞。
+				for _, r := range recovered {
+					delete(fresh, r.id)
+					delete(pending, r.id)
+					if r.state == ports.AcquisitionReconnectRequired {
+						lastTimestamps[r.id] = -1
+						rebaseDropFirst[r.id] = true
+					}
 				}
+				// 等待期间不推进停滞计时：返回后重置，避免立刻触发旧的 10s 超时。
 				stallDeadline = time.Now().Add(acquisitionStallTimeout)
-				slog.Debug("traversal waiting for acquisition to resume",
-					"component", "traversal",
-					"task_id", taskID,
-					"valid_samples", validSamples,
-					"target_samples", samplesPerPoint,
-					"not_acquiring_total", notAcquiringTotal.String(),
-				)
-				time.Sleep(acquisitionBatchPoll)
-				continue
 			}
-			// 设备恢复采集后清零 notAcquiring 累计值（I-4 修复）。
-			// 原实现只重置 notAcquiringLastSample，notAcquiringTotal 在整个点位期间
-			// 持续累计——若干次短暂可恢复的停采（换探头/设备重连/误停）会跨段累计出
-			// 60s 误判失败。清零后只有"连续"未采集超过 acquisitionNotAcquiringTimeout
-			// 才判失败（设备永久故障仍会 60s 有界退出），短暂停采不再累计成误判。
-			notAcquiringTotal = 0
-			notAcquiringLastSample = time.Now()
 		}
 		if time.Now().After(stallDeadline) {
 			slog.Warn("traversal averaged sampling stalled",
@@ -1518,6 +1607,13 @@ func (m *TraversalManager) collectAveragedSamples(taskID string, groups []device
 			if payload.Timestamp <= lastTimestamps[g.deviceID] {
 				noDataCount++
 				continue // 同一帧重复读取，跳过
+			}
+			// 重连恢复后丢弃首帧：仅作为时间戳基线消费、不计入样本，
+			// 防止把 hub 中残留的旧连接缓存帧当样本。
+			if rebaseDropFirst[g.deviceID] {
+				lastTimestamps[g.deviceID] = payload.Timestamp
+				rebaseDropFirst[g.deviceID] = false
+				continue
 			}
 			lastTimestamps[g.deviceID] = payload.Timestamp
 			lastChannelCount = len(payload.Channels)
