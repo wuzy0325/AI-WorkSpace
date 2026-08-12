@@ -36,6 +36,7 @@ import { useI18nStore } from '@stores/i18nStore'
 import type { PreconditionCheckResult } from '@shared/types/traversal'
 import { TRAVERSAL_PROBE_PRESENTATION } from '@shared/types/traversal'
 import { joinCalibrationPath } from '@shared/calibrationCsvPath'
+import { safeInterpolate } from '@shared/i18nInterpolate'
 import { useTraversalRealtimeData } from '@composables/useTraversalRealtimeData'
 import { useHardwareConnectionStatus } from '@composables/useHardwareConnectionStatus'
 import { useTraversalStatusDisplay } from '@composables/useTraversalStatusDisplay'
@@ -511,6 +512,21 @@ const startDisabledReason = computed(() => {
   }
 })
 
+// 等待设备恢复采集文案（spec-traversal-acquisition-stop）：
+// waitingForAcquisition 时按主导设备 + "等 N 台" 组装，stopped / reconnect_required 文案区分。
+const waitingAcquisitionText = computed(() => {
+  const status = traversalStore.status
+  if (!status?.waitingForAcquisition) return ''
+  const devices = status.waitingDevices ?? []
+  if (devices.length === 0) return t.value.travWaitingAcquisition
+  const primary = devices[0]
+  const base = primary.state === 'reconnect_required'
+    ? safeInterpolate(t.value.travWaitingReconnect, '{name}', primary.name)
+    : safeInterpolate(t.value.travWaitingAcquisitionDevice, '{name}', primary.name)
+  if (devices.length <= 1) return base
+  return `${base}（${safeInterpolate(t.value.travWaitingCount, '{count}', String(devices.length))}）`
+})
+
 // 实时插值节流：交由 store 统一管理定时器，避免组件内重复实现
 // 监听插值输入与插值器加载状态变化，触发 store 的节流插值
 watch(
@@ -611,6 +627,17 @@ watch(
         class="trav-interp-banner__close"
         @click="traversalStore.interpolatorRestoreMessage = null"
       >{{ t.travGotIt }}</button>
+    </div>
+
+    <!-- 等待设备恢复采集横幅（spec-traversal-acquisition-stop）：设备主动停采/掉线时
+         遍历无限期等待，此横幅提示操作员恢复设备（重启采集 / 重连并启动）。 -->
+    <div
+      v-if="waitingAcquisitionText"
+      role="alert"
+      class="trav-wait-banner"
+    >
+      <span class="trav-wait-banner__icon" aria-hidden="true">⏳</span>
+      <span class="trav-wait-banner__text">{{ waitingAcquisitionText }}</span>
     </div>
 
     <!-- 恢复加载状态 -->
@@ -777,5 +804,30 @@ watch(
 
 .trav-interp-banner__close:hover {
   background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+/* 等待设备恢复采集横幅：信息色调，提示操作员恢复设备（spec-traversal-acquisition-stop） */
+.trav-wait-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+  padding: var(--space-2, 0.5rem) var(--space-4, 1rem);
+  background: color-mix(in srgb, var(--accent-info, #2563eb) 10%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-info, #2563eb) 30%, transparent);
+  color: var(--accent-info, #2563eb);
+  font-size: var(--font-size-xs, 12px);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.trav-wait-banner__icon {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.trav-wait-banner__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
 }
 </style>

@@ -1155,6 +1155,24 @@ export interface TraversalTestStatus {
    * nil/null 表示无运动安全故障或故障已清除。
    */
   motionSafetyFailure?: MotionSafetyFailure | null
+  /**
+   * 等待设备恢复采集（spec-traversal-acquisition-stop）。
+   * waitingForAcquisition=true 且 currentPointPhase==='waiting_acquisition' 时前端显示等待横幅。
+   */
+  waitingForAcquisition?: boolean
+  waitingDevices?: AcquisitionDeviceStatus[]
+  waitingForAcquisitionSinceMs?: number
+}
+
+/**
+ * 等待恢复期间单个异常设备的采集态（spec-traversal-acquisition-stop）。
+ * 列表仅包含非 ACQUIRING 设备；state 取值 "stopped" | "reconnect_required"；
+ * "等 N 台设备"的 N = waitingDevices.length。
+ */
+export interface AcquisitionDeviceStatus {
+  name: string
+  state: 'stopped' | 'reconnect_required'
+  sinceMs: number
 }
 
 export interface TraversalModuleResult {
@@ -1190,6 +1208,11 @@ export interface TraversalProgressEvent {
   latestData?: TraversalDataPoint
   // timestamp 已移除：原实现每次轮询都填 Date.now()，导致 polling 去重 key 永不相等，
   // 每 500ms 必触发回调。若需要事件时间戳，由回调方在接收时自行 Date.now()。
+  // 等待设备恢复采集（spec-traversal-acquisition-stop）：进度事件重建状态时必须透传，
+  // 否则 applyProgressEvent 会丢失等待信息。
+  waitingForAcquisition?: boolean
+  waitingDevices?: AcquisitionDeviceStatus[]
+  waitingForAcquisitionSinceMs?: number
 }
 
 /** 测试完成事件 */

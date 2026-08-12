@@ -86,14 +86,19 @@ func (r *retryLatestDataReader) GetLatestData(deviceID string) (device.DataPaylo
 func (*retryLatestDataReader) GetLatestTimestamp(string) (int64, bool) { return 0, false }
 
 // resumableAcquisitionController 测试用 ports.AcquisitionController 实现，
-// 支持运行时切换 acquiring 状态，模拟"用户停采集后又恢复"的场景。
-// 用 mutex 保护 acquiring 字段，避免 IsAcquiring 与测试主 goroutine 修改并发时的数据竞争。
+// 支持运行时切换 acquiring / connected 状态，模拟"停采后恢复"与"掉线后重连"。
+// 用 mutex 保护字段，避免与测试主 goroutine 修改并发时的数据竞争。
 type resumableAcquisitionController struct {
 	mu        sync.Mutex
 	acquiring bool
+	connected bool
 }
 
-func (*resumableAcquisitionController) IsConnected(string) bool { return true }
+func (c *resumableAcquisitionController) IsConnected(string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.connected
+}
 func (c *resumableAcquisitionController) IsAcquiring(string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -103,11 +108,14 @@ func (c *resumableAcquisitionController) IsAcquiring(string) bool {
 func (c *resumableAcquisitionController) DeviceName(id string) string { return id }
 func (*resumableAcquisitionController) StartAcquisition(string) error { return nil }
 
-// AcquisitionStatus 实现 ports.AcquisitionController。
-// mock 恒为"已连接"：acquiring → Acquiring，否则 → Stopped（永不 ReconnectRequired）。
+// AcquisitionStatus 实现 ports.AcquisitionController：
+// 未连接 → ReconnectRequired；已连接且 acquiring → Acquiring；否则 → Stopped。
 func (c *resumableAcquisitionController) AcquisitionStatus(id string) ports.AcquisitionStatus {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if !c.connected {
+		return ports.AcquisitionStatus{State: ports.AcquisitionReconnectRequired, Name: id}
+	}
 	if c.acquiring {
 		return ports.AcquisitionStatus{State: ports.AcquisitionAcquiring, Name: id}
 	}
@@ -118,6 +126,12 @@ func (c *resumableAcquisitionController) SetAcquiring(v bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.acquiring = v
+}
+
+func (c *resumableAcquisitionController) SetConnected(v bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.connected = v
 }
 
 func TestCollectAveragedSamplesWaitsForDelayedFirstData(t *testing.T) {
@@ -154,7 +168,7 @@ func TestCollectAveragedSamplesWaitsForDelayedFirstData(t *testing.T) {
 //   - elapsed >= 200ms（证明确实在等待恢复，而非立即完成）
 func TestCollectAveragedSamplesWaitsWhenAcquisitionStopsAndResumes(t *testing.T) {
 	reader := &stoppingLatestDataReader{}
-	controller := &resumableAcquisitionController{acquiring: false}
+	controller := &resumableAcquisitionController{acquiring: false, connected: true}
 	manager := NewTraversalManager(reader, nil, nil, nil, nil)
 	manager.status = traversal.Status{TaskID: "trav-resume", State: traversal.StateRunning}
 	manager.SetAcquisitionController(controller)
@@ -194,7 +208,7 @@ func TestCollectAveragedSamplesWaitsWhenAcquisitionStopsAndResumes(t *testing.T)
 // （无累计、无时间预算），恢复后继续完成本点采样。
 func TestCollectAveragedSamplesBriefStopsDoNotAccumulate(t *testing.T) {
 	reader := &stoppingLatestDataReader{}
-	controller := &resumableAcquisitionController{acquiring: false}
+	controller := &resumableAcquisitionController{acquiring: false, connected: true}
 	manager := NewTraversalManager(reader, nil, nil, nil, nil)
 	manager.status = traversal.Status{TaskID: "trav-brief-stops", State: traversal.StateRunning}
 	manager.SetAcquisitionController(controller)
@@ -238,7 +252,7 @@ func TestCollectAveragedSamplesBriefStopsDoNotAccumulate(t *testing.T) {
 // 重启采集后恢复并完成采样。
 func TestCollectAveragedSamplesStoppedWaitsIndefinitelyThenResumes(t *testing.T) {
 	reader := &stoppingLatestDataReader{}
-	controller := &resumableAcquisitionController{acquiring: false}
+	controller := &resumableAcquisitionController{acquiring: false, connected: true}
 	manager := NewTraversalManager(reader, nil, nil, nil, nil)
 	manager.status = traversal.Status{TaskID: "trav-stopped-wait", State: traversal.StateRunning}
 	manager.SetAcquisitionController(controller)
@@ -274,7 +288,7 @@ func TestCollectAveragedSamplesStoppedWaitsIndefinitelyThenResumes(t *testing.T)
 // 遍历暂停无限期等待，恢复且设备重启采集后完成采样。
 func TestCollectAveragedSamplesAllowsPermanentTraversalPause(t *testing.T) {
 	reader := &stoppingLatestDataReader{}
-	controller := &resumableAcquisitionController{acquiring: false}
+	controller := &resumableAcquisitionController{acquiring: false, connected: true}
 	manager := NewTraversalManager(reader, nil, nil, nil, nil)
 	manager.status = traversal.Status{TaskID: "trav-permanent-pause", State: traversal.StatePaused}
 	manager.isPaused = true
@@ -417,7 +431,7 @@ func TestCollectAveragedSamplesPauseDoesNotReuseStalePendingFrame(t *testing.T) 
 //   - elapsed < 1s（cancellation 应即时生效，不应等待 stallDeadline）
 func TestCollectAveragedSamplesReturnsCancelledWhenAcquisitionStaysStoppedAndTaskCancelled(t *testing.T) {
 	reader := &stoppingLatestDataReader{}
-	controller := &resumableAcquisitionController{acquiring: false}
+	controller := &resumableAcquisitionController{acquiring: false, connected: true}
 	manager := NewTraversalManager(reader, nil, nil, nil, nil)
 	manager.status = traversal.Status{TaskID: "trav-cancel", State: traversal.StateRunning}
 	manager.SetAcquisitionController(controller)
@@ -502,7 +516,7 @@ func TestRunCurrentPointDoesNotMoveWhenAcquisitionHasStopped(t *testing.T) {
 		MotionAxes:      []traversal.MotionAxisBinding{{ControllerID: "mc-1", Axis: "X"}},
 	}
 	manager.status = traversal.Status{TaskID: manager.config.TaskID, State: traversal.StateRunning, TotalPoints: 1}
-	controller := &resumableAcquisitionController{acquiring: false}
+	controller := &resumableAcquisitionController{acquiring: false, connected: true}
 	manager.SetAcquisitionController(controller)
 
 	done := make(chan error, 1)
@@ -1029,5 +1043,78 @@ func TestCollectAveragedSamplesStallTimeoutWhenNoNewSample(t *testing.T) {
 	}
 	if elapsed < acquisitionStallTimeout || elapsed > acquisitionStallTimeout+2*time.Second {
 		t.Fatalf("elapsed = %v, want ≈ acquisitionStallTimeout(%v)", elapsed, acquisitionStallTimeout)
+	}
+}
+
+// reconnectResetReader 测试用 LatestDataReader：
+//   - after=false：时间戳为大值（1000+seq），建立"重连前"旧基线；
+//   - after=true：时间戳回绕为小值（seq），模拟设备重连后计数器复位。
+type reconnectResetReader struct {
+	mu    sync.Mutex
+	after bool
+	seq   int64
+}
+
+func (r *reconnectResetReader) GetLatestData(deviceID string) (device.DataPayload, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.seq++
+	if !r.after {
+		return device.DataPayload{DeviceID: deviceID, Timestamp: 1000 + r.seq, Channels: []float64{100}, ChannelIndices: []int{0}}, true
+	}
+	return device.DataPayload{DeviceID: deviceID, Timestamp: r.seq, Channels: []float64{200}, ChannelIndices: []int{0}}, true
+}
+
+func (r *reconnectResetReader) setAfter(v bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.after = v
+}
+
+func (*reconnectResetReader) GetLatestTimestamp(string) (int64, bool) { return 0, false }
+
+// TestCollectAveragedSamplesReconnectWaitsAndRebaselines 回归测试（spec v4）：
+// 设备掉线（ReconnectRequired）→ 无限期等待不判失败；
+// 重连后时间戳回绕为小值也能正常出样本——恢复路径重置 lastTimestamps=-1
+// 并丢弃首帧，否则新帧永不够新会被误判"在采但无新帧"（10s 停滞）。
+func TestCollectAveragedSamplesReconnectWaitsAndRebaselines(t *testing.T) {
+	reader := &reconnectResetReader{}
+	controller := &resumableAcquisitionController{acquiring: true, connected: true}
+	manager := NewTraversalManager(reader, nil, nil, nil, nil)
+	manager.status = traversal.Status{TaskID: "trav-reconnect", State: traversal.StateRunning}
+	manager.SetAcquisitionController(controller)
+
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := manager.collectAveragedSamples("trav-reconnect",
+			[]deviceChannelGroup{{deviceID: "dev-1", keys: []int{0}, hwIndices: []int{0}}}, 50)
+		resultCh <- err
+	}()
+
+	// 设备先采集一阵（建立旧时间戳基线 + 积累部分样本），再掉线。
+	time.Sleep(150 * time.Millisecond)
+	controller.SetConnected(false)
+	controller.SetAcquiring(false)
+
+	// 掉线（ReconnectRequired）无限期等待：不应判失败。
+	time.Sleep(400 * time.Millisecond)
+	select {
+	case err := <-resultCh:
+		t.Fatalf("reconnect_required must wait indefinitely, got error: %v", err)
+	default:
+	}
+
+	// 重连并重启采集；时间戳回绕（计数器复位为小值）。
+	reader.setAfter(true)
+	controller.SetConnected(true)
+	controller.SetAcquiring(true)
+
+	select {
+	case err := <-resultCh:
+		if err != nil {
+			t.Fatalf("sampling must complete after reconnect (with reset timestamps), got error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("collectAveragedSamples did not complete after reconnect")
 	}
 }
