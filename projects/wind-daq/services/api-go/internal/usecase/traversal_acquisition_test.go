@@ -12,6 +12,7 @@ import (
 	"wind-daq/services/api-go/internal/core/device"
 	"wind-daq/services/api-go/internal/core/motion"
 	"wind-daq/services/api-go/internal/core/traversal"
+	"wind-daq/services/api-go/internal/ports"
 	"wind-daq/services/api-go/pkg/wiring"
 )
 
@@ -101,6 +102,17 @@ func (c *resumableAcquisitionController) IsAcquiring(string) bool {
 
 func (c *resumableAcquisitionController) DeviceName(id string) string { return id }
 func (*resumableAcquisitionController) StartAcquisition(string) error { return nil }
+
+// AcquisitionStatus 实现 ports.AcquisitionController。
+// mock 恒为"已连接"：acquiring → Acquiring，否则 → Stopped（永不 ReconnectRequired）。
+func (c *resumableAcquisitionController) AcquisitionStatus(id string) ports.AcquisitionStatus {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.acquiring {
+		return ports.AcquisitionStatus{State: ports.AcquisitionAcquiring, Name: id}
+	}
+	return ports.AcquisitionStatus{State: ports.AcquisitionStopped, Name: id}
+}
 
 func (c *resumableAcquisitionController) SetAcquiring(v bool) {
 	c.mu.Lock()

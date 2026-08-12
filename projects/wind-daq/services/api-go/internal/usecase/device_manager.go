@@ -716,6 +716,33 @@ func (m *DeviceManager) IsAcquiring(id string) bool {
 	return status.Acquiring
 }
 
+// AcquisitionStatus 实现 ports.AcquisitionController。
+// 返回设备采集态三态快照（spec-traversal-acquisition-stop）：
+//   - State 来自单次 GetStatus（锁内一致性读取）；
+//   - Name 复用 DeviceName(id)（独立调用，属非关键展示元数据），缺失时 fallback id；
+//   - LastError 仅 ReconnectRequired 且设备仍在 map 时有值，已移除时为空。
+//
+// 判定顺序（单调，所有 Connection/Acquiring 组合有确定归属）：
+//
+//	!ok || Connection==Error || Connection==Disconnected  → ReconnectRequired
+//	Acquiring                                            → Acquiring
+//	else                                                 → Stopped
+func (m *DeviceManager) AcquisitionStatus(id string) ports.AcquisitionStatus {
+	status, ok := m.GetStatus(id)
+	name := m.DeviceName(id)
+	if name == "" {
+		name = id
+	}
+	switch {
+	case !ok || status.Connection == device.ConnectionError || status.Connection == device.ConnectionDisconnected:
+		return ports.AcquisitionStatus{State: ports.AcquisitionReconnectRequired, Name: name, LastError: status.LastError}
+	case status.Acquiring:
+		return ports.AcquisitionStatus{State: ports.AcquisitionAcquiring, Name: name}
+	default:
+		return ports.AcquisitionStatus{State: ports.AcquisitionStopped, Name: name}
+	}
+}
+
 // DeviceName returns the operator-facing profile name for diagnostics.
 func (m *DeviceManager) DeviceName(id string) string {
 	m.mu.RLock()
