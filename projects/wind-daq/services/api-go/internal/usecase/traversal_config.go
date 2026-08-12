@@ -966,8 +966,11 @@ func (m *TraversalManager) ParseAndStartTraversal(raw json.RawMessage) (string, 
 	acqController := m.acquisitionController
 	m.mu.RUnlock()
 	if acqController != nil {
-		if deviceName, stopped := firstNonAcquiringDevice(acqController, config); stopped {
-			return "", fmt.Errorf("device %s is not acquiring; start acquisition before traversal", deviceName)
+		if dev, abnormal := firstAbnormalAcquisitionDevice(acqController, config); abnormal {
+			if dev.state == ports.AcquisitionReconnectRequired {
+				return "", fmt.Errorf("device %s is not connected; reconnect it and start acquisition before traversal", dev.name)
+			}
+			return "", fmt.Errorf("device %s is not acquiring; start acquisition before traversal", dev.name)
 		}
 	}
 	if config.LayoutPattern == "sector" {
