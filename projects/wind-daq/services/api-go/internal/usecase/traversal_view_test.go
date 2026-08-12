@@ -1167,7 +1167,7 @@ func TestBuildStatusResponseIncludesWaitingFields(t *testing.T) {
 		TaskID:                       "t",
 		State:                        traversal.StateRunning,
 		WaitingForAcquisition:        true,
-		WaitingDevices:               []traversal.AcquisitionDeviceStatus{{Name: "dev-1", State: "stopped", SinceMs: 123}},
+		WaitingDevices:               []traversal.AcquisitionDeviceStatus{{Name: "dev-1", State: "stopped"}},
 		WaitingForAcquisitionSinceMs: 123,
 	}
 	manager.mu.Unlock()

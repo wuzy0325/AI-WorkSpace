@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"shared.local/device-sdk/go/pkg/slog"
@@ -1353,6 +1354,21 @@ func groupChannelsByDevice(channels []int, refs map[int]traversal.ChannelRef) []
 	return groups
 }
 
+// acquisitionRecovery 单台设备等待结束时的恢复信息。
+// wasReconnect 表示本次等待期间该设备出现过 ReconnectRequired（最严重状态），
+// 只有它需要重建时间戳基线——重连后设备时间戳可能归零/回绕，旧 lastTimestamps
+// 会让新帧永远"不够新"而误判"在采但无新帧"（10s 停滞）。
+// staleTimestamp/staleKnown 记录首次观察到 ReconnectRequired 时 hub 缓存帧的
+// 时间戳：设备断开时 hub 不清 latest，恢复后状态已 Acquiring、但新连接首帧未到
+// 的窗口内 GetLatestData 仍可能返回这帧旧数据，必须忽略该精确旧帧，否则其
+// 时间戳会重新锁死时间戳归零/回绕的新帧。
+type acquisitionRecovery struct {
+	id             string
+	wasReconnect   bool
+	staleTimestamp int64
+	staleKnown     bool
+}
+
 // waitForAcquisitionResume 等待全部引用设备恢复采集（spec-traversal-acquisition-stop §等待恢复阶段）。
 //
 // 语义：
@@ -1364,18 +1380,28 @@ func groupChannelsByDevice(channels []int, refs map[int]traversal.ChannelRef) []
 //   - **不持有 stallDeadline**（采样局部变量，helper 访问不到），由采样调用方返回后重置；
 //     不管理顶层 State（调用方负责，点位开始进入前须显式置 StateMoving）。
 //
-// 返回：恢复前最后一次观察到的异常设备列表（空 = 无需等待即全部 Acquiring）。
-// 调用方据此按设备重建 freshness 基线（Stopped 清 fresh/pending；
-// ReconnectRequired 重置 lastTimestamps=-1 并丢弃首帧）。
-func (m *TraversalManager) waitForAcquisitionResume(taskID string, classify func() []acquisitionDeviceState) ([]acquisitionDeviceState, error) {
+// 返回：本次等待期间观察到异常的每台设备的恢复信息（空 = 无需等待即全部 Acquiring）。
+// 调用方据此按设备重建 freshness 基线（Stopped 清 fresh/pending；wasReconnect
+// 重置 lastTimestamps=-1、忽略 staleTimestamp 旧帧并丢弃恢复后首帧）。
+//
+// 注意：每台设备记录的是**本次等待期间观察到的最严重状态**（ReconnectRequired >
+// Stopped），而不是最后一次观察——设备经历 reconnect_required → stopped → acquiring
+// 的典型恢复路径时，最后一次分类可能是 stopped，但"曾重连"语义（时间戳基线重建）
+// 必须保留，否则重连后归零的时间戳会继续用旧基线比较。
+func (m *TraversalManager) waitForAcquisitionResume(taskID string, classify func() []acquisitionDeviceState) ([]acquisitionRecovery, error) {
 	m.mu.RLock()
 	savedPhase := m.status.CurrentPointPhase
 	m.mu.RUnlock()
-	lastAbnormal := classify()
-	if len(lastAbnormal) == 0 {
+	worst := make(map[string]ports.AcquisitionState)
+	staleTs := make(map[string]int64)
+	// 进入等待前设备已异常（如点位开始）：同属一次等待会话，纳入最严重状态统计。
+	for _, s := range classify() {
+		m.trackWorstAcquisitionState(worst, staleTs, s)
+	}
+	if len(worst) == 0 {
 		// 全部设备已在采集，无需等待。
 		m.clearWaitingForAcquisition()
-		return lastAbnormal, nil
+		return nil, nil
 	}
 	var sessionStart time.Time
 	wasPaused := false
@@ -1396,9 +1422,11 @@ func (m *TraversalManager) waitForAcquisitionResume(taskID string, classify func
 		if len(abnormal) == 0 {
 			m.clearWaitingForAcquisition()
 			m.restoreCurrentPointPhase(taskID, savedPhase)
-			return lastAbnormal, nil
+			return buildAcquisitionRecovery(worst, staleTs), nil
 		}
-		lastAbnormal = abnormal
+		for _, s := range abnormal {
+			m.trackWorstAcquisitionState(worst, staleTs, s)
+		}
 		// 首次进入等待，或从暂停恢复后仍异常：开启新等待会话。
 		if sessionStart.IsZero() || wasPaused {
 			sessionStart = time.Now()
@@ -1409,14 +1437,58 @@ func (m *TraversalManager) waitForAcquisitionResume(taskID string, classify func
 	}
 }
 
+// trackWorstAcquisitionState 累计设备在本次等待期间观察到的最严重采集态
+// （ReconnectRequired > Stopped），并在首次观察到 ReconnectRequired 时记录 hub
+// 缓存帧时间戳——设备断开时 hub 不清 latest，恢复后 GetLatestData 仍可能返回
+// 这帧旧数据，靠该时间戳识别并忽略。
+func (m *TraversalManager) trackWorstAcquisitionState(worst map[string]ports.AcquisitionState, staleTs map[string]int64, s acquisitionDeviceState) {
+	prev, seen := worst[s.id]
+	if s.state == ports.AcquisitionReconnectRequired {
+		if !seen || prev != ports.AcquisitionReconnectRequired {
+			if m.reader != nil {
+				if ts, ok := m.reader.GetLatestTimestamp(s.id); ok {
+					staleTs[s.id] = ts
+				}
+			}
+		}
+		worst[s.id] = ports.AcquisitionReconnectRequired
+		return
+	}
+	if !seen {
+		worst[s.id] = s.state
+	}
+	// 已记录 ReconnectRequired 的严重状态不因后续 Stopped 观察而降级。
+}
+
+// buildAcquisitionRecovery 把最严重状态统计转换为稳定的恢复信息列表（按 deviceID 字典序）。
+func buildAcquisitionRecovery(worst map[string]ports.AcquisitionState, staleTs map[string]int64) []acquisitionRecovery {
+	ids := make([]string, 0, len(worst))
+	for id := range worst {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]acquisitionRecovery, 0, len(ids))
+	for _, id := range ids {
+		r := acquisitionRecovery{id: id, wasReconnect: worst[id] == ports.AcquisitionReconnectRequired}
+		if ts, ok := staleTs[id]; ok {
+			r.staleTimestamp = ts
+			r.staleKnown = true
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
 // setWaitingForAcquisition 写入等待状态字段并置 waiting_acquisition 阶段。
+// 设备级 SinceMs 不维护：单台设备的"进入该状态时间"跨 tick 需要额外状态表，而
+// UI 只需总等待时长（WaitingForAcquisitionSinceMs）——设备级时间戳语义不满足
+// 且无消费者（见 code-review Important-5），故不在 AcquisitionDeviceStatus 暴露。
 func (m *TraversalManager) setWaitingForAcquisition(taskID string, abnormal []acquisitionDeviceState, since time.Time) {
 	devices := make([]traversal.AcquisitionDeviceStatus, 0, len(abnormal))
 	for _, s := range abnormal {
 		devices = append(devices, traversal.AcquisitionDeviceStatus{
-			Name:    s.name,
-			State:   acquisitionStateString(s.state),
-			SinceMs: since.UnixMilli(),
+			Name:  s.name,
+			State: acquisitionStateString(s.state),
 		})
 	}
 	m.mu.Lock()
@@ -1510,9 +1582,14 @@ func (m *TraversalManager) collectAveragedSamples(taskID string, groups []device
 	lastTimestamps := make(map[string]int64, len(groups))
 	fresh := make(map[string]bool, len(groups))
 	pending := make(map[string]map[int]float64, len(groups)) // deviceID → hwIndex → value
-	// rebaseDropFirst 重连恢复后需丢弃首帧的设备（仅 ReconnectRequired 恢复时置位）：
+	// rebaseDropFirst 重连恢复后需丢弃首帧的设备（仅 wasReconnect 时置位）：
 	// 首帧只作为时间戳基线消费、不计入样本，防 hub 残留旧连接缓存帧当样本。
 	rebaseDropFirst := make(map[string]bool, len(groups))
+	// rebaseStaleTimestamp 重连恢复后需要忽略的旧连接缓存帧时间戳（按设备）：
+	// 设备断开时 hub 不清 latest，恢复后状态已 Acquiring 但新连接首帧未到的窗口内，
+	// GetLatestData 仍返回这帧旧数据；进入 ReconnectRequired 时已捕获其时间戳，
+	// 该精确时间戳的帧不作为新基线，只允许真正的新帧建立基线。
+	rebaseStaleTimestamp := make(map[string]int64, len(groups))
 	for _, g := range groups {
 		lastTs := int64(-1)
 		if ts, ok := m.reader.GetLatestTimestamp(g.deviceID); ok {
@@ -1569,12 +1646,19 @@ func (m *TraversalManager) collectAveragedSamples(taskID string, groups []device
 				// 首个样本（不止异常设备，正常设备等待前已就绪的 pending 同样过期）。
 				fresh = make(map[string]bool, len(groups))
 				pending = make(map[string]map[int]float64, len(groups))
-				// ReconnectRequired 设备额外重置时间戳基线：重连后时间戳可能归零/回绕，
+				// wasReconnect 设备额外重置时间戳基线：重连后时间戳可能归零/回绕，
 				// 旧 lastTimestamps 会让新帧永不够新而被误判"在采但无新帧"（10s 停滞）。
+				// 同时记录进入 ReconnectRequired 时捕获的 staleTimestamp：恢复后忽略
+				// 该精确旧帧——重连状态已恢复但新连接首帧未到前，GetLatestData 仍
+				// 可能返回 hub 中残留的旧连接缓存帧，其时间戳会再次锁死归零/回绕的新帧。
 				for _, r := range recovered {
-					if r.state == ports.AcquisitionReconnectRequired {
-						lastTimestamps[r.id] = -1
-						rebaseDropFirst[r.id] = true
+					if !r.wasReconnect {
+						continue
+					}
+					lastTimestamps[r.id] = -1
+					rebaseDropFirst[r.id] = true
+					if r.staleKnown {
+						rebaseStaleTimestamp[r.id] = r.staleTimestamp
 					}
 				}
 				// 等待期间不推进停滞计时：返回后重置，避免立刻触发旧的 10s 超时。
@@ -1612,8 +1696,16 @@ func (m *TraversalManager) collectAveragedSamples(taskID string, groups []device
 			// 重连恢复后丢弃首帧：仅作为时间戳基线消费、不计入样本，
 			// 防止把 hub 中残留的旧连接缓存帧当样本。
 			if rebaseDropFirst[g.deviceID] {
+				// 忽略进入 ReconnectRequired 时捕获的旧连接缓存帧（时间戳一致）——
+				// 设备断开时 hub 不清 latest，恢复后该帧可能被 GetLatestData 继续返回；
+				// 只有时间戳不同的帧才是新连接的真正首帧，作为新基线。
+				if stale, ok := rebaseStaleTimestamp[g.deviceID]; ok && payload.Timestamp == stale {
+					noDataCount++
+					continue
+				}
 				lastTimestamps[g.deviceID] = payload.Timestamp
 				rebaseDropFirst[g.deviceID] = false
+				delete(rebaseStaleTimestamp, g.deviceID)
 				continue
 			}
 			lastTimestamps[g.deviceID] = payload.Timestamp

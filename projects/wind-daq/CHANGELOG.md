@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.14.0] - 2026-08-12
+
+### Added
+
+- **遍历设备采集异常统一为"类暂停"无限期等待**（spec-traversal-acquisition-stop）：运行中任一引用设备主动停采、意外掉线或未连接，遍历不再自动判失败，而是无限期等待操作员恢复（恢复设备 / 暂停遍历 / 停止遍历三个退出路径）；点位开始与采样中共享同一等待语义。
+- **等待设备恢复采集横幅**：等待期间显示设备名、根因与已等待时长；文案按根因区分（"等待设备 X 恢复采集"vs"设备 X 已断开，请重新连接并启动采集"），多设备时显示"等 N 台设备"并优先展示掉线设备。
+- **设备采集态三态快照端口**（`ports.AcquisitionController.AcquisitionStatus`）：ACQUIRING / STOPPED / RECONNECT_REQUIRED，前后端据此给出针对性恢复指引。
+
+### Fixed
+
+- **重连恢复不再消费旧连接缓存帧**：设备断开时 hub 缓存不清除，恢复后状态已恢复但新连接首帧未到的窗口内，`GetLatestData` 仍可能返回旧帧；现忽略该精确旧帧，只有时间戳不同的帧才建立新基线，时间戳归零/回绕的新帧不再被旧基线锁死而误触发 10s 停滞。
+- **保留"曾重连"信息**：设备经历 reconnect_required → stopped → acquiring 的恢复路径时，等待 helper 按"本次等待期间观察到的最严重状态"判断是否重建时间戳基线，不再因最后一次分类为 stopped 而丢失重连语义。
+- **等待恢复后清空全部设备的旧采样帧**：等待期间采样循环阻塞，正常设备等待前已就绪的 pending 同样过期，统一清空避免并入恢复后首个样本。
+- **暂停时等待横幅隐藏**：暂停 UI 取代等待横幅，不显示等待累计。
+- **等待横幅主导设备优先级**：多设备等待时优先展示 reconnect_required（掉线）设备。
+- 设备级 `SinceMs` 语义不满足且无消费者，从 `AcquisitionDeviceStatus` 移除；保留总等待时长 `WaitingForAcquisitionSinceMs`。
+
+### Internal
+
+- 新增前端测试：等待字段 progress 事件透传/清空（store）、legacy 横幅暂停隐藏与时长（源码契约）、dual 横幅挂载测试（暂停隐藏 / 优先级 / 双探针独立 / 已等待时长 ticker）。
+- 新增后端回归测试：重连 stale 缓存帧忽略、reconnect→stopped→acquiring 保重连基线、多设备等待清全部 pending。
+
+### Verification
+
+- `go build ./...` + `go vet ./internal/usecase/`: passed
+- `go test ./internal/... ./api/...`: passed
+- `go test -race ./internal/usecase/ -run "Reconnect|Stopped|Pause|Acquisition"`: passed
+- `npm run typecheck` / `npm run test`（351 通过）/ `npm run build`: passed
+- `task release`: passed
+- `makensis`: passed
+- `task archive-release`: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名。
+- 内嵌 exe 的 ProductVersion 资源为空（wails3 v3.0.0-alpha2.106 既有行为），installer 的 ProductVersion 为 `0.14.0`。
+
 ## [0.13.1] - 2026-08-10
 
 ### Fixed

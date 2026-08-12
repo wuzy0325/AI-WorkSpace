@@ -514,9 +514,10 @@ const startDisabledReason = computed(() => {
 
 // 等待设备恢复采集文案（spec-traversal-acquisition-stop）：
 // waitingForAcquisition 时按主导设备 + "等 N 台" 组装，stopped / reconnect_required 文案区分。
+// 暂停时横幅被暂停 UI 取代、不显示等待累计（spec §时间与优先级）。
 const waitingAcquisitionText = computed(() => {
   const status = traversalStore.status
-  if (!status?.waitingForAcquisition) return ''
+  if (!status?.waitingForAcquisition || status.status === 'paused') return ''
   const devices = status.waitingDevices ?? []
   if (devices.length === 0) return t.value.travWaitingAcquisition
   // 主导设备按优先级 reconnect_required > stopped（后端列表为 deviceID 排序，非优先级）
@@ -524,8 +525,20 @@ const waitingAcquisitionText = computed(() => {
   const base = primary.state === 'reconnect_required'
     ? safeInterpolate(t.value.travWaitingReconnect, '{name}', primary.name)
     : safeInterpolate(t.value.travWaitingAcquisitionDevice, '{name}', primary.name)
-  if (devices.length <= 1) return base
-  return `${base}（${safeInterpolate(t.value.travWaitingCount, '{count}', String(devices.length))}）`
+  const summary = devices.length <= 1
+    ? base
+    : `${base}（${safeInterpolate(t.value.travWaitingCount, '{count}', String(devices.length))}）`
+  const duration = waitingDurationText.value
+  return duration ? `${summary} · ${duration}` : summary
+})
+
+// 已等待时长：后端 WaitingForAcquisitionSinceMs 单一时钟源；复用现有 now（1s ticker）
+// 刷新，不依赖 status 轮询——since 字段不变时 polling 去重不会持续触发 computed 更新。
+const waitingDurationText = computed(() => {
+  const since = traversalStore.status?.waitingForAcquisitionSinceMs
+  if (typeof since !== 'number' || since <= 0) return ''
+  const secs = Math.max(0, Math.floor((now.value - since) / 1000))
+  return safeInterpolate(t.value.travWaitingSince, '{duration}', String(secs))
 })
 
 // 实时插值节流：交由 store 统一管理定时器，避免组件内重复实现
