@@ -9,6 +9,7 @@ import type { EChartsOption } from 'echarts'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useThemeStore } from '@stores/themeStore'
 import { buildChannelColorMap, CHANNEL_COLORS } from '@utils/channelColors'
+import { channelUnit } from '@utils/channelUnit'
 import type { DataPayload } from '@api/types'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
@@ -34,10 +35,11 @@ const channelColorMap = computed(() => {
 const channelMeta = computed(() => {
   const map = new Map<number, { precision: number; unit: string; name: string }>()
   if (!profile.value) return map
+  const type = profile.value.type ?? ''
   for (const ch of profile.value.channels ?? []) {
     map.set(ch.index, {
       precision: typeof ch.precision === 'number' && ch.precision >= 0 ? ch.precision : 3,
-      unit: ch.unit ?? '',
+      unit: channelUnit(type, ch.index, ch.unit ?? ''),
       name: ch.name ?? `CH${ch.index + 1}`,
     })
   }

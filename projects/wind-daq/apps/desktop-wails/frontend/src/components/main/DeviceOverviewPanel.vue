@@ -7,6 +7,7 @@ import UiButton from '@components/ui/UiButton.vue'
 import UiPanel from '@components/ui/UiPanel.vue'
 import UiSectionHeader from '@components/ui/UiSectionHeader.vue'
 import { isCalibratableDeviceType, isTemperatureUnit } from '@utils/deviceCalibration'
+import { channelUnit } from '@utils/channelUnit'
 
 const deviceStore = useDeviceStore()
 const i18n = useI18nStore()
@@ -160,7 +161,11 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
         label: `CH_${String(channelIndex + 1).padStart(2, '0')}`,
         name: channelDisplayName(profile.id, channelIndex),
         formattedValue: deviceStore.formatValue(profile.id, channelIndex, rawValue),
-        unit: (Array.isArray(profile.channels) ? profile.channels[channelIndex]?.unit : undefined) || (i18n.t.unit ?? 'PA'),
+        unit: channelUnit(
+          profile.type,
+          channelIndex,
+          (Array.isArray(profile.channels) ? profile.channels[channelIndex]?.unit : undefined) || (i18n.t.unit ?? 'PA'),
+        ),
         tone: channelTone(profile.id, channelIndex, rawValue),
       }
     })

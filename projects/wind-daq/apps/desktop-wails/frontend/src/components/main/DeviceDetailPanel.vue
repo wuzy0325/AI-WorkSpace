@@ -13,6 +13,7 @@ import {
   isChannelCalibrationEnabled,
   isTemperatureUnit,
 } from '@utils/deviceCalibration'
+import { channelUnit as fixedChannelUnit } from '@utils/channelUnit'
 import ChannelCard, { type ChannelCardData } from './ChannelCard.vue'
 import ChartSelector, { type SelectorChannel } from './ChartSelector.vue'
 // RealtimeChart 异步加载：echarts 是重量依赖（gzip ~250 KB），仅当用户进入设备面板时才下载，
@@ -103,7 +104,9 @@ function formatChannel(ch: number, raw: number): string {
 }
 
 function channelUnit(channelIndex: number): string {
-  return profile.value?.channels.find((channel) => channel.index === channelIndex)?.unit || 'PA'
+  const type = profile.value?.type ?? ''
+  const stored = profile.value?.channels.find((channel) => channel.index === channelIndex)?.unit || 'PA'
+  return fixedChannelUnit(type, channelIndex, stored)
 }
 
 function channelRange(channelIndex: number): { min: number; max: number } {
