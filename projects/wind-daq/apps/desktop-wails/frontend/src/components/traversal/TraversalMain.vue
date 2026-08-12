@@ -519,7 +519,8 @@ const waitingAcquisitionText = computed(() => {
   if (!status?.waitingForAcquisition) return ''
   const devices = status.waitingDevices ?? []
   if (devices.length === 0) return t.value.travWaitingAcquisition
-  const primary = devices[0]
+  // 主导设备按优先级 reconnect_required > stopped（后端列表为 deviceID 排序，非优先级）
+  const primary = devices.find((d) => d.state === 'reconnect_required') ?? devices[0]
   const base = primary.state === 'reconnect_required'
     ? safeInterpolate(t.value.travWaitingReconnect, '{name}', primary.name)
     : safeInterpolate(t.value.travWaitingAcquisitionDevice, '{name}', primary.name)

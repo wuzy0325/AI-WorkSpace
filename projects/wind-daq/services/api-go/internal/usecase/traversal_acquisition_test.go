@@ -134,6 +134,48 @@ func (c *resumableAcquisitionController) SetConnected(v bool) {
 	c.connected = v
 }
 
+// perDeviceController 测试用 AcquisitionController：按设备独立维护 acquiring/connected，
+// 用于多设备"一台停采、一台正常"的等待恢复场景。
+type perDeviceController struct {
+	mu        sync.Mutex
+	acquiring map[string]bool
+	connected map[string]bool
+}
+
+func (c *perDeviceController) IsConnected(id string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.connected[id]
+}
+
+func (c *perDeviceController) IsAcquiring(id string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.acquiring[id]
+}
+
+func (c *perDeviceController) DeviceName(id string) string { return id }
+func (*perDeviceController) StartAcquisition(string) error { return nil }
+
+func (c *perDeviceController) AcquisitionStatus(id string) ports.AcquisitionStatus {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.connected[id] {
+		return ports.AcquisitionStatus{State: ports.AcquisitionReconnectRequired, Name: id}
+	}
+	if c.acquiring[id] {
+		return ports.AcquisitionStatus{State: ports.AcquisitionAcquiring, Name: id}
+	}
+	return ports.AcquisitionStatus{State: ports.AcquisitionStopped, Name: id}
+}
+
+func (c *perDeviceController) Set(id string, acquiring, connected bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.acquiring[id] = acquiring
+	c.connected[id] = connected
+}
+
 func TestCollectAveragedSamplesWaitsForDelayedFirstData(t *testing.T) {
 	reader := &delayedLatestDataReader{}
 	manager := NewTraversalManager(reader, nil, nil, nil, nil)
@@ -1043,6 +1085,68 @@ func TestCollectAveragedSamplesStallTimeoutWhenNoNewSample(t *testing.T) {
 	}
 	if elapsed < acquisitionStallTimeout || elapsed > acquisitionStallTimeout+2*time.Second {
 		t.Fatalf("elapsed = %v, want ≈ acquisitionStallTimeout(%v)", elapsed, acquisitionStallTimeout)
+	}
+}
+
+// TestCollectAveragedSamplesNotAcquiringWaitClearsAllPending 回归测试：
+// 多设备采样中一台停采触发等待，恢复后**所有设备**（含一直正常的设备）的 fresh/pending
+// 都必须重建——正常设备等待前已就绪的 pending 旧值不得并入恢复后首个样本。
+func TestCollectAveragedSamplesNotAcquiringWaitClearsAllPending(t *testing.T) {
+	reader := newStaleAfterPauseReader()
+	controller := &perDeviceController{
+		acquiring: map[string]bool{"dev-a": true, "dev-b": true},
+		connected: map[string]bool{"dev-a": true, "dev-b": true},
+	}
+	manager := NewTraversalManager(reader, nil, nil, nil, nil)
+	manager.status = traversal.Status{TaskID: "trav-wait-clear", State: traversal.StateRunning}
+	manager.SetAcquisitionController(controller)
+
+	type result struct {
+		values map[int]float64
+		err    error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		values, err := manager.collectAveragedSamples("trav-wait-clear",
+			[]deviceChannelGroup{
+				{deviceID: "dev-a", keys: []int{0}, hwIndices: []int{0}},
+				{deviceID: "dev-b", keys: []int{1}, hwIndices: []int{0}},
+			}, 2)
+		resultCh <- result{values, err}
+	}()
+
+	// 等 dev-a 已把旧值 100 写入 pending、dev-b 未产帧使样本凑不齐（fresh[a] 持久）。
+	<-reader.aRead
+	time.Sleep(50 * time.Millisecond)
+
+	// dev-b 停采 → 进入等待，不判失败。
+	controller.Set("dev-b", false, true)
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case r := <-resultCh:
+		t.Fatalf("must wait while device stopped, got: values=%v err=%v", r.values, r.err)
+	default:
+	}
+
+	// 等待期间 dev-a 值切换为 200（模拟正常设备在等待期间持续采集出更晚帧）。
+	reader.mu.Lock()
+	reader.aValue = 200
+	reader.bOn = true
+	reader.mu.Unlock()
+
+	// dev-b 恢复采集 → 等待结束；恢复后首个样本必须用 dev-a 的新值 200。
+	controller.Set("dev-b", true, true)
+
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			t.Fatalf("collectAveragedSamples returned error: %v", r.err)
+		}
+		if got := r.values[0]; got != 200 {
+			t.Fatalf("averaged channel 0 = %v, want 200 (pre-wait stale frame of acquiring device must not be merged)", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("collectAveragedSamples did not complete")
 	}
 }
 

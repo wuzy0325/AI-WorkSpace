@@ -1563,14 +1563,15 @@ func (m *TraversalManager) collectAveragedSamples(taskID string, groups []device
 				return nil, err
 			}
 			if len(recovered) > 0 {
-				// 设备恢复采集：按等待前状态重建 freshness 基线。
-				// - Stopped 设备：清 fresh/pending（保留 lastTimestamps），
-				//   避免停采前旧帧并入恢复后首个样本；
-				// - ReconnectRequired 设备：重置 lastTimestamps=-1 并丢弃恢复后首帧，
-				//   防重连后时间戳归零/回绕导致新帧永不够新而被误判停滞。
+				// 设备恢复采集：重建 freshness 基线。
+				// 等待期间采样循环被阻塞未读数据，所有设备的 pending 都可能已过期——
+				// 统一清 fresh/pending（与暂停分支一致），避免把等待前旧帧并入恢复后
+				// 首个样本（不止异常设备，正常设备等待前已就绪的 pending 同样过期）。
+				fresh = make(map[string]bool, len(groups))
+				pending = make(map[string]map[int]float64, len(groups))
+				// ReconnectRequired 设备额外重置时间戳基线：重连后时间戳可能归零/回绕，
+				// 旧 lastTimestamps 会让新帧永不够新而被误判"在采但无新帧"（10s 停滞）。
 				for _, r := range recovered {
-					delete(fresh, r.id)
-					delete(pending, r.id)
 					if r.state == ports.AcquisitionReconnectRequired {
 						lastTimestamps[r.id] = -1
 						rebaseDropFirst[r.id] = true
