@@ -541,30 +541,32 @@ func TestGenerateSevenHolePoints_Serpentine(t *testing.T) {
 	}
 }
 
-// TestComputeSectorFromPhi 【P1】验证 φ → Sector 映射（spec §3.3 / §6.2）
+// TestComputeSectorFromPhi 【P1】验证 φ → Sector 映射（spec §3.1 / §3.3 扇区居中约定）
 //
-// 扇区划分：每 60° 一个扇区，从 +Y 轴（φ=0°）起算
-//   - φ ∈ [0°, 60°)  → Sector 1 (P1 孔位)
-//   - φ ∈ [60°, 120°) → Sector 2 (P2 孔位)
+// 扇区划分：每 60° 一个扇区，以 Pn 孔位方位角 (n-1)×60° 为中心、左右各跨 30°
+//   - φ ∈ [330°, 360°) ∪ [0°, 30°) → Sector 1 (P1 孔位，中心 0°)
+//   - φ ∈ [30°, 90°)  → Sector 2 (P2 孔位，中心 60°)
 //   - ... 以此类推
+//   - 边界 φ=30°/90°/.../330° 归高编号扇区（如 φ=30° → Sector 2）
 //   - φ = 360° 等价于 φ = 0°，归入 Sector 1
 //
 // 测试前置：无
 // 测试步骤：调用 computeSectorFromPhi 传入不同 φ 值
-// 期待结果：返回值与 spec §3.3 扇区划分一致
+// 期待结果：返回值与 spec §3.1 扇区居中划分一致（Pn 为扇区内压力最大孔）
 func TestComputeSectorFromPhi(t *testing.T) {
 	cases := []struct {
-		phi        float64
-		expectSec  int
+		phi       float64
+		expectSec int
 	}{
-		{0.0, 1}, {5.0, 1}, {30.0, 1}, {59.0, 1},
-		{60.0, 2}, {90.0, 2}, {119.0, 2},
-		{120.0, 3}, {150.0, 3}, {179.0, 3},
-		{180.0, 4}, {210.0, 4}, {239.0, 4},
-		{240.0, 5}, {270.0, 5}, {299.0, 5},
-		{300.0, 6}, {330.0, 6}, {359.0, 6},
+		{0.0, 1}, {5.0, 1}, {29.0, 1}, {330.0, 1}, {355.0, 1}, {359.0, 1},
+		{30.0, 2}, {60.0, 2}, {89.0, 2},
+		{90.0, 3}, {120.0, 3}, {149.0, 3},
+		{150.0, 4}, {180.0, 4}, {209.0, 4},
+		{210.0, 5}, {240.0, 5}, {269.0, 5},
+		{270.0, 6}, {300.0, 6}, {329.0, 6},
 		{360.0, 1}, // 360° 等价于 0°，归 Sector 1
-		{-5.0, 6},  // 负角度归一化到 [0,360)
+		{-5.0, 1},  // 负角度归一化到 [0,360)：-5°→355° → Sector 1
+		{-31.0, 6}, // -31°→329° → Sector 6
 		{720.0, 1}, // 多圈归一化
 	}
 
@@ -572,6 +574,40 @@ func TestComputeSectorFromPhi(t *testing.T) {
 		sector := computeSectorFromPhi(c.phi)
 		if sector != c.expectSec {
 			t.Errorf("φ=%.1f° 应归 Sector %d, 实际 %d", c.phi, c.expectSec, sector)
+		}
+	}
+}
+
+// TestSevenHoleSectorBoundaryNeighbors 【P1】验证扇区边界 φ 的几何邻接判定
+//
+// 边界 φ ∈ {30°,90°,150°,210°,270°,330°} 同时属于两个相邻扇区；
+// 非边界 φ（含扇区中心 0°/60°/...）返回 ok=false
+//
+// 测试步骤：调用 SevenHoleSectorBoundaryNeighbors 传入边界/非边界 φ
+// 期待结果：返回边界两侧扇区对（φ=330° 跨 0°，邻接对为 {6,1}）
+func TestSevenHoleSectorBoundaryNeighbors(t *testing.T) {
+	cases := []struct {
+		phi          float64
+		lower, upper int
+		ok           bool
+	}{
+		{30.0, 1, 2, true},
+		{90.0, 2, 3, true},
+		{150.0, 3, 4, true},
+		{210.0, 4, 5, true},
+		{270.0, 5, 6, true},
+		{330.0, 6, 1, true},  // 跨 0° 边界
+		{-30.0, 6, 1, true},  // 负角度归一化为 330°
+		{0.0, 0, 0, false},   // 扇区 1 中心，非边界
+		{60.0, 0, 0, false},  // 扇区 2 中心，非边界
+		{355.0, 0, 0, false}, // 扇区 1 内部，非边界
+	}
+
+	for _, c := range cases {
+		lower, upper, ok := SevenHoleSectorBoundaryNeighbors(c.phi)
+		if ok != c.ok || lower != c.lower || upper != c.upper {
+			t.Errorf("φ=%.1f° 期望 (%d,%d,%v), 实际 (%d,%d,%v)",
+				c.phi, c.lower, c.upper, c.ok, lower, upper, ok)
 		}
 	}
 }

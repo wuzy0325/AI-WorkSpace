@@ -24,6 +24,9 @@ type CsvSchema struct {
 	region string
 	// sector 七孔外区扇区编号 1..6；内区或非七孔场景为 0
 	sector int
+	// sevenHoleExport true 时使用 18 列参考数据集格式（spec §7.2/§7.3，GBK 编码），
+	// 供 SaveCsv 分区导出与七孔插值加载器消费；false 时为 26 列证书格式（spec §7.5）
+	sevenHoleExport bool
 }
 
 // NewCsvSchema 根据校准配置构建 CSV 列布局描述
@@ -107,6 +110,10 @@ func (s CsvSchema) BuildHeader() []string {
 		}
 	case TypeSevenHole:
 		// 七孔按 region 分流：内区/外区各一套 26 列表头（spec §7.5）
+		// 导出场景（sevenHoleExport）使用 18 列参考数据集格式（spec §7.2/§7.3）
+		if s.sevenHoleExport {
+			return s.buildSevenHoleExportHeader()
+		}
 		return s.buildSevenHoleHeader()
 	default:
 		return base
@@ -180,6 +187,9 @@ func (s CsvSchema) BuildRecord(dataPoint DataPoint) []string {
 	case *TotalTemperatureDataPoint:
 		return s.buildTotalTemperatureRecord(dp)
 	case *SevenHoleDataPoint:
+		if s.sevenHoleExport {
+			return s.buildSevenHoleExportRecord(dp)
+		}
 		return s.buildSevenHoleRecord(dp)
 	default:
 		return []string{formatInt(dataPoint.GetPointID())}

@@ -651,9 +651,6 @@ func (m *CalibrationManager) SaveCsv(taskID string, savePath string) (string, er
 	if savePath == "" {
 		return "", fmt.Errorf("保存路径为空")
 	}
-	if m.csvWriterFactory == nil {
-		return "", fmt.Errorf("CSV写入器未配置")
-	}
 
 	// 归一化保存路径：相对路径转绝对，保证 csv_writer 写入位置确定
 	resolvedPath, err := resolveSavePath(savePath)
@@ -682,6 +679,17 @@ func (m *CalibrationManager) SaveCsv(taskID string, savePath string) (string, er
 		return "", fmt.Errorf("校准结果为空，无法保存CSV")
 	}
 
+	// 七孔：按 region+sector 分区导出为 7 份参考数据集格式 CSV
+	// （1 小角度区 + 6 大角度区，18 列基础格式 + GBK 编码，spec §7.1/§7.2/§7.3）。
+	// 单 writer 26 列证书格式会把外区点按内区 schema 落盘（θ/φ 坐标与 Kθ/Kφ 全丢为 0），
+	// 且无法被七孔插值加载器按位置契约解析，因此七孔必须走独立分区导出路径。
+	if payload.Type == calibration.TypeSevenHole {
+		return m.saveSevenHoleZonedCsv(payload, savePath)
+	}
+
+	if m.csvWriterFactory == nil {
+		return "", fmt.Errorf("CSV写入器未配置")
+	}
 	payload.Config.SavePath = savePath
 	writer := m.csvWriterFactory(payload.Config)
 	if writer == nil {
@@ -703,6 +711,142 @@ func (m *CalibrationManager) SaveCsv(taskID string, savePath string) (string, er
 		return "", err
 	}
 	return writer.Path(), nil
+}
+
+// saveSevenHoleZonedCsv 七孔校准结果分区导出（spec §7.1 方案 A + §7.2/§7.3 18 列基础格式）
+//
+// 数据点按 Region+Sector 分组落盘（与参考数据集 W532.202608.P.7H.1-01 布局一致）：
+//   - 内区：<stem>(小角度区).csv
+//   - 外区 n：<stem>(大角度<n>区).csv
+//
+// 扇区边界点共享（spec §6.2 数据集约定）：φ 恰好落在扇区边界（30°/90°/.../330°）的
+// 外区点同时写入相邻两个扇区的文件，使每个大角度区文件覆盖完整 13 条 φ 网格线
+// （与参考数据集每区 52 行 = 13φ×4θ 的布局对齐）。数据集模式下边界点本身就在两个
+// 扇区各采集了一次，共享时按 (θ,φ) 去重，避免文件内出现重复网格点。
+//
+// 返回内区文件路径（无内区点时返回第一个写入的文件路径），供前端提示导出位置。
+func (m *CalibrationManager) saveSevenHoleZonedCsv(payload calibration.ExportPayload, savePath string) (string, error) {
+	if m.sevenHoleWriterFactory == nil {
+		return "", fmt.Errorf("七孔 CSV 写入器工厂未配置")
+	}
+
+	stem := strings.TrimSuffix(savePath, filepath.Ext(savePath))
+
+	innerPoints, outerPoints := groupSevenHoleExportPoints(payload.DataPoints)
+	if len(innerPoints) == 0 && len(outerPoints) == 0 {
+		return "", fmt.Errorf("校准结果中无七孔数据点，无法保存CSV")
+	}
+
+	// 写入顺序：内区在前，外区按扇区 1..6 升序（空分区跳过——
+	// 用户可配置只校准部分扇区，空分区不生成文件）
+	firstPath := ""
+	writeZone := func(region string, sector int, points []*calibration.SevenHoleDataPoint) error {
+		if len(points) == 0 {
+			return nil
+		}
+		path := stem + sevenHoleExportFileSuffix(region, sector) + ".csv"
+		schema := calibration.NewSevenHoleExportCsvSchema(payload.Config, region, sector)
+		writer, err := m.sevenHoleWriterFactory.NewWriterTruncate(path, schema)
+		if err != nil {
+			return fmt.Errorf("创建七孔导出 writer 失败 (path=%s): %w", path, err)
+		}
+		for _, dp := range points {
+			if err := writer.AppendPoint(dp); err != nil {
+				// AppendPoint 失败时仍要 cleanup Flush（关闭文件句柄），错误聚合（spec Task 20）
+				return errors.Join(err, writer.Flush())
+			}
+		}
+		if err := writer.Flush(); err != nil {
+			return err
+		}
+		if firstPath == "" {
+			firstPath = path
+		}
+		return nil
+	}
+
+	if err := writeZone("inner", 0, innerPoints); err != nil {
+		return "", err
+	}
+	for sector := 1; sector <= 6; sector++ {
+		if err := writeZone("outer", sector, outerPoints[sector]); err != nil {
+			return "", err
+		}
+	}
+	return firstPath, nil
+}
+
+// groupSevenHoleExportPoints 按 region+sector 分组七孔导出数据点，含扇区边界点共享
+//
+// 返回：innerPoints（内区点，保持原始顺序）、outerPoints（按扇区 1..6 分组）。
+// 非 *SevenHoleDataPoint 的数据点跳过（防御：类型异常不阻塞整批导出）。
+func groupSevenHoleExportPoints(dataPoints []calibration.DataPoint) ([]*calibration.SevenHoleDataPoint, map[int][]*calibration.SevenHoleDataPoint) {
+	innerPoints := make([]*calibration.SevenHoleDataPoint, 0, len(dataPoints))
+	outerPoints := make(map[int][]*calibration.SevenHoleDataPoint, 6)
+	// 每个扇区已写入的 (θ,φ) 网格点集合——边界点共享到相邻扇区时按 key 去重，
+	// 避免数据集模式（边界点两扇区各采一次）在同一文件内产生重复网格点
+	outerKeys := make(map[int]map[[2]float64]bool, 6)
+	appendOuter := func(sector int, dp *calibration.SevenHoleDataPoint) {
+		key := [2]float64{dp.Coordinates["θ"], dp.Coordinates["φ"]}
+		keys := outerKeys[sector]
+		if keys == nil {
+			keys = make(map[[2]float64]bool)
+			outerKeys[sector] = keys
+		}
+		if keys[key] {
+			return
+		}
+		keys[key] = true
+		outerPoints[sector] = append(outerPoints[sector], dp)
+	}
+
+	for _, dp := range dataPoints {
+		shDp, ok := dp.(*calibration.SevenHoleDataPoint)
+		if !ok {
+			continue
+		}
+		if shDp.Region == "outer" {
+			if shDp.Sector < 1 || shDp.Sector > 6 {
+				// 脏数据：外区点扇区编号非法——跳过并告警，不并入内区
+				// （并入内区会按缺失的 α/β 键落盘为 0.000 行，
+				// 还会在插值加载器中触发重复网格点错误）
+				slog.Warn("calibration export skipping outer point with invalid sector",
+					"point_id", shDp.PointID, "sector", shDp.Sector)
+				continue
+			}
+			appendOuter(shDp.Sector, shDp)
+			// 扇区边界点（φ=30°/90°/.../330°）共享到几何相邻的另一个扇区文件——
+			// 邻接关系由 φ 几何位置判定（SevenHoleSectorBoundaryNeighbors），
+			// 不能由已分配扇区推算：数据集模式下 Sector 1 同时合法包含
+			// φ=330°（邻接 6 区）与 φ=30°（邻接 2 区）两个边界。
+			// 仅当点位预设 Sector 确为相邻扇区对之一时才共享（防御脏数据）。
+			if lower, upper, ok := calibration.SevenHoleSectorBoundaryNeighbors(shDp.Coordinates["φ"]); ok {
+				switch shDp.Sector {
+				case lower:
+					appendOuter(upper, shDp)
+				case upper:
+					appendOuter(lower, shDp)
+				}
+			}
+			continue
+		}
+		innerPoints = append(innerPoints, shDp)
+	}
+	return innerPoints, outerPoints
+}
+
+// sevenHoleExportFileSuffix 拼接七孔分区导出文件命名后缀（spec §7.1 参考数据集命名约定）
+//
+//   - 内区："(小角度区)"
+//   - 外区 n："(大角度<n>区)"
+//
+// 与逐点采集的 26 列过程记录文件（sevenHoleFileSuffix，"_小角度区" 下划线命名）区分：
+// 括号命名 = 18 列参考数据集格式交付文件，下划线命名 = 26 列证书格式过程记录。
+func sevenHoleExportFileSuffix(region string, sector int) string {
+	if region == "inner" {
+		return "(小角度区)"
+	}
+	return fmt.Sprintf("(大角度%d区)", sector)
 }
 
 // PreviewSevenHolePoints 预览七孔校准的点位分布（spec Task 9）
