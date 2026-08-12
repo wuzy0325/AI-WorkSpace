@@ -1,4 +1,4 @@
-Unicode true
+﻿Unicode true
 
 ####
 ## Wind-DAQ NSIS installer script (custom version).
@@ -9,7 +9,7 @@ Unicode true
 ####
 
 ; Version must match projects/wind-daq/VERSION.
-!define INFO_PRODUCTVERSION "0.14.0"
+!define INFO_PRODUCTVERSION "0.14.1"
 
 ####
 ## Please note: Template replacements don't work in this file. They are provided with default defines like
@@ -57,7 +57,7 @@ ManifestDPIAware true
 
 # Language selection dialog (zh/en)
 !define MUI_LANGDLL_ALLLANGUAGES
-!define MUI_LANGDLL_INFO "Please select the installation language:$\n��ѡ��װ�������ԣ�"
+!define MUI_LANGDLL_INFO "Please select the installation language:$\n请选择安装程序语言："
 
 # Custom welcome/directory/finish text via LangString
 !define MUI_WELCOMEPAGE_TITLE "$(INST_WELCOME_TITLE)"
@@ -79,11 +79,11 @@ ManifestDPIAware true
 
 # ------ Installer UI Strings ------
 # Chinese
-LangString INST_WELCOME_TITLE  ${LANG_SIMPCHINESE} "��ӭʹ�� Wind-DAQ �綴���ݲɼ�ϵͳ"
-LangString INST_WELCOME_TEXT   ${LANG_SIMPCHINESE} "��ϵͳרΪ�綴�����������ƣ������ݲɼ����˶����ơ�̽��궨��һ�塣$\r$\n$\r$\n��Ҫ���ܣ�$\r$\n  * ��ͨ��ѹ�����¶����ݲɼ���DSA3217 / DAQ-P-1604 / DAQ-T-1603��$\r$\n  * �˶�������������B140 / WTNMC4A��$\r$\n  * ��� / ���� / ��ѹ / ����̽��궨$\r$\n  * �綴��������������ʵʱ��ֵ����$\r$\n  * ���ݼ�¼���洢�뱨������$\r$\n$\r$\n��װ������������ɰ�װ��"
-LangString INST_DIRECTORY_TEXT ${LANG_SIMPCHINESE} "ѡ��װĿ¼��$\r$\n$\r$\n���鰲װ�ڷ�ϵͳ�̣���ȷ�����㹻�Ĵ��̿ռ��������ݴ洢��"
-LangString INST_FINISH_TITLE   ${LANG_SIMPCHINESE} "��װ���"
-LangString INST_FINISH_TEXT    ${LANG_SIMPCHINESE} "Wind-DAQ �綴���ݲɼ�ϵͳ�ѳɹ���װ��$\r$\n$\r$\n�������˳���װ����"
+LangString INST_WELCOME_TITLE  ${LANG_SIMPCHINESE} "欢迎使用 Wind-DAQ 风洞数据采集系统"
+LangString INST_WELCOME_TEXT   ${LANG_SIMPCHINESE} "本系统专为风洞测试与测量设计，集数据采集、运动控制、探针标定于一体。$\r$\n$\r$\n主要功能：$\r$\n  * 多通道压力与温度数据采集（DSA3217 / DAQ-P-1604 / DAQ-T-1603）$\r$\n  * 运动控制器管理（B140 / WTNMC4A）$\r$\n  * 五孔 / 三孔 / 总压 / 总温探针标定$\r$\n  * 风洞流场遍历测试与实时插值计算$\r$\n  * 数据记录、存储与报告生成$\r$\n$\r$\n安装程序将引导您完成安装。"
+LangString INST_DIRECTORY_TEXT ${LANG_SIMPCHINESE} "选择安装目录。$\r$\n$\r$\n建议安装在非系统盘，并确保有足够的磁盘空间用于数据存储。"
+LangString INST_FINISH_TITLE   ${LANG_SIMPCHINESE} "安装完成"
+LangString INST_FINISH_TEXT    ${LANG_SIMPCHINESE} "Wind-DAQ 风洞数据采集系统已成功安装。$\r$\n$\r$\n点击完成退出安装程序。"
 # English
 LangString INST_WELCOME_TITLE  ${LANG_ENGLISH} "Welcome to Wind-DAQ Wind Tunnel DAQ System"
 LangString INST_WELCOME_TEXT   ${LANG_ENGLISH} "Wind-DAQ is a comprehensive wind tunnel measurement platform for data acquisition, motion control, and probe calibration.$\r$\n$\r$\nKey features:$\r$\n  * Multi-channel pressure & temperature acquisition (DSA3217 / DAQ-P-1604 / DAQ-T-1603)$\r$\n  * Motion controller management (B140 / WTNMC4A)$\r$\n  * Five-hole / Three-hole / Total pressure / Total temperature calibration$\r$\n  * Traversal testing with real-time interpolation$\r$\n  * Data recording, storage and report generation$\r$\n$\r$\nThe wizard will guide you through the installation."

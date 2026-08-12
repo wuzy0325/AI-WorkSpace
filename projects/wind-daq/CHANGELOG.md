@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.14.1] - 2026-08-12
+
+### Fixed
+
+- **DAQ-P-1604 / DAQ-P-1604Pre 大气辅助通道单位固定显示**：CH17（大气压力）在通道卡片、实时波形 tooltip / y 轴、设备总览中固定显示 Pa，CH18（大气温度）固定显示 ℃，不再随全局压力单位（psi/kPa 等）或 profile 通道单位被其他命令改写而漂移。新增共享工具 `channelUnit`（`src/utils/channelUnit.ts`）并接入 `DeviceDetailPanel.vue`、`RealtimeChart.vue`、`DeviceOverviewPanel.vue` 三处展示点。
+- **七孔探针校准导出分区落盘**：保存 CSV 按 region+sector 导出 7 份参考数据集格式文件（`(小角度区)` / `(大角度N区)`，18 列基础格式 + GBK 编码），修复单文件内区 schema 落盘导致 169 个小角度点后 θ/φ 坐标与 Kθ/Kφ 系数全为 0；扇区边界点按几何邻接共享到相邻扇区文件，每区对齐 13 条 φ 网格线。
+- **七孔外区扇区划分居中约定**：`computeSectorFromPhi` 由"φ/60° 地板取整"改为以 Pn 孔位为中心的扇区划分，修复完整模式扇区划错 30° 导致 6 个大角度区系数与特性曲线全错；前端跨零修正判据改为 φ 极差 > 180°，修复 4 区被误判画出横贯全图长线。
+
+### Internal
+
+- 新增 `channelUnit` 前端单元测试 5 例，覆盖 DAQ-P-1604/Pre 通道 16/17 固定单位与常规通道回退。
+- `CalibrationWriterFactory` 新增 `NewWriterTruncate`（覆盖模式）；七孔导出经 `transform.Writer` GBK 转码、不写 UTF-8 BOM。
+- 新增七孔导出 schema / SaveCsv 分区导出 / GBK 落盘往返测试。
+
+### Verification
+
+- `npm run typecheck`: passed
+- `npm run test`: passed（36 个测试文件 / 356 个用例）
+- `go build ./...`: passed
+- `go test ./internal/... ./api/...`: passed
+- `task release`: passed
+- `makensis`: passed
+- `task archive-release`: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名。
+- 内嵌 exe 的 ProductVersion 资源为空（wails3 v3.0.0-alpha2.106 既有行为），installer 壳的 ProductVersion 为 `0.14.1`。
+
 ## [0.14.0] - 2026-08-12
 
 ### Added
