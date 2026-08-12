@@ -62,20 +62,55 @@ else                                                     → STOPPED
 - `Connection==Acquiring && Acquiring==false`（异常组合）落入 `STOPPED`（可恢复等待，宁可等不可误杀），属适配器状态不一致诊断范畴，记录日志。
 - 设备被 `onError` 删除后 `ok==false`，最近错误信息**不保留**。文案统一"设备 X 已断开，请重新连接并启动采集"；详细 LastError 保留列入后续增强（YAGNI，初版不做）。
 
+## 采集状态快照端口
+
+`ports.AcquisitionController` **已存在**（`ports/device.go`，仅 `IsConnected / IsAcquiring / StartAcquisition / DeviceName`），本规格**只新增一个方法**，不删除/改动既有方法：
+
+```go
+// AcquisitionState 遍历视角的设备采集态（见 spec §设备采集状态模型）。
+type AcquisitionState uint8
+
+const (
+    AcquisitionAcquiring AcquisitionState = iota
+    AcquisitionStopped
+    AcquisitionReconnectRequired
+)
+
+// AcquisitionStatus 设备采集态快照。
+// State 来自一次 GetStatus（锁内一致性读取）；Name/LastError 为非关键展示元数据。
+type AcquisitionStatus struct {
+    State     AcquisitionState
+    Name      string // 设备显示名，文案用（复用 DeviceName(id)，fallback id）
+    LastError string // 仅 State==ReconnectRequired 且设备仍在 map（ok==true）时有值；已移除为空
+}
+
+// AcquisitionStatus 返回指定设备的采集态快照。
+AcquisitionStatus(id string) AcquisitionStatus
+```
+
+实现要点：
+
+- `DeviceManager`：`State` 由**单次** `GetStatus(id)`（锁内读取）按上文判定顺序映射；`Name` 复用 `DeviceName(id)`。
+- `GetStatus` 与 `DeviceName` 各自持锁，是**两次调用**：`State` 保证来自一次一致性读取；`Name` 是**非关键展示元数据**，允许两次调用之间设备被删除/更新而略滞后。若需严格一致性，可另加单次 `RLock` 内同时读 device status 与 profile name 的内部 helper（二选一，本文按前者承诺）。
+- **不需要**新增 `GetStatus` 到端口、不需要设备 map 二次查询。
+
 ## 等待恢复阶段（正式内部阶段）
 
 新增 `PointPhase PhaseWaitingForAcquisition = "waiting_acquisition"`（`core/traversal/types.go`）。
 
 **阶段语义**：
 
-- `State` 保持进入等待前的子状态（`StateMoving/StateStabilizing/StateAcquiring`）不变——等待是横切阶段，**不新增顶层 State**，避免 `RunTraversalLoop` 状态机与前端状态机大改。
+- `State` 保持进入等待前的子状态（`StateStabilizing/StateAcquiring`）不变——等待是横切阶段，**不新增顶层 State**，避免 `RunTraversalLoop` 状态机与前端状态机大改。
+- **点位开始等待例外（显式建立本点阶段）**：`RunCurrentPoint` 的采集态检查发生在 `updatePhase(...moving...)` 之前，上一点结束后 State 可能仍为 `StateSaving`（非末点）或 `StateRunning`（首点），"原阶段"不明确。因此点位开始进入等待前**显式置 `StateMoving + PhaseWaitingForAcquisition`**（首点与后续点公开状态一致），等待期间保持；设备恢复后置 `PhaseMoving` 继续；**设备恢复前不得下发运动命令**。
 - `CurrentPointIndex` 保持当前点（**不推进**）。
 - `CurrentPointPhase` 置为 `waiting_acquisition`，前端据此显示等待横幅。
 - 恢复后回到**原阶段**：点位开始等待 → 继续正常点位流程（采集校验 → 运动 → 稳定 → 采样）；采样中等待 → 继续采样循环。
 
-**恢复入口的 freshness 基线**：
+**恢复入口的 freshness 基线（按设备分别处理，取决于等待前状态）**：
 
-- 采样中等待恢复：**清空 `fresh`/`pending`，保留 `lastTimestamps`**（与暂停分支语义统一），避免停采前旧帧并入恢复后首个样本。
+- `STOPPED → ACQUIRING`（同一设备实例恢复采集）：**清空 `fresh`/`pending`，保留 `lastTimestamps`**——要求恢复后必须出现更晚帧，避免消费旧帧。
+- `RECONNECT_REQUIRED → ACQUIRING`（断线重连后恢复）：**重新建立时间戳基线**——设备重连后时间戳可能归零/回绕（硬件计数器或驱动生成），旧 `lastTimestamps` 会让新帧永远"不够新"，最终被误判为"在采但无新帧"而触发 10s 停滞超时。处理方式：重置该设备 `lastTimestamps = -1`，并**显式丢弃恢复后的第一帧**（只作为基线消费、不计入样本），杜绝把 hub 中残留的旧连接缓存帧当样本。
+- 多设备：**按设备分别记录等待前状态**（`STOPPED` 或 `RECONNECT_REQUIRED`），只对 `RECONNECT_REQUIRED` 设备做重连基线重建，不得全局统一重置。
 - 点位开始等待：采样尚未开始，`lastTimestamps` 基线在采样入口建立，无额外处理。
 - 恢复后重新对全部设备做一次分类：若仍有设备异常，继续等待（可能切换文案状态）。
 
@@ -95,7 +130,7 @@ else                                                     → STOPPED
 - 每 tick（10ms）重新分类全部设备：任一恢复 `ACQUIRING` → 退出等待，回原阶段。
 - 持续响应 `isTaskCancelled`（Stop）与暂停（Pause → 冻结/旁路，Resume 后重新分类）。
 - 无任何时间预算；不累计"未采集时长"；不触发超时失败。
-- `stallDeadline`（10s 采样停滞）在等待期间重置，等待不计入采样停滞。
+- `stallDeadline`（10s 采样停滞）：等待期间不推进停滞计时——**helper 不持有 `stallDeadline`**（它是 `collectAveragedSamples` 的局部变量，helper 的参数/返回值都访问不到），由**采样调用方在 helper 返回后重置** `stallDeadline = now + acquisitionStallTimeout`；点位开始调用方无停滞计时，无需处理。
 
 ## 时间与优先级
 
@@ -107,10 +142,12 @@ else                                                     → STOPPED
 Stop > Pause > 设备恢复（ACQUIRING）> 继续等待
 ```
 
-**暂停交互**：
+**暂停交互与等待字段生命周期**：
 
-- 等待中 Pause → 语义等同暂停（无限期），等待字段冻结展示。
-- `Resume` 后重新分类全部设备：恢复 `ACQUIRING` → 继续测试；仍异常 → 回到等待。
+- 等待中 Pause → **保留** `WaitingDevices` 与原始 `SinceMs`（横幅被暂停 UI 取代，不显示）。
+- `Resume` 后重新分类全部设备：全部恢复 `ACQUIRING` → 继续测试并清空等待字段；仍异常 → 开启**新的等待会话**（`SinceMs` 重新计时——暂停视为等待中断，避免累计暂停时间）。
+- **清空时机**：Stop、设备全部恢复、点位失败/错误、任务完成、以及新任务 `Start` 时必须清空全部等待字段。
+- **并发安全**：`Status()` 返回前**深复制 `WaitingDevices`**（当前 `Status()` 只深复制了 `Results`），避免调用方读取与等待循环写入的 slice 竞态。
 
 **超时参数**：
 
@@ -150,8 +187,8 @@ RECONNECT_REQUIRED > STOPPED > ACQUIRING
 ```go
 type AcquisitionDeviceStatus struct {
     Name    string `json:"name"`
-    State   string `json:"state"`   // "acquiring" | "stopped" | "reconnect_required"
-    SinceMs int64  `json:"sinceMs"` // 进入该状态的时间戳（epoch ms），0 表示未进入
+    State   string `json:"state"`   // "stopped" | "reconnect_required"（仅异常设备，不含 "acquiring"）
+    SinceMs int64  `json:"sinceMs"` // 进入该状态的时间戳（epoch ms）
 }
 
 // Status 新增字段：
@@ -160,9 +197,10 @@ WaitingDevices               []AcquisitionDeviceStatus `json:"waitingDevices,omi
 WaitingForAcquisitionSinceMs int64                     `json:"waitingForAcquisitionSinceMs,omitempty"`
 ```
 
+- `WaitingDevices` **仅包含非 `ACQUIRING` 的异常设备**（`STOPPED` / `RECONNECT_REQUIRED`）；设备恢复 `ACQUIRING` 即从列表移除；全部恢复 → 列表清空并退出等待。**"等 N 台设备"的 N = `len(WaitingDevices)`**。完整设备快照如需诊断用内部变量，不进本 API 字段。
 - 列表按 `deviceID` 字典序稳定排序（沿用 `traversal_devices.go` 的排序）。
-- 前端横幅：显示主展示设备名 + "等 N 台设备"；文案按 `state` 区分（见状态模型表）。
-- 已等待时长：前端用 `WaitingForAcquisitionSinceMs`（后端 epoch ms）按现有轮询节奏计算 `now - sinceMs`，单一时钟源（后端），暂停时横幅被暂停 UI 取代、不显示等待累计。
+- 前端横幅：显示主展示设备名 + "等 N 台设备"；文案按 `state` 区分（`stopped` → "等待设备 X 恢复采集"，`reconnect_required` → "设备 X 已断开，请重新连接并启动采集"）。
+- 已等待时长：前端用 `WaitingForAcquisitionSinceMs`（后端 epoch ms）按现有轮询节奏计算 `now - sinceMs`，单一时钟源（后端）；暂停时横幅被暂停 UI 取代、不显示等待累计。
 
 ## 前后端数据链路影响清单
 
@@ -171,6 +209,7 @@ WaitingForAcquisitionSinceMs int64                     `json:"waitingForAcquisit
 | 层 | 文件 | 改动 |
 |---|---|---|
 | Go Status | `internal/core/traversal/types.go` | `Status` 新增 `WaitingForAcquisition*` 字段；`PointPhase` 新增 `waiting_acquisition` |
+| **Go HTTP 响应** | `internal/usecase/traversal_view.go` `BuildStatusResponse()` | **手工构造 `map[string]any`，`traversal.Status` 新增字段不会自动出现在响应中**——需显式加入 legacy `/status` 与 dual probe `/status` 响应，并补 API 合约测试直接断言 JSON 字段 |
 | Go 分类 | `internal/usecase/traversal_devices.go` | 改按快照三态分类，返回设备列表 |
 | Go 等待逻辑 | `internal/usecase/traversal_acquisition.go` | 抽 `waitForAcquisitionResume` 公共 helper（无限期 + Stop/Pause 响应 + 多设备聚合 + 清 `fresh/pending`）；点位开始复用；删除 `notAcquiringTotal`/`acquisitionNotAcquiringTimeout` 逻辑 |
 | Go 端口 | `internal/ports/device.go` | 新增 `AcquisitionStatus(id)`（既有方法不动） |
@@ -188,12 +227,13 @@ WaitingForAcquisitionSinceMs int64                     `json:"waitingForAcquisit
 | # | 文件 | 改动 |
 |---|---|---|
 | 1 | `internal/ports/device.go` | `AcquisitionController` **新增** `AcquisitionStatus(id) AcquisitionStatus`（既有 4 方法不动）；定义 `AcquisitionState`/`AcquisitionStatus` 类型 |
-| 2 | `internal/usecase/device_manager.go` | 实现 `AcquisitionStatus`：一次 `GetStatus` → 三态映射 |
-| 3 | `internal/core/traversal/types.go` | `PointPhase` 增 `waiting_acquisition`；`Status` 增等待字段 + `AcquisitionDeviceStatus` |
+| 2 | `internal/usecase/device_manager.go` | 实现 `AcquisitionStatus`：`State` 来自单次 `GetStatus` → 三态映射；`Name` 复用 `DeviceName`（两次调用，见 §采集状态快照端口） |
+| 3 | `internal/core/traversal/types.go` | `PointPhase` 增 `waiting_acquisition`；`Status` 增等待字段 + `AcquisitionDeviceStatus`（`WaitingDevices` 仅含异常设备） |
 | 4 | `internal/usecase/traversal_devices.go` | 分类改三态、返回设备列表 |
-| 5 | `internal/usecase/traversal_acquisition.go` | 抽 `waitForAcquisitionResume`（无限期 + Stop/Pause 响应 + 多设备聚合 + 清 `fresh/pending`）；采样 not-acquiring 分支改为调它；`RunCurrentPoint` 点位开始复用；**删除 `notAcquiringTotal` 累计与 60s 预算** |
-| 6 | `internal/usecase/traversal.go` | 删除 `acquisitionNotAcquiringTimeout` 常量；现有 `RunCurrentPoint` 前置检查改调 helper |
-| 7 | 前端链路 | 见上表 |
+| 5 | `internal/usecase/traversal_acquisition.go` | 抽 `waitForAcquisitionResume`（无限期 + Stop/Pause 响应 + 多设备聚合；**不持有 `stallDeadline`**，由采样调用方返回后重置）；恢复时按设备分别重建基线（`STOPPED` 清 fresh/pending 保 lastTimestamps，`RECONNECT_REQUIRED` 重置基线并丢首帧）；`RunCurrentPoint` 点位开始复用；**删除 `notAcquiringTotal` 累计与 60s 预算** |
+| 6 | `internal/usecase/traversal.go` | 删除 `acquisitionNotAcquiringTimeout` 常量；`RunCurrentPoint` 点位开始前置检查改调 helper，并先显式置 `StateMoving + PhaseWaitingForAcquisition` |
+| 7 | `internal/usecase/traversal_view.go` | `BuildStatusResponse()` 显式输出 `WaitingForAcquisition*` 字段（legacy `/status` 与 dual probe `/status`） |
+| 8 | 前端链路 | 见上表 |
 
 **启动拒绝、点位开始前检查是既有行为**，本规格不新增，仅统一其判定来源与文案。
 

@@ -29,7 +29,7 @@
 
 ### Task 2: `DeviceManager` 实现三态映射快照
 
-**Description:** 在 `internal/usecase/device_manager.go` 实现 `AcquisitionStatus(id)`：一次 `GetStatus(id)`（锁内读取）按 spec 判定顺序映射——
+**Description:** 在 `internal/usecase/device_manager.go` 实现 `AcquisitionStatus(id)`：`State` 由**单次** `GetStatus(id)`（锁内读取）按 spec 判定顺序映射——
 
 ```
 if !ok || Connection==Error || Connection==Disconnected  → ReconnectRequired
@@ -37,7 +37,7 @@ if Acquiring                                            → Acquiring
 else                                                    → Stopped
 ```
 
-`Name` 复用 `DeviceName(id)`（fallback id）；`LastError` 取自 `status.LastError`。
+`Name` 复用 `DeviceName(id)`（fallback id），与 `GetStatus` 是**两次调用**（各自持锁）——`State` 保证来自一次一致性读取，`Name` 属非关键展示元数据，允许滞后；`LastError` 取自 `status.LastError`。
 
 **Acceptance criteria:**
 - [ ] `ok==false` / `Connection==Error` / `Disconnected` → `ReconnectRequired`
@@ -45,7 +45,7 @@ else                                                    → Stopped
 - [ ] `Connection∈{Connected,Acquiring} && !Acquiring` → `Stopped`
 - [ ] `Connection==Error && Acquiring==true` → `ReconnectRequired`（Error 优先）
 - [ ] `Connection==Acquiring && !Acquiring` → `Stopped`
-- [ ] 单次 `GetStatus` 调用构建完整快照，无二次查询
+- [ ] `State` 来自单次 `GetStatus`；`Name` 经 `DeviceName` 独立调用（明确两次调用语义，不承诺单锁一致性）
 
 **Verification:**
 - [ ] 新增 `TestDeviceManager_AcquisitionStatus_*` 覆盖上表各组合
@@ -67,7 +67,7 @@ else                                                    → Stopped
 
 **Acceptance criteria:**
 - [ ] 新增字段均有 `omitempty`，旧 JSON 反序列化不破坏
-- [ ] `AcquisitionDeviceStatus.State` 取值 `"acquiring"|"stopped"|"reconnect_required"`
+- [ ] `AcquisitionDeviceStatus.State` 取值 `"stopped"|"reconnect_required"`（**不含 "acquiring"**——`WaitingDevices` 仅含异常设备，N=len）
 - [ ] `waiting_acquisition` 作为 `PointPhase` 合法值，不影响 `isSubState` 判定
 
 **Verification:**
@@ -109,12 +109,13 @@ else                                                    → Stopped
 
 ### Task 5: `traversal_devices.go` 三态分类 + 设备状态列表
 
-**Description:** `referencedAcquisitionDevices` 改为基于 `AcquisitionStatus` 三态分类，返回按 deviceID 字典序排序的设备状态列表；`firstNonAcquiringDevice` 语义改为"第一个非 Acquiring 设备"（供文案主展示），按 `ReconnectRequired > Stopped > Acquiring` 优先级排序。
+**Description:** `referencedAcquisitionDevices` 改为基于 `AcquisitionStatus` 三态分类，返回按 deviceID 字典序排序的**异常设备**状态列表（仅 `Stopped` / `ReconnectRequired`，不含 `Acquiring`）；`firstNonAcquiringDevice` 语义改为"第一个非 Acquiring 设备"（供文案主展示），按 `ReconnectRequired > Stopped` 优先级排序。
 
 **Acceptance criteria:**
 - [ ] 分类结果与 Task 2 映射一致
-- [ ] 列表按 deviceID 稳定排序
+- [ ] 列表按 deviceID 稳定排序；`Acquiring` 设备不出现在列表中
 - [ ] 主展示设备优先 `ReconnectRequired`
+- [ ] 全部设备 `Acquiring` → 列表为空
 
 **Verification:**
 - [ ] `go test ./internal/usecase/ -run TraversalDevice`
@@ -133,15 +134,16 @@ else                                                    → Stopped
 **Description:** 在 `internal/usecase/traversal_acquisition.go` 抽取 `waitForAcquisitionResume(taskID string, groups []deviceChannelGroup, acquire func() []AcquisitionDeviceStatus) ([]AcquisitionDeviceStatus, error)`：
 
 - 无限期等待，直到全部设备 `Acquiring` / Stop / Pause（与暂停分支同一循环模式，10ms tick + `pausedLoopIdle`）。
-- 每次 tick 重新分类；等待期间写入 `Status.WaitingForAcquisition*` 字段（含 `SinceMs`，仅进入等待时设置一次），退出时清理。
-- 恢复时由调用方清 `fresh/pending`（helper 不直接依赖采样内部状态）。
-- 等待期间重置 `stallDeadline`；Pause → 冻结（语义等同暂停），Resume 后重新分类。
-- 返回恢复后的设备状态列表供调用方继续。
+- 每次 tick 重新分类；等待期间写入 `Status.WaitingForAcquisition*` 字段（`SinceMs` 在进入等待时设置一次）。
+- **helper 不持有 `stallDeadline`**（采样局部变量，helper 参数/返回值访问不到），也不负责采样 deadline——由采样调用方在返回后重置。
+- 等待字段生命周期：Pause 时**保留** `WaitingDevices` 与 `SinceMs`（横幅被暂停 UI 取代）；`Resume` 后仍异常 → `SinceMs` **重新计时**；Stop/恢复/错误/完成/新任务 `Start` 时清空。
+- 返回恢复后的**异常设备状态列表**（为空表示全部恢复）供调用方继续。
 
 **Acceptance criteria:**
 - [ ] `STOPPED`/`RECONNECT_REQUIRED` 均无限期等待，长时间不恢复不返回错误
-- [ ] Stop → 即时返回；Pause → 无限期；Resume 后重新分类
-- [ ] 等待字段在进入/恢复/暂停各阶段正确写入/清理
+- [ ] Stop → 即时返回；Pause → 无限期并保留字段；Resume 后仍异常 → 新等待会话（`SinceMs` 重计时）
+- [ ] 等待字段在进入/恢复/Pause/Stop/完成/新 Start 各阶段正确写入/清理
+- [ ] `Status()` 深复制 `WaitingDevices`（无 slice 竞态）
 - [ ] 移除 60s 累计逻辑，无 `acquisitionNotAcquiringTimeout` 引用
 
 **Verification:**
@@ -159,11 +161,13 @@ else                                                    → Stopped
 
 ### Task 7: `collectAveragedSamples` 接入等待 helper
 
-**Description:** `collectAveragedSamples` 的 not-acquiring 分支改为调用 `waitForAcquisitionResume`；恢复后清 `fresh`/`pending`（保留 `lastTimestamps`）再继续采样。删除 `notAcquiringTotal` 累计、`notAcquiringLastSample` 与 60s 判定。
+**Description:** `collectAveragedSamples` 的 not-acquiring 分支改为调用 `waitForAcquisitionResume`；返回后**由采样调用方重置 `stallDeadline = now + acquisitionStallTimeout`**（helper 不持有它），并按设备重建 freshness 基线：`STOPPED` 设备清 `fresh/pending` 保留 `lastTimestamps`；`RECONNECT_REQUIRED` 设备重置 `lastTimestamps=-1` 并**丢弃恢复后首帧**（仅作基线、不计入样本）。删除 `notAcquiringTotal` 累计、`notAcquiringLastSample` 与 60s 判定。
 
 **Acceptance criteria:**
 - [ ] 采样中设备停采/掉线 → 进入等待，恢复后从新帧继续
-- [ ] 恢复后首个样本不含停采前旧帧（fresh/pending 已清）
+- [ ] `STOPPED` 恢复：首个样本不含停采前旧帧（fresh/pending 已清）
+- [ ] `RECONNECT_REQUIRED` 恢复：重连后时间戳归零/回绕也能正常出样本（基线重置 + 首帧丢弃）
+- [ ] helper 返回后 `stallDeadline` 被重置，不会立刻触发旧的 10s 超时
 - [ ] `acquisitionStallTimeout` 仍生效：`Acquiring` 但无新帧 10s 失败
 - [ ] 旧 `TestCollectAveragedSamplesContiguousNotAcquiringStillFails` 语义反转 → 改为断言"无限期等待"
 
@@ -183,11 +187,12 @@ else                                                    → Stopped
 
 ### Task 8: `RunCurrentPoint` 点位开始接入等待 + 删除 60s 常量
 
-**Description:** `RunCurrentPoint` 的点位开始采集态检查改为调用 `waitForAcquisitionResume`（不再立即 `failWithCode`）；`internal/usecase/traversal.go` 删除 `acquisitionNotAcquiringTimeout` 常量及其注释。
+**Description:** `RunCurrentPoint` 的点位开始采集态检查改为调用 `waitForAcquisitionResume`（不再立即 `failWithCode`）；进入等待前**先显式置 `StateMoving + PhaseWaitingForAcquisition`**（首点/后续点公开状态一致），设备恢复后置 `PhaseMoving` 继续，恢复前不下发运动命令；`internal/usecase/traversal.go` 删除 `acquisitionNotAcquiringTimeout` 常量及其注释。
 
 **Acceptance criteria:**
 - [ ] 点位开始设备停采/掉线 → 无限期等待，恢复后继续点位流程
-- [ ] 等待时 `CurrentPointIndex` 不推进
+- [ ] **首点与非首点进入等待时公开状态一致**（`state=moving` + `phase=waiting_acquisition`），不残留上一点 `StateSaving`
+- [ ] 等待时 `CurrentPointIndex` 不推进；设备恢复前不下发运动命令
 - [ ] 启动阶段（`ParseAndStartTraversal`/`StartManaged`）仍拒绝未采集设备（既有行为不变）
 
 **Verification:**
@@ -205,23 +210,28 @@ else                                                    → Stopped
 
 ## Phase 3: 前端贯通
 
-### Task 9: 前端类型与 API 透传（legacy + dual）
+### Task 9: 后端 HTTP 响应 + 前端类型与 API 透传（legacy + dual）
 
-**Description:** `shared/types/traversal.ts` 的 `TraversalTestStatus`/`TraversalProgressEvent` 新增等待字段与 `AcquisitionDeviceStatus` 类型；`api/traversalApi.ts` 的 `getStatus()`/`onProgress()` 透传；`stores/traversalStore.ts` 的 `applyProgressEvent()`/`syncRecoveredStatus()` 显式保留/合并等待字段；`stores/dualTraversalStore.ts`/`dualTraversalRuntime.ts`/`traversalPolling.ts` 同步贯通。
+**Description:** 先改后端 `internal/usecase/traversal_view.go` 的 `BuildStatusResponse()`：其为**手工构造 `map[string]any`**，`traversal.Status` 新增字段不会自动出现——需显式输出 `WaitingForAcquisition*` 到 legacy `/status` 与 dual probe `/status` 响应。再改前端：`shared/types/traversal.ts` 的 `TraversalTestStatus`/`TraversalProgressEvent` 新增等待字段与 `AcquisitionDeviceStatus` 类型；`api/traversalApi.ts` 的 `getStatus()`/`onProgress()` 透传；`stores/traversalStore.ts` 的 `applyProgressEvent()`/`syncRecoveredStatus()` 显式保留/合并等待字段；`stores/dualTraversalStore.ts`/`dualTraversalRuntime.ts`/`traversalPolling.ts` 同步贯通。
 
 **Acceptance criteria:**
+- [ ] `BuildStatusResponse()` 在 legacy `/status` 与 dual probe `/status` 显式输出等待字段
+- [ ] **API 合约测试**：直接断言 `/status` JSON 包含 `waitingForAcquisition`/`waitingDevices`/`waitingForAcquisitionSinceMs`（不只测 manager `Status()`）
 - [ ] `getStatus` 返回的等待字段能进入 `TraversalTestStatus`
 - [ ] `onProgress` 事件的等待字段在 `applyProgressEvent` 重建后不丢失
 - [ ] dual 路由（probe1/probe2）各自等待字段独立正确
 - [ ] 类型与后端 JSON 契约一致
 
 **Verification:**
+- [ ] `go test ./internal/usecase/ -run TraversalView`（含 API 合约断言）
 - [ ] `npm run typecheck`
 - [ ] `npm run test -- --run stores/traversalStore stores/dualTraversalStore`
 
 **Dependencies:** Task 3（后端字段）
 
 **Files likely touched:**
+- `services/api-go/internal/usecase/traversal_view.go`
+- `services/api-go/internal/usecase/traversal_view_test.go`
 - `apps/desktop-wails/frontend/src/shared/types/traversal.ts`
 - `apps/desktop-wails/frontend/src/api/traversalApi.ts`
 - `apps/desktop-wails/frontend/src/stores/traversalStore.ts`
@@ -266,14 +276,16 @@ else                                                    → Stopped
 - 三态映射全组合
 - `STOPPED` 长时间（>60s 模拟）不失败、恢复后继续
 - `RECONNECT_REQUIRED` 同样无限期等待、重连后恢复
-- 点位开始等待后继续（不再立即失败）
+- 点位开始等待后继续（不再立即失败）；**首点与非首点公开状态一致**
 - 多设备聚合主展示优先级
-- 等待中 Stop 即时退出、Pause 冻结/Resume 重新分类
-- `fresh/pending` 恢复后重建（首个样本不含旧帧）
-- `Status.WaitingForAcquisition*` 各阶段正确切换
+- 等待中 Stop 即时退出、Pause 保留字段/Resume 重新分类
+- `STOPPED` 恢复：`fresh/pending` 重建（首个样本不含旧帧）
+- **`RECONNECT_REQUIRED` 恢复：重连后时间戳归零/回绕仍能正常出样本**（基线重置 + 首帧丢弃）
+- **helper 返回后 `stallDeadline` 被重置**（不会触发旧 10s 超时）
+- `Status.WaitingForAcquisition*` 各阶段正确切换；**`WaitingDevices` 深复制无竞态**
 
 **Acceptance criteria:**
-- [ ] 上述每项至少一个断言测试
+- [ ] 上述每项至少一个断言测试（重连时间戳回绕用例：模拟重连后时间戳小于旧基线）
 - [ ] `-race` 无数据竞争
 
 **Verification:**
