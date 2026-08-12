@@ -40,6 +40,13 @@ type VersionInfo struct {
 	Version string `json:"version"`
 }
 
+// buildVersion 应用版本号，由构建期通过
+// `-X wind-daq/apps/desktop-wails/backend.buildVersion=<version>` 注入
+// （Taskfile build-go 从 VERSION 读取）；未注入时回退 "dev"。
+// 不再硬编码版本字符串——历史硬编码 "1.0.0" 导致顶栏版本号与发布版本脱节
+// （release-versioning 的 VERSION/package.json 已 bump，软件内却永远显示 v1.0.0）。
+var buildVersion = "dev"
+
 // GenericResponse 通用响应结构
 //
 // Data 字段用于需要返回数据的 binding（如 CalibrationPreviewSevenHole 返回点位预览结果）。
@@ -695,11 +702,11 @@ func (a *App) terminateMotionWindow() {
 	slog.Info("已关闭运动控制器独立窗口子进程", "component", "motion-window", "pid", pid)
 }
 
-// GetVersion 获取版本信息
+// GetVersion 获取版本信息（版本号来自构建期注入，见 buildVersion）
 func (a *App) GetVersion() VersionInfo {
 	return VersionInfo{
 		Name:    "Wind-DAQ",
-		Version: "1.0.0",
+		Version: buildVersion,
 	}
 }
 

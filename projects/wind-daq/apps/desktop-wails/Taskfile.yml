@@ -1,5 +1,12 @@
 version: '3'
 
+# 应用版本：构建时从 projects/wind-daq/VERSION 读取，注入后端 GetVersion 绑定
+#（-X 链接到 backend.buildVersion），保证软件内显示的版本号与发布版本一致
+#（历史硬编码 "1.0.0" 导致顶栏版本号永远不随版本 bump 更新）。
+vars:
+  APP_VERSION:
+    sh: powershell -NoProfile -Command "(Get-Content ../../VERSION | Select-Object -First 1).Trim()"
+
 tasks:
   default:
     summary: 一键构建并启动（生产模式，使用内嵌前端资源）
@@ -63,7 +70,7 @@ tasks:
     env:
       GOWORK: off
     cmds:
-      - go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o build/bin/wind-daq.exe .
+      - go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui -X wind-daq/apps/desktop-wails/backend.buildVersion={{.APP_VERSION}}" -o build/bin/wind-daq.exe .
       # 复制 DAQ-P-1603 DLL（优先 WindLabX，回退 ART），未找到不阻止构建。
       # 路径通过环境变量 WTNDAQ16H_DLL_PATHS 覆盖（分号分隔，按顺序尝试），
       # 默认值兼容现有开发环境。CI 可设 WTNDAQ16H_DLL_PATHS=D:\ci\libs\WTNDAQ16H_64.dll。
