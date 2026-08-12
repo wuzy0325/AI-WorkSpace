@@ -8,6 +8,8 @@
 #   1. 六边形架构 import 方向（validate-import-direction.ps1）
 #   2. Wails backend 方法与 frontend binding 一致性（check-wails-bindings.ps1 -Quiet）
 #      仅当 backend 方法缺失/多余时阻止提交；stale 时间戳警告不阻止。
+#   3. NSIS 脚本编码（check-nsi-encoding.ps1）：project.nsi 含非 ASCII 字节时
+#      必须有 BOM，否则 makensis 按系统代码页解析导致打包失败/乱码。
 #
 # 失败时阻止提交；修复违规后重试即可。
 # 规则依据见 CLAUDE.md 的 Hard Constraints 与 AGENTS.md 的 Pre-submit Checklist。
@@ -35,6 +37,21 @@ if [ $status -ne 0 ]; then
   echo "  请在对应项目的 apps/desktop-wails 目录运行："
   echo "    wails3 generate bindings -silent"
   echo "  详见 AGENTS.md Pre-submit Checklist 第 6/7 条。"
+  echo "============================================================"
+  exit 1
+fi
+
+# ---- 3. NSIS 脚本编码校验 ----
+# project.nsi 含中文时必须有 BOM（UTF-8/UTF-16），否则 makensis 按系统代码页
+# 解析，构建结果依赖打包机器（历史多次被编辑器静默改编码导致打包失败）。
+powershell -ExecutionPolicy Bypass -File ./scripts/check-nsi-encoding.ps1 -Quiet
+status=$?
+if [ $status -ne 0 ]; then
+  echo ""
+  echo "============================================================"
+  echo "  NSIS 脚本编码校验失败，提交已阻止。"
+  echo "  请将 project.nsi 转为 UTF-8 并补 BOM（EF BB BF）后重试。"
+  echo "  规则依据见 projects/wind-daq/AGENTS.md 的 NSIS Hard Rules。"
   echo "============================================================"
   exit 1
 fi

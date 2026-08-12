@@ -107,3 +107,4 @@ Use these docs by task type:
 - **永远不要**删除 `project.nsi`——如需恢复，用 `git checkout` 而非依赖 `wails3 generate build-assets`（该命令生成的 .nsi 中文乱码，不可用）。
 - 修改中文文本只能通过 Edit 工具进行（它保留原文件编码）。
 - NSIS 构建失败时不假设文件损坏，先检查是否是其他原因（如 DLL 缺失）。
+- **技术卡点**：`scripts/check-nsi-encoding.ps1` 已接入 pre-commit 钩子——任何 tracked `project.nsi` 含非 ASCII 字节却无 BOM 时阻止提交（makensis 对无 BOM 文件按系统代码页解析，UTF-8 无 BOM 直接报 "Bad text encoding"）。标准形态：**UTF-8 with BOM**。
