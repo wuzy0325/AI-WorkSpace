@@ -442,7 +442,12 @@ export const useTraversalStore = defineStore('traversal', () => {
       warning: previousStatus?.warning,
       // 保留后端写入的实际 CSV 路径：progress 事件不携带此字段，
       // 必须从 previousStatus 透传，避免轮询刷新后丢失真实文件名（撞名 -2/-3 后缀）
-      csvPath: previousStatus?.csvPath
+      csvPath: previousStatus?.csvPath,
+      // 等待设备恢复采集：progress 事件重建状态时必须透传，
+      // 否则等待横幅在进度事件刷新后消失（spec-traversal-acquisition-stop）
+      waitingForAcquisition: event.waitingForAcquisition ?? previousStatus?.waitingForAcquisition,
+      waitingDevices: event.waitingDevices ?? previousStatus?.waitingDevices,
+      waitingForAcquisitionSinceMs: event.waitingForAcquisitionSinceMs ?? previousStatus?.waitingForAcquisitionSinceMs
     }
 
     if (!previousStatus) {

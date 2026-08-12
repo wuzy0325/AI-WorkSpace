@@ -324,6 +324,11 @@ const zh: Record<string, string> = {
   travCsvPath: 'CSV',
   travValidationWarnings: '{count} 条验证警告',
   travReturnToOriginWarning: '回零未完成（数据已保存，请检查位移机构）',
+  // 等待设备恢复采集横幅（spec-traversal-acquisition-stop）
+  travWaitingAcquisition: '等待设备恢复采集',
+  travWaitingAcquisitionDevice: '等待设备 {name} 恢复采集',
+  travWaitingReconnect: '设备 {name} 已断开，请重新连接并启动采集',
+  travWaitingCount: '等 {count} 台设备',
   travLegendMoving: '移动',
   travLegendStable: '稳定',
   travLegendAcquiring: '采集',
@@ -2087,6 +2092,11 @@ const en: Record<string, string> = {
   travCsvPath: 'CSV',
   travValidationWarnings: '{count} validation warnings',
   travReturnToOriginWarning: 'Return-to-origin incomplete (data saved; check the positioner)',
+  // Waiting for device acquisition (spec-traversal-acquisition-stop)
+  travWaitingAcquisition: 'Waiting for device acquisition',
+  travWaitingAcquisitionDevice: 'Waiting for device {name} to resume acquisition',
+  travWaitingReconnect: 'Device {name} disconnected; reconnect and start acquisition',
+  travWaitingCount: '{count} device(s) waiting',
   travLegendMoving: 'Moving',
   travLegendStable: 'Stable',
   travLegendAcquiring: 'Acquiring',

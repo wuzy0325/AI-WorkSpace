@@ -1156,6 +1156,10 @@ func (m *TraversalManager) Status() traversal.Status {
 	defer m.mu.RUnlock()
 	status := m.status
 	status.Results = append([]traversal.PointResult(nil), m.status.Results...)
+	if len(status.WaitingDevices) > 0 {
+		// 深复制：等待循环持续写入 WaitingDevices，避免调用方读取与写入方 slice 竞态。
+		status.WaitingDevices = append([]traversal.AcquisitionDeviceStatus(nil), m.status.WaitingDevices...)
+	}
 	if status.CurrentPoint >= 0 && status.CurrentPoint < len(m.config.Path) {
 		point := m.config.Path[status.CurrentPoint]
 		status.CurrentPointCoordinates = &point

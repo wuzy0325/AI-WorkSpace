@@ -221,6 +221,10 @@ export const traversalApi = {
         currentPoint: status.currentPoint ?? { alpha: 0, beta: 0 },
         currentPointPhase: status.currentPointPhase,
         latestData: status.latestData,
+        // 等待设备恢复采集：进度事件重建状态时必须透传，否则 store 丢失等待信息。
+        waitingForAcquisition: status.waitingForAcquisition,
+        waitingDevices: status.waitingDevices,
+        waitingForAcquisitionSinceMs: status.waitingForAcquisitionSinceMs,
       }
     }, callback),
 
@@ -366,6 +370,9 @@ export const traversalProbeApi = {
           currentPoint: status.currentPoint ?? { alpha: 0, beta: 0 },
           currentPointPhase: status.currentPointPhase,
           latestData: status.latestData,
+          waitingForAcquisition: status.waitingForAcquisition,
+          waitingDevices: status.waitingDevices,
+          waitingForAcquisitionSinceMs: status.waitingForAcquisitionSinceMs,
         }
       },
       callback,

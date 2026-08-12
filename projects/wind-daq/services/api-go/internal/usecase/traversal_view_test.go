@@ -1156,3 +1156,31 @@ func TestCheckPreconditions_MotionPartialMatchKeepsStrictBinding(t *testing.T) {
 		t.Errorf("Motion message: expect contains 'sim-motion-1' (the unmatched binding), got %q", msg)
 	}
 }
+
+// TestBuildStatusResponseIncludesWaitingFields API 合约测试（spec §前后端数据链路）：
+// BuildStatusResponse 手工构造 map，traversal.Status 新增等待字段必须显式输出到
+// legacy /status 与 dual probe /status 响应，否则前端永远拿不到。
+func TestBuildStatusResponseIncludesWaitingFields(t *testing.T) {
+	manager := NewTraversalManager(nil, nil, nil, nil, nil)
+	manager.mu.Lock()
+	manager.status = traversal.Status{
+		TaskID:                       "t",
+		State:                        traversal.StateRunning,
+		WaitingForAcquisition:        true,
+		WaitingDevices:               []traversal.AcquisitionDeviceStatus{{Name: "dev-1", State: "stopped", SinceMs: 123}},
+		WaitingForAcquisitionSinceMs: 123,
+	}
+	manager.mu.Unlock()
+
+	resp := manager.BuildStatusResponse()
+	if resp["waitingForAcquisition"] != true {
+		t.Fatalf("waitingForAcquisition = %v, want true", resp["waitingForAcquisition"])
+	}
+	devices, ok := resp["waitingDevices"].([]traversal.AcquisitionDeviceStatus)
+	if !ok || len(devices) != 1 || devices[0].Name != "dev-1" || devices[0].State != "stopped" {
+		t.Fatalf("waitingDevices = %#v, want [{dev-1 stopped}]", resp["waitingDevices"])
+	}
+	if resp["waitingForAcquisitionSinceMs"] != int64(123) {
+		t.Fatalf("waitingForAcquisitionSinceMs = %v, want 123", resp["waitingForAcquisitionSinceMs"])
+	}
+}

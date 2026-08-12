@@ -29,6 +29,7 @@ import PointsPreview from '@components/traversal/PointsPreview.vue'
 
 import { useDualTraversalStore } from '@stores/dualTraversalStore'
 import { useI18nStore } from '@stores/i18nStore'
+import { safeInterpolate } from '@shared/i18nInterpolate'
 import { TRAVERSAL_PROBE_PRESENTATION } from '@shared/types/traversal'
 import type { ProbeId, TraversalSessionState } from '@shared/types/traversal'
 
@@ -121,6 +122,20 @@ const channelRows = computed<ChannelRow[]>(() => {
 // 点位预览数据：从 config 派生
 const layoutForPreview = computed(() => session.value.config?.layout ?? null)
 
+// 等待设备恢复采集文案（spec-traversal-acquisition-stop）：本 probe 独立显示。
+const waitingAcquisitionText = computed(() => {
+  const status = session.value.status
+  if (!status?.waitingForAcquisition) return ''
+  const devices = status.waitingDevices ?? []
+  if (devices.length === 0) return t.value.travWaitingAcquisition
+  const primary = devices[0]
+  const base = primary.state === 'reconnect_required'
+    ? safeInterpolate(t.value.travWaitingReconnect, '{name}', primary.name)
+    : safeInterpolate(t.value.travWaitingAcquisitionDevice, '{name}', primary.name)
+  if (devices.length <= 1) return base
+  return `${base}（${safeInterpolate(t.value.travWaitingCount, '{count}', String(devices.length))}）`
+})
+
 /** 转发紧凑监测区的 openSettings 事件 */
 function onOpenSettings(): void {
   emit('openSettings', props.probeId)
@@ -137,6 +152,16 @@ function onOpenSettings(): void {
     <div class="dual-row__header">
       <span class="dual-row__probe-label">{{ probeLabel }}</span>
       <span class="dual-row__probe-title">{{ probeTitleText }}</span>
+    </div>
+
+    <!-- 等待设备恢复采集横幅（spec-traversal-acquisition-stop）：本 probe 独立提示 -->
+    <div
+      v-if="waitingAcquisitionText"
+      role="alert"
+      class="dual-row__wait-banner"
+    >
+      <span aria-hidden="true">⏳</span>
+      <span>{{ waitingAcquisitionText }}</span>
     </div>
 
     <!-- 紧凑监测区：固定不滚动（spec FR7） -->
@@ -225,6 +250,21 @@ function onOpenSettings(): void {
 .dual-row__probe-title {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+/* 等待设备恢复采集横幅（spec-traversal-acquisition-stop） */
+.dual-row__wait-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: color-mix(in srgb, var(--accent-info, #2563eb) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-info, #2563eb) 30%, transparent);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--accent-info, #2563eb);
+  font-size: 12px;
+  font-weight: 600;
+  flex: 0 0 auto;
 }
 
 .dual-row__live-data {

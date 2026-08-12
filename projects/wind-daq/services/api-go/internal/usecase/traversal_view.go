@@ -257,6 +257,12 @@ func (m *TraversalManager) BuildStatusResponse() map[string]any {
 		// "故障发生在哪个控制器/轴/第几个点，目标 vs 实际" 等关键诊断信息。
 		// nil 时 JSON 序列化为 null，前端用 optional chaining 处理。
 		"motionSafetyFailure": status.MotionSafetyFailure,
+		// 等待设备恢复采集（spec-traversal-acquisition-stop）：BuildStatusResponse 手工
+		// 构造 map，traversal.Status 新增字段不会自动出现，需显式输出到 legacy /status
+		// 与 dual probe /status。
+		"waitingForAcquisition":        status.WaitingForAcquisition,
+		"waitingDevices":               status.WaitingDevices,
+		"waitingForAcquisitionSinceMs": status.WaitingForAcquisitionSinceMs,
 	}
 }
 
