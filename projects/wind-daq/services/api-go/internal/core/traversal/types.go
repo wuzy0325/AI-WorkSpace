@@ -562,10 +562,11 @@ const (
 // AcquisitionDeviceStatus 等待恢复期间单个异常设备的采集态（spec-traversal-acquisition-stop）。
 // State 取值 "stopped" | "reconnect_required"；列表仅包含非 ACQUIRING 的异常设备，
 // 全部恢复时列表清空（"等 N 台设备"的 N = len(WaitingDevices)）。
+// 不提供设备级 SinceMs：单台设备进入异常状态的时间戳需要跨 tick 状态表维护，
+// 而 UI 只需总等待时长（WaitingForAcquisitionSinceMs）——设备级时间戳无消费者。
 type AcquisitionDeviceStatus struct {
-	Name    string `json:"name"`
-	State   string `json:"state"`
-	SinceMs int64  `json:"sinceMs"`
+	Name  string `json:"name"`
+	State string `json:"state"`
 }
 
 // Status 遍历测试状态

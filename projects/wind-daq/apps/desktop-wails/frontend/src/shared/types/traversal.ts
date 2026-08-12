@@ -1168,11 +1168,11 @@ export interface TraversalTestStatus {
  * 等待恢复期间单个异常设备的采集态（spec-traversal-acquisition-stop）。
  * 列表仅包含非 ACQUIRING 设备；state 取值 "stopped" | "reconnect_required"；
  * "等 N 台设备"的 N = waitingDevices.length。
+ * 无设备级 sinceMs：UI 只需总等待时长（waitingForAcquisitionSinceMs）。
  */
 export interface AcquisitionDeviceStatus {
   name: string
   state: 'stopped' | 'reconnect_required'
-  sinceMs: number
 }
 
 export interface TraversalModuleResult {

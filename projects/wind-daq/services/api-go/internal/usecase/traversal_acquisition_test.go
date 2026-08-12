@@ -1222,3 +1222,151 @@ func TestCollectAveragedSamplesReconnectWaitsAndRebaselines(t *testing.T) {
 		t.Fatal("collectAveragedSamples did not complete after reconnect")
 	}
 }
+
+// TestCollectAveragedSamplesReconnectRequiredStoppedAcquiringStillRebaselines
+// 回归测试（code-review Critical-2）：
+// 设备经历 reconnect_required → stopped（重连但未启动采集）→ acquiring 的典型
+// 恢复路径时，等待 helper 必须保留"曾重连"信息并执行时间戳基线重建。
+// 修复前 helper 只返回恢复前最后一次分类（stopped），调用方因此跳过 rebase，
+// 重连后归零的新帧会继续用旧 lastTimestamps 比较并在 10s 后触发停滞超时。
+func TestCollectAveragedSamplesReconnectRequiredStoppedAcquiringStillRebaselines(t *testing.T) {
+	reader := &reconnectResetReader{}
+	controller := &resumableAcquisitionController{acquiring: true, connected: true}
+	manager := NewTraversalManager(reader, nil, nil, nil, nil)
+	manager.status = traversal.Status{TaskID: "trav-reconnect-stopped", State: traversal.StateRunning}
+	manager.SetAcquisitionController(controller)
+
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := manager.collectAveragedSamples("trav-reconnect-stopped",
+			[]deviceChannelGroup{{deviceID: "dev-1", keys: []int{0}, hwIndices: []int{0}}}, 50)
+		resultCh <- err
+	}()
+
+	// 设备先采集一阵（建立旧时间戳基线），再掉线。
+	time.Sleep(150 * time.Millisecond)
+	controller.SetConnected(false)
+	controller.SetAcquiring(false)
+
+	// 掉线（ReconnectRequired）无限期等待。
+	time.Sleep(300 * time.Millisecond)
+	select {
+	case err := <-resultCh:
+		t.Fatalf("reconnect_required must wait indefinitely, got error: %v", err)
+	default:
+	}
+
+	// 重连但尚未启动采集（Stopped）：等待继续，helper 不得把曾 ReconnectRequired 降级。
+	reader.setAfter(true)
+	controller.SetConnected(true)
+	time.Sleep(150 * time.Millisecond)
+	select {
+	case err := <-resultCh:
+		t.Fatalf("stopped (reconnected but not acquiring) must keep waiting, got error: %v", err)
+	default:
+	}
+
+	// 启动采集（Acquiring）→ 恢复；必须按"曾重连"重建时间戳基线（新帧时间戳归零）。
+	controller.SetAcquiring(true)
+
+	select {
+	case err := <-resultCh:
+		if err != nil {
+			t.Fatalf("sampling must complete after reconnect -> stopped -> acquiring (was-reconnect info lost), got error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("collectAveragedSamples did not complete after reconnect -> stopped -> acquiring")
+	}
+}
+
+// reconnectStaleCacheReader 模拟 hub 在设备断开时保留旧连接缓存帧（真实
+// AcquisitionHub 的 latest 在断开时不清除，GetLatestData 在重连后首帧到达前
+// 仍返回旧帧）：
+//   - after=false：返回旧连接帧（时间戳 1000+seq），GetLatestTimestamp 返回最新旧帧；
+//   - after=true：先返回 staleReads 次旧连接缓存帧（时间戳 = 进入 ReconnectRequired
+//     时捕获的 staleTimestamp，即断开前最后一帧），之后才返回时间戳归零的新帧。
+type reconnectStaleCacheReader struct {
+	mu         sync.Mutex
+	after      bool
+	seq        int64
+	staleReads int
+	staleTs    int64
+}
+
+func (r *reconnectStaleCacheReader) GetLatestData(deviceID string) (device.DataPayload, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.after {
+		r.seq++
+		r.staleTs = 1000 + r.seq
+		return device.DataPayload{DeviceID: deviceID, Timestamp: r.staleTs, Channels: []float64{100}, ChannelIndices: []int{0}}, true
+	}
+	if r.staleReads > 0 {
+		r.staleReads--
+		return device.DataPayload{DeviceID: deviceID, Timestamp: r.staleTs, Channels: []float64{100}, ChannelIndices: []int{0}}, true
+	}
+	r.seq++
+	return device.DataPayload{DeviceID: deviceID, Timestamp: r.seq, Channels: []float64{200}, ChannelIndices: []int{0}}, true
+}
+
+func (r *reconnectStaleCacheReader) GetLatestTimestamp(string) (int64, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.staleTs, r.staleTs > 0
+}
+
+func (r *reconnectStaleCacheReader) setAfter(v bool, staleReads int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.after = v
+	r.staleReads = staleReads
+}
+
+// TestCollectAveragedSamplesReconnectIgnoresStaleCacheFrame 回归测试（code-review
+// Critical-1）：重连后状态已恢复为 Acquiring、但 hub 连续返回若干次旧连接缓存帧
+// （时间戳与进入 ReconnectRequired 时捕获一致），之后才返回时间戳归零的新帧。
+// 修复前旧缓存帧会被当成"重连后首帧"建立基线，新帧（时间戳更小）全部被判为
+// "同一帧"跳过，10s 后错误触发停滞超时。修复后精确旧帧被忽略，第一个不同时间戳
+// 的新帧才成为新基线。
+func TestCollectAveragedSamplesReconnectIgnoresStaleCacheFrame(t *testing.T) {
+	reader := &reconnectStaleCacheReader{}
+	controller := &resumableAcquisitionController{acquiring: true, connected: true}
+	manager := NewTraversalManager(reader, nil, nil, nil, nil)
+	manager.status = traversal.Status{TaskID: "trav-stale-cache", State: traversal.StateRunning}
+	manager.SetAcquisitionController(controller)
+
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := manager.collectAveragedSamples("trav-stale-cache",
+			[]deviceChannelGroup{{deviceID: "dev-1", keys: []int{0}, hwIndices: []int{0}}}, 50)
+		resultCh <- err
+	}()
+
+	// 设备先采集一阵（建立旧时间戳基线），再掉线。
+	time.Sleep(150 * time.Millisecond)
+	controller.SetConnected(false)
+	controller.SetAcquiring(false)
+
+	// 掉线（ReconnectRequired）无限期等待。
+	time.Sleep(300 * time.Millisecond)
+	select {
+	case err := <-resultCh:
+		t.Fatalf("reconnect_required must wait indefinitely, got error: %v", err)
+	default:
+	}
+
+	// 重连并重启采集：hub 缓存仍返回旧连接最后一帧（时间戳与捕获一致）staleReads 次，
+	// 之后才返回时间戳归零的新帧——模拟"状态已恢复但新连接首帧未到"的窗口。
+	reader.setAfter(true, 5)
+	controller.SetConnected(true)
+	controller.SetAcquiring(true)
+
+	select {
+	case err := <-resultCh:
+		if err != nil {
+			t.Fatalf("sampling must complete even when hub returns stale cached frames after reconnect, got error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("collectAveragedSamples did not complete: stale cached frame timestamp locked new (reset) frames")
+	}
+}
