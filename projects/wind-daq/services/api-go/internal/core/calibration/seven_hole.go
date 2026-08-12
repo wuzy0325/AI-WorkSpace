@@ -511,9 +511,10 @@ func (a *SevenHoleAlgorithm) AcquireDataWithChannels(
 //
 // 蛇形顺序（spec Task 6）：外层 β/φ 循环，奇数行 α/θ 反向
 //
-// 扇区编号计算（spec §3.3 / §6.2）：
-//   - 外区点 Sector 由 φ 所在扇区决定：sector = (φ / 60°) 取整 + 1，范围 1..6
+// 扇区编号计算（spec §3.1 / §3.3 扇区居中约定）：
+//   - 外区点 Sector 由 φ 所在扇区决定：扇区 n 以 Pn 孔位方位角 (n-1)×60° 为中心、左右各跨 30°
 //   - φ=0°→Sector 1（P1 孔位），φ=60°→Sector 2（P2 孔位），...，φ=300°→Sector 6（P6 孔位）
+//   - 边界 φ=30°/90°/.../330° 归高编号扇区（如 φ=30°→Sector 2）
 //   - φ=360° 等价于 φ=0°，归入 Sector 1
 //
 // 浮点 round 到 1 位小数（spec Task 6）：
@@ -868,30 +869,33 @@ func generateSevenHoleDatasetOuterPoints(config SevenHoleConfig) ([]CalPoint, er
 	return points, nil
 }
 
-// computeSectorFromPhi 根据 φ 计算扇区编号（spec §3.3 / §6.2）
+// computeSectorFromPhi 根据 φ 计算扇区编号（spec §3.1 / §3.3 扇区居中约定）
 //
-// 扇区划分：每 60° 一个扇区，从 +Y 轴（φ=0°）起算
-//   - φ ∈ [0°, 60°)  → Sector 1 (P1 孔位)
-//   - φ ∈ [60°, 120°) → Sector 2 (P2 孔位)
-//   - φ ∈ [120°, 180°) → Sector 3 (P3 孔位)
-//   - φ ∈ [180°, 240°) → Sector 4 (P4 孔位)
-//   - φ ∈ [240°, 300°) → Sector 5 (P5 孔位)
-//   - φ ∈ [300°, 360°) → Sector 6 (P6 孔位)
-//   - φ = 360° 等价于 φ = 0°，归入 Sector 1
+// 扇区以 Pn 孔位方位角 (n-1)×60° 为中心、左右各跨 30°（与数据集模式
+// generateSevenHoleDatasetOuterPoints 的 sectorPhiStart 约定一致）：
+//   - φ ∈ [330°, 360°) ∪ [0°, 30°) → Sector 1 (P1 孔位，中心 0°)
+//   - φ ∈ [30°, 90°)   → Sector 2 (P2 孔位，中心 60°)
+//   - φ ∈ [90°, 150°)  → Sector 3 (P3 孔位，中心 120°)
+//   - φ ∈ [150°, 210°) → Sector 4 (P4 孔位，中心 180°)
+//   - φ ∈ [210°, 270°) → Sector 5 (P5 孔位，中心 240°)
+//   - φ ∈ [270°, 330°) → Sector 6 (P6 孔位，中心 300°)
 //
-// 注意：扇区边界点（如 φ=60°）的归属由 DetermineRegion 运行时按压力数据判定，
-// 此处点位生成的 Sector 字段仅用于初始标注，最终 Sector 以 DetermineRegion 结果为准。
+// 居中约定是外区系数公式（spec §4.2，公式 9-12）成立的前提：公式假设 Pn 是
+// 该点压力最大的外围孔，即来流方位在 Pn 孔位 ±30° 以内。若误用"φ/60° 地板取整"
+// 约定（扇区起点在孔位上而非居中），每个扇区的上半段（如 φ∈(30°,60°) 的点，
+// 物理上 P2 才是最大孔）会被标成 Sector 1，系数按错误的 n 计算，6 个外区全错。
+//
+// 扇区边界点（φ=30°/90°/.../330°）归高编号扇区（如 φ=30° → Sector 2）。
+// 完整模式每个 φ 只采集一次，边界归属只是标注约定；数据集模式边界点两个扇区
+// 各采一次（spec §6.2 扇区边界不共享），不受此约定影响。
 func computeSectorFromPhi(phiDeg float64) int {
 	// 归一化到 [0°, 360°)
 	normalized := math.Mod(phiDeg, 360.0)
 	if normalized < 0 {
 		normalized += 360.0
 	}
-	// φ=360° 归入 Sector 1（与 φ=0° 等价）
-	if normalized >= 360.0-1e-9 {
-		return 1
-	}
-	sector := int(normalized/sevenHoleDatasetSectorSpan) + 1
+	// 居中约定：整体偏移 +30° 再按 60° 等分，使扇区 n 以孔位方位 (n-1)×60° 为中心
+	sector := int(math.Mod(normalized+sevenHoleDatasetSectorSpan/2, 360.0)/sevenHoleDatasetSectorSpan) + 1
 	if sector < 1 {
 		sector = 1
 	}
@@ -907,4 +911,29 @@ func computeSectorFromPhi(phiDeg float64) int {
 // 公式：math.Round((value)*10) / 10
 func roundTo1Decimal(value float64) float64 {
 	return math.Round(value*10) / 10
+}
+
+// SevenHoleSectorBoundaryNeighbors 返回扇区边界 φ 的相邻两个扇区编号（几何判定）
+//
+// φ 恰好落在扇区边界（30°/90°/150°/210°/270°/330°）时，该点同时属于两个相邻扇区
+// （参考数据集每区 13 条 φ 网格线即由此而来：相邻两区文件都包含边界 φ 行）。
+// 返回 (lower, upper, true)：lower/upper 为边界两侧扇区（如 φ=30° → (1,2)，
+// φ=330° → (6,1)——跨 0° 边界时编号小的不一定是 lower 字面序）。
+// φ 不在边界时返回 (0, 0, false)。
+//
+// 判定用 φ±ε 各取一次所属扇区（ε 远小于最小合法步长 1°，spec §6.2），
+// 不依赖点位预设的 Sector 字段——数据集模式下 Sector 1 合法地同时包含
+// φ=330°（下边界，邻接 6 区）与 φ=30°（上边界，邻接 2 区），
+// 必须由 φ 几何位置判定邻接关系，不能由已分配扇区推算。
+func SevenHoleSectorBoundaryNeighbors(phi float64) (lower, upper int, ok bool) {
+	normalized := math.Mod(math.Mod(phi, 360.0)+360.0, 360.0)
+	// 点位坐标生成时已 round 到 0.1°（roundTo1Decimal），整 5° 网格的边界值是精确的，
+	// 1e-6 容差仅用于吸收浮点表示噪声
+	if math.Abs(math.Mod(normalized, 60.0)-30.0) > 1e-6 {
+		return 0, 0, false
+	}
+	const epsilon = 1e-4 // 远小于最小合法 φ 步长 1°（spec §6.2）
+	lower = computeSectorFromPhi(normalized - epsilon)
+	upper = computeSectorFromPhi(normalized + epsilon)
+	return lower, upper, true
 }

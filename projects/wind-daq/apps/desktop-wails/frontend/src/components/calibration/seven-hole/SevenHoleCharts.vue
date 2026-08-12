@@ -246,18 +246,52 @@ interface OuterPoint {
 }
 
 const outerPoints = computed<OuterPoint[]>(() => {
-  return outerDataPoints.value
+  const mapped = outerDataPoints.value
     .map((p) => {
       const theta = p.coordinates['θ']
       const phi = p.coordinates['φ']
       const { Ktheta, Kphi, K0Outer, KsOuter } = p.coefficients
       return { theta, phi, Ktheta, Kphi, K0Outer, KsOuter }
     })
-    .filter((p): p is OuterPoint =>
-      Number.isFinite(p.theta) && Number.isFinite(p.phi)
-      && Number.isFinite(p.Ktheta) && Number.isFinite(p.Kphi)
-      && Number.isFinite(p.K0Outer) && Number.isFinite(p.KsOuter)
-    )
+
+  // 扇区跨 0° 视图修正（仅 Sector 1 受影响）：
+  //
+  // 后端 GenerateSevenHolePoints 把 φ 归一化到 [0°, 360°)（seven_hole.go §3.1 扇区居中约定）。
+  // Sector 1 的 sectorPhiStart = -30°，归一化后 φ ∈ [330°, 355°] ∪ [0°, 30°]——跨 0°/360° 边界。
+  // 其他扇区（2~6）的 φ 全部落在 [30°, 330°] 内，不跨边界。
+  //
+  // 若直接按 φ 升序排序，Sector 1 的序列会变成 0°→30°→330°→355°，
+  // 曲线从 φ=30° 跳到 φ=330°，画出一条横跨整个图的长线段；
+  // 同时 Kφ 在扇区边界从 +2 跳到 -2（spec §4.3 边界符号反转），线段还穿过整个 Y 轴。
+  //
+  // 修复：检测扇区 φ 序列是否真正发生回绕（φ 极差 > 180°），
+  // 若是则把 φ>180° 的点偏移到 φ-360°（变成负值），让 φ 序列变成 [-30°, +30°] 连续递增。
+  //
+  // 判据必须是"极差 > 180°"而不是"同时存在 φ<180° 和 φ>180° 的点"：
+  // Sector 4 覆盖 φ∈[150°,210°]，跨的是 180° 而不是 0°/360°——
+  // 旧判据会把它误判为跨零，把 185°~210° 平移成 -175°~-150°，
+  // 排序后序列变成 [-175…-150, 150…180]，曲线在 -150→150 之间画出横贯全图的长线。
+  // 极差判据下：Sector 1（330°~355°∪0°~30°，极差 ≈355°）正确触发；
+  // Sector 4（极差 60°）不误触发。
+  //
+  // 此偏移仅影响图表视图层显示（X 轴刻度、连线顺序），不修改 store 中的原始数据；
+  // tooltip 反查 θ/φ 时也用偏移后的 phi，保持一致性。
+  let phiMin = Infinity
+  let phiMax = -Infinity
+  for (const p of mapped) {
+    if (p.phi < phiMin) phiMin = p.phi
+    if (p.phi > phiMax) phiMax = p.phi
+  }
+  const crossesZero = mapped.length > 0 && phiMax - phiMin > 180
+  const adjusted = crossesZero
+    ? mapped.map((p) => (p.phi > 180 ? { ...p, phi: p.phi - 360 } : p))
+    : mapped
+
+  return adjusted.filter((p): p is OuterPoint =>
+    Number.isFinite(p.theta) && Number.isFinite(p.phi)
+    && Number.isFinite(p.Ktheta) && Number.isFinite(p.Kphi)
+    && Number.isFinite(p.K0Outer) && Number.isFinite(p.KsOuter)
+  )
 })
 
 // 外区散点图数据：[Ktheta, Kphi, theta]，第三维（theta）用于 visualMap 着色

@@ -22,12 +22,16 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
 
 	"wind-daq/services/api-go/internal/core/calibration"
 	"wind-daq/services/api-go/internal/ports"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
 )
 
 // CalibrationCsvWriter 校准专用 CSV 写入器（字节 I/O 层）
@@ -47,6 +51,9 @@ type CalibrationCsvWriter struct {
 	schema   calibration.CsvSchema
 	header   []string
 	truncate bool // true 时以覆盖模式打开（用于按需全量导出）
+	// closer GBK 导出时的 transform.Writer（转码器），Flush 时在 file.Close 前
+	// 先 Close 它以冲刷缓冲的转码字节；非 GBK 场景为 nil
+	closer io.Closer
 	// schemaOverride true 时 Initialize 跳过 NewCsvSchema 重建，使用外部注入的 schema
 	// （七孔场景下 schema 由 NewSevenHoleCsvSchema 构建，含 region+sector 路由信息）
 	schemaOverride bool
@@ -102,6 +109,19 @@ func NewCalibrationCsvWriterWithSchema(schema calibration.CsvSchema, truncate bo
 // 文件打开模式为追加（非 truncate），与 NewCalibrationCsvWriter 默认行为一致——
 // 七孔场景下每个 region+sector 文件首次创建，追加模式安全。
 func (w *CalibrationCsvWriter) NewWriter(path string, schema calibration.CsvSchema) (ports.CalibrationCsvWriter, error) {
+	return newSevenHoleZoneWriter(path, schema, false)
+}
+
+// NewWriterTruncate 实现 ports.CalibrationWriterFactory 接口（覆盖模式）
+//
+// 与 NewWriter 的差异仅在文件打开模式：覆盖（截断已有文件）。
+// 用于 SaveCsv 七孔分区全量导出——重复导出到同一路径时不产生重复数据。
+func (w *CalibrationCsvWriter) NewWriterTruncate(path string, schema calibration.CsvSchema) (ports.CalibrationCsvWriter, error) {
+	return newSevenHoleZoneWriter(path, schema, true)
+}
+
+// newSevenHoleZoneWriter 按 path + schema + 打开模式创建独立 writer 实例
+func newSevenHoleZoneWriter(path string, schema calibration.CsvSchema, truncate bool) (ports.CalibrationCsvWriter, error) {
 	if path == "" {
 		return nil, fmt.Errorf("保存路径为空")
 	}
@@ -113,7 +133,7 @@ func (w *CalibrationCsvWriter) NewWriter(path string, schema calibration.CsvSche
 	// schemaOverride=true 确保 Initialize 不覆盖注入的 schema
 	writer := &CalibrationCsvWriter{
 		schema:         schema,
-		truncate:       false, // 七孔每个 region+sector 文件首次创建，追加模式安全
+		truncate:       truncate,
 		schemaOverride: true,
 	}
 	if err := writer.initializeWithPath(path); err != nil {
@@ -209,21 +229,50 @@ func (w *CalibrationCsvWriter) initializeFileLocked(path string) error {
 	}
 
 	w.file = file
-	w.writer = csv.NewWriter(file)
 
-	// 首行写 UTF-8 BOM，避免 Excel / 中文 Windows 端打开中文表头乱码
-	// （仅在新文件时写入；追加模式遇到已有文件不再重复写）
-	if isNewFile {
-		if _, err := file.Write(utf8BOM); err != nil {
-			return fmt.Errorf("写入 BOM 失败: %w", err)
+	// 编码选择 + BOM + 表头写入（抽 helper 控制函数长度）
+	if err := w.initializeEncodingAndHeader(file, isNewFile); err != nil {
+		// 初始化失败时关闭文件句柄，避免泄漏（Windows 下文件会一直锁定到 GC）
+		_ = file.Close()
+		w.file = nil
+		w.writer = nil
+		w.closer = nil
+		return err
+	}
+
+	return nil
+}
+
+// initializeEncodingAndHeader 选择编码、写 BOM（如需要）并写表头
+//
+// 编码选择：七孔参考数据集格式导出（schema.UseGBKEncoding）用 GBK 编码、
+// 不写 UTF-8 BOM——与基准数据集 W532.202608.P.7H.1-01 编码一致，
+// 七孔插值加载适配层（adapters/interpolation）按 GB18030 解码。
+// GBK 转码经 transform.Writer 完成：它跨 Write 调用缓冲不完整的多字节 rune，
+// 避免 bufio 刷新边界切开 UTF-8 多字节字符导致乱码。
+// 其余场景保持 UTF-8 BOM 现状（避免 Excel / 中文 Windows 端打开中文表头乱码；
+// 仅在新文件时写入，追加模式遇到已有文件不再重复写）。
+//
+// 表头写入（列布局来自 core 的 CsvSchema）：
+// 追加模式下文件已存在且非空时跳过表头：否则重复校准同名文件时，
+// 第二次 Start 会再写一行表头，Excel 打开时该表头被当成数据行，
+// 列对齐错乱（参见 calibration_csv_writer_test.go 的追加去重用例）。
+// 覆盖模式（truncate）或新文件仍需写表头。
+func (w *CalibrationCsvWriter) initializeEncodingAndHeader(file *os.File, isNewFile bool) error {
+	useGBK := w.schema.UseGBKEncoding()
+	if useGBK {
+		tw := transform.NewWriter(file, simplifiedchinese.GBK.NewEncoder())
+		w.closer = tw
+		w.writer = csv.NewWriter(tw)
+	} else {
+		w.writer = csv.NewWriter(file)
+		if isNewFile {
+			if _, err := file.Write(utf8BOM); err != nil {
+				return fmt.Errorf("写入 BOM 失败: %w", err)
+			}
 		}
 	}
 
-	// 写入表头（列布局来自 core 的 CsvSchema）
-	// 追加模式下文件已存在且非空时跳过表头：否则重复校准同名文件时，
-	// 第二次 Start 会再写一行表头，Excel 打开时该表头被当成数据行，
-	// 列对齐错乱（参见 calibration_csv_writer_test.go 的追加去重用例）。
-	// 覆盖模式（truncate）或新文件仍需写表头。
 	w.header = w.schema.BuildHeader()
 	if !w.truncate && !isNewFile {
 		// 追加模式 + 文件已存在且非空：跳过表头，仅记录 schema 供 AppendPoint 使用
@@ -233,8 +282,7 @@ func (w *CalibrationCsvWriter) initializeFileLocked(path string) error {
 		return fmt.Errorf("写入CSV表头失败: %w", err)
 	}
 	w.writer.Flush()
-
-	return nil
+	return w.writer.Error()
 }
 
 // AppendPoint 追加一个数据点到 CSV
@@ -281,8 +329,14 @@ func (w *CalibrationCsvWriter) Flush() error {
 		bufferedErr = w.writer.Error()
 	}
 	var closeErr error
+	// GBK 导出：先 Close transform.Writer 冲刷缓冲的转码字节，再关闭文件。
+	// transform.Writer.Close 只冲刷并关闭转码器，不关闭底层 file（x/text/transform 契约）。
+	if w.closer != nil {
+		closeErr = w.closer.Close()
+		w.closer = nil
+	}
 	if w.file != nil {
-		closeErr = w.file.Close()
+		closeErr = errors.Join(closeErr, w.file.Close())
 		w.file = nil
 		w.writer = nil
 	}

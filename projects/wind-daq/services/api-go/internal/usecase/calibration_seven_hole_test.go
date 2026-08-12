@@ -299,6 +299,11 @@ func (f *fakeSevenHoleWriterFactory) NewWriter(path string, schema calibration.C
 	return w, nil
 }
 
+func (f *fakeSevenHoleWriterFactory) NewWriterTruncate(path string, schema calibration.CsvSchema) (ports.CalibrationCsvWriter, error) {
+	// 与 NewWriter 行为一致（记录 writer 供断言）；打开模式语义由真实实现保证
+	return f.NewWriter(path, schema)
+}
+
 func (f *fakeSevenHoleWriterFactory) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -552,6 +557,11 @@ func (f *racingSevenHoleWriterFactory) NewWriter(path string, schema calibration
 	f.mgr.mu.Unlock()
 	// 返回 temp writer（将被 double-check 丢弃）
 	return f.tempWriter, nil
+}
+
+func (f *racingSevenHoleWriterFactory) NewWriterTruncate(path string, schema calibration.CsvSchema) (ports.CalibrationCsvWriter, error) {
+	// 竞态测试不经过覆盖模式路径，直接复用 NewWriter 行为满足接口
+	return f.NewWriter(path, schema)
 }
 
 // TestRouteSevenHoleWriter_DuplicateTempWriterFlushFailure_OnlyWarning 验证 double-check

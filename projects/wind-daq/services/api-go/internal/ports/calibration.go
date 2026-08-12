@@ -107,10 +107,13 @@ type CalibrationCsvWriter interface {
 // 与 CalibrationWriterFactory（供七孔多 writer 场景使用）。
 //
 // 调用契约：
-//   - NewWriter 创建并 Initialize 一个独立 writer（写表头 + BOM）
+//   - NewWriter 创建并 Initialize 一个独立 writer（写表头 + BOM），追加模式
+//   - NewWriterTruncate 同 NewWriter，但以覆盖模式打开（截断已有文件），
+//     适合 SaveCsv 这类"一次性导出全部结果"场景——重复导出到同一路径不产生重复数据
 //   - 调用方负责在适当时机（任务结束/Stop）调用返回 writer 的 Flush
 //   - path 必须是完整文件路径（含 .csv 扩展名），由调用方拼接 region/sector 后缀
 //   - schema 由调用方通过 core/calibration.NewSevenHoleCsvSchema 构建后注入
 type CalibrationWriterFactory interface {
 	NewWriter(path string, schema calibration.CsvSchema) (CalibrationCsvWriter, error)
+	NewWriterTruncate(path string, schema calibration.CsvSchema) (CalibrationCsvWriter, error)
 }
