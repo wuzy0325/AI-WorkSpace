@@ -6,7 +6,7 @@ info:
   productIdentifier: "com.wind-daq.app"
   description: "Wind-DAQ wind tunnel data acquisition desktop app"
   copyright: "(c) 2025, Wind-DAQ Team"
-  version: "0.14.0"
+  version: "0.14.1"
 
 dev_mode:
   root_path: .
