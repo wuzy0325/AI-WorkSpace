@@ -16,6 +16,7 @@
 - **暂停时等待横幅隐藏**：暂停 UI 取代等待横幅，不显示等待累计。
 - **等待横幅主导设备优先级**：多设备等待时优先展示 reconnect_required（掉线）设备。
 - 设备级 `SinceMs` 语义不满足且无消费者，从 `AcquisitionDeviceStatus` 移除；保留总等待时长 `WaitingForAcquisitionSinceMs`。
+- **顶栏版本号显示真实发布版本**：`GetVersion` 不再硬编码 `1.0.0`，改为构建期从 `VERSION` 经 ldflags `-X` 注入 `backend.buildVersion`（与 daq-p1604 的"版本号随发布同步"行为对齐）。
 
 ### Internal
 

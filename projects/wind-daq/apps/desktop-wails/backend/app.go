@@ -28,9 +28,18 @@ const (
 	ModeMotion = "motion"
 )
 
+// buildVersion 应用版本号，由构建期通过
+// `-X wind-daq/apps/desktop-wails/backend.buildVersion=<version>` 注入
+// （Taskfile build-go 从 VERSION 读取）；未注入时回退 "dev"。
+// 不再硬编码版本字符串——历史硬编码 "1.0.0" 导致顶栏版本号与发布版本脱节
+// （release-versioning 的 VERSION/package.json 已 bump，软件内却永远显示 v1.0.0）。
+var buildVersion = "dev"
+
 // GenericResponse 通用响应结构。
 // Win7 LTS 版本移除了 Wails 绑定方法，绝大多数 API 通过 HTTP 暴露；
 // 保留此类型仅用于 StorageStartRecording/ConfigSave 这两个仍由单元测试直接调用的方法。
+// Data 字段用于需要返回数据的调用（如 CalibrationPreviewSevenHole 返回点位预览结果）。
+// 简单的成功/失败响应（如 CalibrationStart/Pause/Stop）不填 Data，序列化时 omitempty 省略。
 type GenericResponse struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
@@ -434,15 +443,12 @@ func (a *App) terminateMotionWindow() {
 	slog.Info("已关闭运动控制器独立窗口子进程", "component", "motion-window", "pid", pid)
 }
 
-// ==================== api.AppHandler 接口实现 ====================
-// 这四个方法通过 HTTP /api/app/* 路由暴露给前端，替代原 Wails 绑定。
-
 // Version 实现 api.AppHandler.Version。
 // 返回应用版本信息（名称 + 版本号），供前端在关于对话框/标题栏显示。
 func (a *App) Version() api.AppVersionInfo {
 	return api.AppVersionInfo{
 		Name:    "Wind-DAQ",
-		Version: "1.0.0",
+		Version: buildVersion,
 	}
 }
 
