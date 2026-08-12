@@ -586,6 +586,18 @@ func (m *mockAcquisitionController) StartAcquisition(id string) error {
 	return m.startErr
 }
 
+// AcquisitionStatus 实现 ports.AcquisitionController。
+// 未连接 → ReconnectRequired；已连接且 acquiring → Acquiring；否则 → Stopped。
+func (m *mockAcquisitionController) AcquisitionStatus(id string) ports.AcquisitionStatus {
+	if !m.connected[id] {
+		return ports.AcquisitionStatus{State: ports.AcquisitionReconnectRequired, Name: m.names[id]}
+	}
+	if m.acquiring[id] {
+		return ports.AcquisitionStatus{State: ports.AcquisitionAcquiring, Name: m.names[id]}
+	}
+	return ports.AcquisitionStatus{State: ports.AcquisitionStopped, Name: m.names[id]}
+}
+
 // findCheck 在 CheckPreconditions 返回的 checks 数组中按 name 定位单项。
 func findCheck(checks []map[string]any, name string) map[string]any {
 	for _, c := range checks {

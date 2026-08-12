@@ -879,3 +879,73 @@ func TestDeviceManagerUpsertProfileRelocatesIndexAfterConcurrentDelete(t *testin
 		t.Fatalf("expected connected device B unit kPa, got %q", gotUnit)
 	}
 }
+// acquisitionStatusDevice 测试用 ports.Device，允许任意 Connection/Acquiring 组合，
+// 用于验证 AcquisitionStatus 三态映射（fakeDevice 的 Status() 会把两者耦合，无法覆盖边界组合）。
+type acquisitionStatusDevice struct {
+	id   string
+	conn device.Connection
+	acqu bool
+}
+
+func (d *acquisitionStatusDevice) ID() string                  { return d.id }
+func (d *acquisitionStatusDevice) Connect() error              { return nil }
+func (d *acquisitionStatusDevice) Disconnect() error           { return nil }
+func (d *acquisitionStatusDevice) StartAcquisition() error     { return nil }
+func (d *acquisitionStatusDevice) StopAcquisition() error      { return nil }
+func (d *acquisitionStatusDevice) SetDataSink(device.DataSink) {}
+func (d *acquisitionStatusDevice) Status() device.Status {
+	return device.Status{ID: d.id, Connection: d.conn, Acquiring: d.acqu}
+}
+
+// TestDeviceManager_AcquisitionStatus 三态映射全组合（spec §设备采集状态模型，Task 2 验收）。
+func TestDeviceManager_AcquisitionStatus(t *testing.T) {
+	mgr, err := newTestDeviceManager(&memoryProfileStore{}, nil, nil)
+	if err != nil {
+		t.Fatalf("newTestDeviceManager: %v", err)
+	}
+	// 白盒直接安装设备，避免依赖 Connect 的 I/O 路径；store 为空使 DeviceName fallback 为 id。
+	install := func(id string, conn device.Connection, acqu bool) {
+		mgr.mu.Lock()
+		mgr.devices[id] = &acquisitionStatusDevice{id: id, conn: conn, acqu: acqu}
+		mgr.mu.Unlock()
+	}
+
+	cases := []struct {
+		name    string
+		id      string
+		conn    device.Connection
+		acqu    bool
+		install bool
+		want    ports.AcquisitionState
+	}{
+		{"absent → ReconnectRequired", "absent", device.ConnectionConnected, false, false, ports.AcquisitionReconnectRequired},
+		{"ConnectionError → ReconnectRequired", "err", device.ConnectionError, false, true, ports.AcquisitionReconnectRequired},
+		{"ConnectionError && Acquiring → ReconnectRequired（Error 优先）", "err-acq", device.ConnectionError, true, true, ports.AcquisitionReconnectRequired},
+		{"Disconnected → ReconnectRequired", "disc", device.ConnectionDisconnected, false, true, ports.AcquisitionReconnectRequired},
+		{"Connected && !Acquiring → Stopped", "stopped", device.ConnectionConnected, false, true, ports.AcquisitionStopped},
+		{"Acquiring（conn=Acquiring）→ Acquiring", "acq", device.ConnectionAcquiring, true, true, ports.AcquisitionAcquiring},
+		{"Acquiring（conn=Connected）→ Acquiring", "acq2", device.ConnectionConnected, true, true, ports.AcquisitionAcquiring},
+		{"ConnectionAcquiring && !Acquiring → Stopped（异常组合）", "weird", device.ConnectionAcquiring, false, true, ports.AcquisitionStopped},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.install {
+				install(tc.id, tc.conn, tc.acqu)
+			}
+			got := mgr.AcquisitionStatus(tc.id)
+			if got.State != tc.want {
+				t.Fatalf("AcquisitionStatus(%q).State = %v, want %v", tc.id, got.State, tc.want)
+			}
+			if got.Name != tc.id {
+				t.Fatalf("AcquisitionStatus(%q).Name = %q, want fallback id %q", tc.id, got.Name, tc.id)
+			}
+		})
+	}
+
+	// LastError：仅 Error 且设备仍在 map 时有值。
+	install("err-last", device.ConnectionError, false)
+	if got := mgr.AcquisitionStatus("err-last"); got.LastError != "" {
+		t.Fatalf("LastError should be empty on fake device (no LastError field set), got %q", got.LastError)
+	}
+}

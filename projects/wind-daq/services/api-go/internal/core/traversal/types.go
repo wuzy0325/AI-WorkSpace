@@ -30,6 +30,10 @@ const (
 	PhaseStabilizing PointPhase = "stabilizing"
 	PhaseAcquiring   PointPhase = "acquiring"
 	PhaseSaving      PointPhase = "saving"
+	// PhaseWaitingForAcquisition 等待设备恢复采集（spec-traversal-acquisition-stop）。
+	// 设备主动停采或掉线时进入，无限期等待操作员恢复；横切于 moving/stabilizing/acquiring，
+	// State 保持原阶段，仅本 phase 与 Status.WaitingForAcquisition* 字段反映等待。
+	PhaseWaitingForAcquisition PointPhase = "waiting_acquisition"
 )
 
 // Point 遍历测试点坐标（4 轴：X/Y/Z/U，对应位移机构全轴能力）
@@ -555,6 +559,15 @@ const (
 	MotionInterruptTimeout
 )
 
+// AcquisitionDeviceStatus 等待恢复期间单个异常设备的采集态（spec-traversal-acquisition-stop）。
+// State 取值 "stopped" | "reconnect_required"；列表仅包含非 ACQUIRING 的异常设备，
+// 全部恢复时列表清空（"等 N 台设备"的 N = len(WaitingDevices)）。
+type AcquisitionDeviceStatus struct {
+	Name    string `json:"name"`
+	State   string `json:"state"`
+	SinceMs int64  `json:"sinceMs"`
+}
+
 // Status 遍历测试状态
 type Status struct {
 	TaskID                  string        `json:"taskId"`
@@ -586,6 +599,15 @@ type Status struct {
 	// 前端轮询拿到后用于在运行状态栏展示故障现场（控制器/轴/verdict/目标/实际/点号），
 	// 避免 lastError 字符串正则解析的不稳定。
 	MotionSafetyFailure *MotionSafetyFailure `json:"motionSafetyFailure,omitempty"`
+	// WaitingForAcquisition 遍历是否处于"等待设备恢复采集"状态（spec-traversal-acquisition-stop）。
+	// CurrentPointPhase == waiting_acquisition 时置 true，前端据此显示等待横幅。
+	WaitingForAcquisition bool `json:"waitingForAcquisition,omitempty"`
+	// WaitingDevices 等待期间的非 ACQUIRING 设备列表（仅 "stopped"/"reconnect_required"）。
+	// 设备恢复即移除；全部恢复时清空并退出等待。读取方必须深复制，避免与等待循环 slice 竞态。
+	WaitingDevices []AcquisitionDeviceStatus `json:"waitingDevices,omitempty"`
+	// WaitingForAcquisitionSinceMs 本次等待会话起始时间戳（epoch ms）。
+	// Pause 视为等待中断，Resume 后仍异常时重新计时。
+	WaitingForAcquisitionSinceMs int64 `json:"waitingForAcquisitionSinceMs,omitempty"`
 }
 
 const CheckpointVersion = 2

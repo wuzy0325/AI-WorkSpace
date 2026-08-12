@@ -86,10 +86,33 @@ type ProfileNormalizer interface {
 	Normalize(profile device.Profile) device.Profile
 }
 
+// AcquisitionState 遍历视角的设备采集态（spec-traversal-acquisition-stop）：
+//   - AcquisitionAcquiring：正在产帧，正常采样
+//   - AcquisitionStopped：操作员主动停采（可恢复，无限期等待重启采集）
+//   - AcquisitionReconnectRequired：掉线/未连接/已移除，需重连并启动采集
+type AcquisitionState uint8
+
+const (
+	AcquisitionAcquiring AcquisitionState = iota
+	AcquisitionStopped
+	AcquisitionReconnectRequired
+)
+
+// AcquisitionStatus 设备采集态快照。
+// State 来自单次 GetStatus（锁内一致性读取）；Name/LastError 为非关键展示元数据，
+// 允许与 State 存在跨调用的小幅滞后。
+type AcquisitionStatus struct {
+	State     AcquisitionState
+	Name      string // 设备显示名，诊断/错误文案用
+	LastError string // 仅 State==AcquisitionReconnectRequired 且设备仍在 map 时有值；已移除为空
+}
+
 // AcquisitionController 设备采集控制端口。
 //
 // 用于遍历测试校验"目标设备正在采集"这一前提：
 //   - IsConnected / IsAcquiring 供启动前检查与运行时采样校验真实反映设备状态；
+//   - AcquisitionStatus 返回三态一致性快照，供遍历区分"停采"（可恢复等待）与
+//     "掉线"（需重连）并展示针对性文案；
 //   - StartAcquisition 是 DeviceManager 已有能力，但遍历测试不会调用它，采集生命周期
 //     由操作员在设备管理中控制。
 //
@@ -101,4 +124,6 @@ type AcquisitionController interface {
 	IsAcquiring(id string) bool
 	StartAcquisition(id string) error
 	DeviceName(id string) string
+	// AcquisitionStatus 返回指定设备的采集态快照。
+	AcquisitionStatus(id string) AcquisitionStatus
 }
