@@ -379,45 +379,16 @@ func (c *WTNMC4AMotionController) Connect(ctx context.Context) error {
 	c.cleanupConnectionLocked()
 	c.lastFullStatusAt = time.Time{}
 
-	dllPath := wtnmc4aFindDLL()
-	dll, err := syscall.LoadDLL(dllPath)
+	dll, procs, err := loadWTNMC4AProcs()
 	if err != nil {
 		c.status.LastError = fmt.Sprintf("加载WTNMC4A DLL失败: %v", err)
-		return fmt.Errorf("加载WTNMC4A DLL %s 失败: %w", dllPath, err)
+		return err
 	}
 	c.dll = dll
-
-	c.procs = dllProcs{
-		devCreateA: dll.MustFindProc("WTNMC4A_DEV_CreateA"),
-		devRelease: dll.MustFindProc("WTNMC4A_DEV_Release"),
-		reset:      dll.MustFindProc("WTNMC4A_Reset"),
-		setSV:      dll.MustFindProc("WTNMC4A_SetSV"),
-		setV:       dll.MustFindProc("WTNMC4A_SetV"),
-		setA:       dll.MustFindProc("WTNMC4A_SetA"),
-		setDec:     dll.MustFindProc("WTNMC4A_SetDec"),
-		setP:       dll.MustFindProc("WTNMC4A_SetP"),
-		setLP:      dll.MustFindProc("WTNMC4A_SetLP"),
-		setEP:      dll.MustFindProc("WTNMC4A_SetEP"),
-		initLVDV:   dll.MustFindProc("WTNMC4A_InitLVDV"),
-		startLVDV:  dll.MustFindProc("WTNMC4A_StartLVDV"),
-		decStop:    dll.MustFindProc("WTNMC4A_DecStop"),
-		instStop:   dll.MustFindProc("WTNMC4A_InstStop"),
-		readLP:     dll.MustFindProc("WTNMC4A_ReadLP"),
-		readEP:     dll.MustFindProc("WTNMC4A_ReadEP"),
-		readCV:     dll.MustFindProc("WTNMC4A_ReadCV"),
-		readCA:     dll.MustFindProc("WTNMC4A_ReadCA"),
-		getRR0:     dll.MustFindProc("WTNMC4A_GetRR0Status"),
-		getRR1:     dll.MustFindProc("WTNMC4A_GetRR1Status"),
-		startHome:  dll.MustFindProc("WTNMC4A_StartAutoHomeSearch"),
-		clearLimit: dll.MustFindProc("WTNMC4A_ClearSoftwareLimit"),
-		setPDirLim: dll.MustFindProc("WTNMC4A_SetPDirSoftwareLimit"),
-		setMDirLim: dll.MustFindProc("WTNMC4A_SetMDirSoftwareLimit"),
-	}
+	c.procs = *procs
 
 	ipPtr, err := syscall.BytePtrFromString(c.profile.Address)
 	if err != nil {
-		c.dll.Release()
-		c.dll = nil
 		c.status.LastError = fmt.Sprintf("无效的IP地址: %v", err)
 		return fmt.Errorf("WTNMC4A IP地址无效 %q: %w", c.profile.Address, err)
 	}
@@ -482,10 +453,9 @@ func (c *WTNMC4AMotionController) Disconnect(ctx context.Context) error {
 		})
 		c.handle = 0
 	}
-	if c.dll != nil {
-		c.dll.Release()
-		c.dll = nil
-	}
+	// 注意：DLL 永不卸载（见 loadWTNMC4AProcs 注释）——ffiGate worker 可能仍在
+	// DLL 内部执行超时未返回的调用，FreeLibrary 会导致其返回时执行已卸载代码
+	// 而进程崩溃（0xc0000005）。
 	if c.ffi != nil {
 		c.ffi.Close()
 		c.ffi = nil
@@ -1339,10 +1309,7 @@ func (c *WTNMC4AMotionController) cleanupConnectionLocked() {
 		})
 		c.handle = 0
 	}
-	if c.dll != nil {
-		c.dll.Release()
-		c.dll = nil
-	}
+	// 不在此处卸载 DLL（见 loadWTNMC4AProcs 注释）。
 	c.status.Connected = false
 }
 
@@ -1671,6 +1638,84 @@ func wtnmc4aPulseToEngineering(axisCfg core.AxisConfig, pulse float64) float64 {
 		signedPulse = -signedPulse
 	}
 	return core.PulseToEngineering(axisCfg, signedPulse)
+}
+
+// wtnmc4aSharedDLL 是 WTNMC4A_64.dll 的进程级单例状态。
+//
+// 为什么 DLL 加载成功后永不卸载（FreeLibrary）：
+// ffiGate 的调用侧超时（ErrFFIHang）只保证调用方不被卡死，worker goroutine
+// 可能仍在 DLL 内部执行那个超时未返回的 FFI 调用（LSP 拦截 winsock 时
+// syscall 阻塞不可被 Go 抢占，也无法取消）。此时若 FreeLibrary 卸载 DLL，
+// worker 返回时将执行已卸载的代码，直接触发 Exception 0xc0000005 进程崩溃
+// （2026-08-13 冒烟实测：MC4 控制器不可达 → Connect 超时 → cleanup 释放 DLL
+// → worker 返回即崩，PC 落在 DLL 低地址区）。
+// 设备驱动 DLL 常驻内存无实际成本，因此加载一次后保留到进程退出。
+// 加载/解析失败时不缓存，下次 Connect 可重试（与改造前行为一致）；
+// 解析失败路径的 Release 是安全的：此时还没有任何 FFI 调用在飞。
+var wtnmc4aSharedDLL struct {
+	mu    sync.Mutex
+	dll   *syscall.DLL
+	procs *dllProcs
+}
+
+// loadWTNMC4AProcs 加载 WTNMC4A_64.dll 并解析全部导出函数。
+// 成功后进程级缓存、永不卸载（见 wtnmc4aSharedDLL 注释）；失败不缓存可重试。
+func loadWTNMC4AProcs() (*syscall.DLL, *dllProcs, error) {
+	wtnmc4aSharedDLL.mu.Lock()
+	defer wtnmc4aSharedDLL.mu.Unlock()
+	if wtnmc4aSharedDLL.dll != nil {
+		return wtnmc4aSharedDLL.dll, wtnmc4aSharedDLL.procs, nil
+	}
+	dllPath := wtnmc4aFindDLL()
+	dll, err := syscall.LoadDLL(dllPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("加载WTNMC4A DLL %s 失败: %w", dllPath, err)
+	}
+	procs, err := resolveWTNMC4AProcs(dll)
+	if err != nil {
+		_ = dll.Release()
+		return nil, nil, err
+	}
+	wtnmc4aSharedDLL.dll = dll
+	wtnmc4aSharedDLL.procs = &procs
+	return dll, wtnmc4aSharedDLL.procs, nil
+}
+
+// resolveWTNMC4AProcs 解析 DLL 全部导出函数。MustFindProc 在导出缺失时 panic，
+// 此处 recover 转为错误（DLL 版本不符），避免 once 缓存后失败语义含混。
+func resolveWTNMC4AProcs(dll *syscall.DLL) (p dllProcs, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("WTNMC4A DLL 导出函数缺失（版本不符）: %v", r)
+		}
+	}()
+	p = dllProcs{
+		devCreateA: dll.MustFindProc("WTNMC4A_DEV_CreateA"),
+		devRelease: dll.MustFindProc("WTNMC4A_DEV_Release"),
+		reset:      dll.MustFindProc("WTNMC4A_Reset"),
+		setSV:      dll.MustFindProc("WTNMC4A_SetSV"),
+		setV:       dll.MustFindProc("WTNMC4A_SetV"),
+		setA:       dll.MustFindProc("WTNMC4A_SetA"),
+		setDec:     dll.MustFindProc("WTNMC4A_SetDec"),
+		setP:       dll.MustFindProc("WTNMC4A_SetP"),
+		setLP:      dll.MustFindProc("WTNMC4A_SetLP"),
+		setEP:      dll.MustFindProc("WTNMC4A_SetEP"),
+		initLVDV:   dll.MustFindProc("WTNMC4A_InitLVDV"),
+		startLVDV:  dll.MustFindProc("WTNMC4A_StartLVDV"),
+		decStop:    dll.MustFindProc("WTNMC4A_DecStop"),
+		instStop:   dll.MustFindProc("WTNMC4A_InstStop"),
+		readLP:     dll.MustFindProc("WTNMC4A_ReadLP"),
+		readEP:     dll.MustFindProc("WTNMC4A_ReadEP"),
+		readCV:     dll.MustFindProc("WTNMC4A_ReadCV"),
+		readCA:     dll.MustFindProc("WTNMC4A_ReadCA"),
+		getRR0:     dll.MustFindProc("WTNMC4A_GetRR0Status"),
+		getRR1:     dll.MustFindProc("WTNMC4A_GetRR1Status"),
+		startHome:  dll.MustFindProc("WTNMC4A_StartAutoHomeSearch"),
+		clearLimit: dll.MustFindProc("WTNMC4A_ClearSoftwareLimit"),
+		setPDirLim: dll.MustFindProc("WTNMC4A_SetPDirSoftwareLimit"),
+		setMDirLim: dll.MustFindProc("WTNMC4A_SetMDirSoftwareLimit"),
+	}
+	return p, nil
 }
 
 // wtnmc4aFindDLL 查找 WTNMC4A_64.dll 的路径。
