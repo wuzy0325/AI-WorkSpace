@@ -147,6 +147,11 @@ Section
     Call IsWebView2Installed
     ${If} $R0 == "0"
         !insertmacro wails.webview2runtime
+        ; Re-check: warn the user if download/silent install could not complete (e.g. offline).
+        Call IsWebView2Installed
+        ${If} $R0 == "0"
+            MessageBox MB_ICONEXCLAMATION "WebView2 Runtime is missing and automatic download/install could not complete (possibly no network). This application requires WebView2 Runtime to run. Please install it (e.g. copy the offline installer from another PC) and restart the application."
+        ${EndIf}
     ${Else}
         DetailPrint "WebView2 Runtime already installed, skipping download"
     ${EndIf}

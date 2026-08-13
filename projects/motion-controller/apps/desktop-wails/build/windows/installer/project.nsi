@@ -82,7 +82,16 @@ FunctionEnd
 Section
     !insertmacro wails.setShellContext
 
-    !insertmacro wails.webview2runtime
+    ; Skip WebView2 runtime download/install if already present (avoids hang on offline machines)
+    ReadRegStr $0 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+    ${If} $0 == ""
+        !insertmacro wails.webview2runtime
+        ; Re-check: warn the user if download/silent install could not complete (e.g. offline).
+        ReadRegStr $0 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+        ${If} $0 == ""
+            MessageBox MB_ICONEXCLAMATION "WebView2 Runtime is missing and automatic download/install could not complete (possibly no network). This application requires WebView2 Runtime to run. Please install it (e.g. copy the offline installer from another PC) and restart the application."
+        ${EndIf}
+    ${EndIf}
 
     SetOutPath $INSTDIR
 
