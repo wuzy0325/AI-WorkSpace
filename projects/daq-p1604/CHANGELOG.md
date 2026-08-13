@@ -14,6 +14,7 @@
 
 ### Internal
 - `ChannelGrid` 移除本地 `COLORS` 常量改用统一 `channelColor()`，删除 `DaqP1604Config` 未使用的 `DEFAULT_COLOR`，保证通道卡片与波形线取自同一色板。
+- 安装器（`project.nsi`）新增 WebView2 Runtime 检测：已装则跳过下载；未装且自动安装未完成（如无网络）时弹窗提醒用户先安装 WebView2 Runtime。
 - `AppShell` 将 `add-device` 事件从 `MainTopBar` 迁移到 `DeviceSidebar`；`DeviceSidebar` 移除 `filteredSorted` / `searchQuery` 搜索过滤逻辑与 `sidebar__search` 组件及其样式；`MainTopBar` 移除 `add-device` / `zero-calibration` 事件。
 - 修复旧版默认色迁移类型错误：`LEGACY_CHANNEL_COLORS` 改为多代色板数组（`string[][]`）后，`loadProfiles` 改用 `.some()` 对各代色板逐一比对对应索引默认色，修复 vue-tsc 报 "types 'string' and 'string[]' have no overlap"。
 - i18n 移除 `sidebar.searchDevices` / `sidebar.noSearchMatch` / `sidebar.clearSearch` / `common.clear` 词条；`zeroCalibration` / `zeroing` / `connectBeforeZero` 从 `topbar` 迁到 `monitor`（中英双语）。
