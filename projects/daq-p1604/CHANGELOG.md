@@ -8,11 +8,12 @@
 ### Changed
 - "添加设备"入口从顶栏移到侧栏头部（+ 图标），与扫描按钮并列。
 - "校零"按钮从顶栏移到监控页设备操作栏，仅设备处于已连接/采集中时可用（`shell:zeroCalibration` / `shell:zeroing` 经 AppShell provide 注入 MonitorView）。
-- 18 通道默认波形配色统一：剔除易与告警/异常混淆的琥珀/橙黄色，改用高区分度冷色系；CH17 大气压力 / CH18 大气温度用中性灰。`RealtimeChart` 改走 `channelColor()`，与通道卡片共用同一色板。
+- 18 通道默认波形配色统一：剔除易与告警/异常混淆的琥珀/橙黄色，改用高区分度冷色系；CH17 大气压力 / CH18 大气温度用中性灰。`RealtimeChart` 与 `ChannelGrid` 均改走 `channelColor()`，与通道卡片共用同一色板。
 - 旧版默认色迁移：`loadProfiles` 将颜色等于某代旧色板对应索引默认色的通道置空（视为未自定义），由渲染器回退到新色板；用户自定义颜色不受影响。
 - 移除设备列表侧栏的"搜索设备"过滤框，列表直接展示全部已配置设备（保留"添加设备"与"扫描设备"入口）。
 
 ### Internal
+- `ChannelGrid` 移除本地 `COLORS` 常量改用统一 `channelColor()`，删除 `DaqP1604Config` 未使用的 `DEFAULT_COLOR`，保证通道卡片与波形线取自同一色板。
 - `AppShell` 将 `add-device` 事件从 `MainTopBar` 迁移到 `DeviceSidebar`；`DeviceSidebar` 移除 `filteredSorted` / `searchQuery` 搜索过滤逻辑与 `sidebar__search` 组件及其样式；`MainTopBar` 移除 `add-device` / `zero-calibration` 事件。
 - 修复旧版默认色迁移类型错误：`LEGACY_CHANNEL_COLORS` 改为多代色板数组（`string[][]`）后，`loadProfiles` 改用 `.some()` 对各代色板逐一比对对应索引默认色，修复 vue-tsc 报 "types 'string' and 'string[]' have no overlap"。
 - i18n 移除 `sidebar.searchDevices` / `sidebar.noSearchMatch` / `sidebar.clearSearch` / `common.clear` 词条；`zeroCalibration` / `zeroing` / `connectBeforeZero` 从 `topbar` 迁到 `monitor`（中英双语）。

@@ -48,9 +48,6 @@ const channelEnabled = ref<boolean[]>(Array(18).fill(true))
 const channelColors = ref<string[]>(Array(18).fill(''))
 const channelPrecisions = ref<number[]>(Array(18).fill(3)) // 每通道独立精度
 
-// 默认颜色，用于未设置颜色时的回退值
-const DEFAULT_COLOR = '#3b82f6'
-
 const hasChanges = ref(false)
 const saveStatus = ref<'idle' | 'saving' | 'success' | 'error'>('idle')
 const saveMessage = ref('')
