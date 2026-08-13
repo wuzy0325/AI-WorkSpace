@@ -4,11 +4,12 @@ import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
 import {
   Activity, Trash2, Network, Loader2,
-  CircleDot, Zap, AlertTriangle, ChevronRight, Search
+  CircleDot, Zap, AlertTriangle, ChevronRight, Search, Plus
 } from '@lucide/vue'
 
 const emit = defineEmits<{
   (e: 'scan'): void
+  (e: 'add-device'): void
 }>()
 
 const deviceStore = useDeviceStore()
@@ -75,12 +76,19 @@ function statusLabel(status: string, acquiring: boolean): string {
       <div class="sidebar__header-actions">
         <span class="sidebar__count" data-testid="sidebar-count">{{ sorted.length }}</span>
         <button
-          class="sidebar__scan-btn"
+          class="sidebar__icon-btn"
+          :title="i18n.t('sidebar.addDevice')"
+          @click="emit('add-device')"
+        >
+          <Plus class="sidebar__icon-btn-svg" />
+        </button>
+        <button
+          class="sidebar__icon-btn"
           :title="i18n.t('sidebar.scanDevices')"
           :disabled="deviceStore.isScanning"
           @click="emit('scan')"
         >
-          <Search class="sidebar__scan-icon" />
+          <Search class="sidebar__icon-btn-svg" />
         </button>
       </div>
     </div>
@@ -336,7 +344,8 @@ function statusLabel(status: string, acquiring: boolean): string {
   gap: 0.35rem;
 }
 
-.sidebar__scan-btn {
+/* 头部小图标按钮：添加/扫描，与顶栏 icon-btn 风格一致但尺寸更小 */
+.sidebar__icon-btn {
   width: 26px;
   height: 26px;
   display: flex;
@@ -348,20 +357,21 @@ function statusLabel(status: string, acquiring: boolean): string {
   color: var(--text-muted);
   cursor: pointer;
   transition: all var(--motion-fast) var(--easing-standard);
+  flex-shrink: 0;
 }
 
-.sidebar__scan-btn:hover:not(:disabled) {
+.sidebar__icon-btn:hover:not(:disabled) {
   color: var(--accent);
   border-color: var(--accent-border);
   background: var(--accent-soft);
 }
 
-.sidebar__scan-btn:disabled {
+.sidebar__icon-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-.sidebar__scan-icon {
+.sidebar__icon-btn-svg {
   width: 14px;
   height: 14px;
 }

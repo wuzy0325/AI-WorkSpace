@@ -90,6 +90,7 @@ const zh = {
   // ---- 设备侧栏 ----
   'sidebar.deviceList': '设备列表',
   'sidebar.scanDevices': '扫描设备',
+  'sidebar.addDevice': '添加设备',
   'sidebar.noDevices': '暂无设备',
   'sidebar.addHint': '点击顶栏 + 添加 P1604',
   'sidebar.unnamed': '未命名',
@@ -317,6 +318,7 @@ const en = {
   // ---- sidebar ----
   'sidebar.deviceList': 'Devices',
   'sidebar.scanDevices': 'Scan Devices',
+  'sidebar.addDevice': 'Add Device',
   'sidebar.noDevices': 'No devices',
   'sidebar.addHint': 'Click + in the top bar to add a P1604',
   'sidebar.unnamed': 'Unnamed',

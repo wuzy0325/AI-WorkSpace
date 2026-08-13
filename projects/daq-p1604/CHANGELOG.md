@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.7.5] - 2026-08-13
+
+### Added
+- 新增 `src/utils/channelColors.ts`：18 通道统一默认调色板 + `channelColor()` 颜色解析（自定义颜色优先，否则按通道物理索引回退默认色板，保证同一通道在任何通道组合下颜色恒定）。
+
+### Changed
+- "添加设备"入口从顶栏移到侧栏头部（+ 图标），与扫描按钮并列。
+- "校零"按钮从顶栏移到监控页设备操作栏，仅设备处于已连接/采集中时可用（`shell:zeroCalibration` / `shell:zeroing` 经 AppShell provide 注入 MonitorView）。
+- 18 通道默认波形配色统一：剔除易与告警/异常混淆的琥珀/橙黄色，改用高区分度冷色系；CH17 大气压力 / CH18 大气温度用中性灰。`RealtimeChart` 改走 `channelColor()`，与通道卡片共用同一色板。
+- 旧版默认色迁移：`loadProfiles` 将颜色等于某代旧色板对应索引默认色的通道置空（视为未自定义），由渲染器回退到新色板；用户自定义颜色不受影响。
+- 移除设备列表侧栏的"搜索设备"过滤框，列表直接展示全部已配置设备（保留"添加设备"与"扫描设备"入口）。
+
+### Internal
+- `AppShell` 将 `add-device` 事件从 `MainTopBar` 迁移到 `DeviceSidebar`；`DeviceSidebar` 移除 `filteredSorted` / `searchQuery` 搜索过滤逻辑与 `sidebar__search` 组件及其样式；`MainTopBar` 移除 `add-device` / `zero-calibration` 事件。
+- 修复旧版默认色迁移类型错误：`LEGACY_CHANNEL_COLORS` 改为多代色板数组（`string[][]`）后，`loadProfiles` 改用 `.some()` 对各代色板逐一比对对应索引默认色，修复 vue-tsc 报 "types 'string' and 'string[]' have no overlap"。
+- i18n 移除 `sidebar.searchDevices` / `sidebar.noSearchMatch` / `sidebar.clearSearch` / `common.clear` 词条；`zeroCalibration` / `zeroing` / `connectBeforeZero` 从 `topbar` 迁到 `monitor`（中英双语）。
+- 同步 6 个版本号文件到 0.7.5：`VERSION` / `wails.json` / `frontend/package.json` / `frontend/package-lock.json`（含 `packages[""]`）/ `build/windows/installer/project.nsi` / `build/config.yml`。
+
+### Verification
+- `npm run typecheck`: passed.
+- `npm run test` (vitest): passed.
+- `npm run build`: passed.
+- `$env:GOWORK="off"; go test ./... -count=1 -timeout 120s`: passed.
+- `task release`: passed.
+- `makensis '-DARG_WAILS_AMD64_BINARY=..\..\bin\daq-p1604.exe' project.nsi`（在 `build/windows/installer/` 目录下执行）: passed.
+
+### Known Issues
+- 现场故障电脑（SetReadDeadline 失效）的 discovery 与 Stop 路径 watchdog 兜底需实测验证（继承自 0.7.3）。
+
 ## [0.7.4] - 2026-08-04
 
 ### Fixed

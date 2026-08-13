@@ -6,7 +6,6 @@ import { useLogStore } from '@stores/logStore'
 import { useI18nStore } from '@stores/i18nStore'
 import {
   computeExistingKeys,
-  computeExistingNames,
   hostKey,
   planScannedAdditions,
   type ScannedDeviceInput,
@@ -14,6 +13,7 @@ import {
   type SkippedScanEntry,
   type AddScannedResult,
 } from './deviceStoreHelpers'
+import { LEGACY_CHANNEL_COLORS } from '../utils/channelColors'
 
 const MAX_HISTORY_HARD_CAP = 4000
 const ACQUISITION_ACTION_TIMEOUT_MS = 8000
@@ -36,21 +36,15 @@ const SNAPSHOT_POLL_INTERVAL_MS = 100
 /** 定时器周期下限（约 60Hz），保护 WebView2 GUI 线程 */
 const MIN_TIMER_INTERVAL_MS = 16
 
-// 18 通道默认颜色
-const CHANNEL_COLORS = [
-  '#3b82f6', '#10b981', '#f59e0b', '#a855f7',
-  '#f43f5e', '#06b6d4', '#f97316', '#6366f1',
-  '#84cc16', '#14b8a6', '#d946ef', '#0ea5e9',
-  '#eab308', '#22c55e', '#ef4444', '#8b5cf6',
-  '#64748b', '#78716c',
-]
-
 /**
  * 默认通道配置。
  *
  * name 留空：让 UI 通过 i18n 占位符显示本地化的默认名称
  * （如"通道 1" / "Channel 1"、"大气压力" / "Atmospheric Pressure"），
  * 避免在持久化数据中固化某一种语言。用户手动输入的名称仍按原样保存。
+ *
+ * color 留空：默认波形颜色由渲染层 channelColor() 按通道索引回退到统一色板，
+ * 调色板只维护一份（src/utils/channelColors.ts），不在此固化。
  */
 function defaultChannels() {
   return Array.from({ length: 18 }, (_, i) => ({
@@ -58,7 +52,7 @@ function defaultChannels() {
     name: '',
     enabled: true,
     unit: i < 16 ? 'psi' : (i === 16 ? 'Pa' : '°C'),
-    color: CHANNEL_COLORS[i % CHANNEL_COLORS.length],
+    color: '',
     precision: i < 16 ? 3 : (i === 16 ? 0 : 2),
     rangeMin: 0,
     rangeMax: i < 16 ? 200 : (i === 16 ? 200000 : 100),
@@ -349,9 +343,20 @@ export const useDeviceStore = defineStore('device', () => {
   async function loadProfiles(): Promise<void> {
     const list = await bridge.getProfiles()
     if (Array.isArray(list)) {
-      profiles.value = list
+      // 旧版默认色迁移：颜色等于旧色板中对应索引默认色的通道视为未自定义，
+      // 置空后由渲染层 channelColor() 回退到统一默认色板，
+      // 让已有设备也能用上可区分的默认配色（用户自定义颜色不受影响）
+      profiles.value = list.map((p) => ({
+        ...p,
+        channels: p.channels.map((ch) => {
+          const isLegacy = LEGACY_CHANNEL_COLORS.some(
+            (palette) => ch.color === palette[ch.index % palette.length],
+          )
+          return isLegacy ? { ...ch, color: '' } : ch
+        }),
+      }))
       // 加载配置后默认全选所有已启用通道
-      for (const p of list) {
+      for (const p of profiles.value) {
         if (!chartSelections.value[p.id] || chartSelections.value[p.id]!.size === 0) {
           initChartSelections(p.id, p.channels)
         }
@@ -558,26 +563,18 @@ export const useDeviceStore = defineStore('device', () => {
   }
 
   async function addProfile(name: string, address: string, port: number, localAddress = ''): Promise<void> {
-    // 防御性 trim：不依赖调用方是否已去空白，保证重名校验与落库名一致
-    const trimmedName = name.trim()
     // CONN-002 重复添加防御：仅 IP+端口完全相同视为重复（同 IP 不同端口允许添加）。
     // 与扫描弹窗 planScannedAdditions 共用 hostKey 规则，保证手动添加与扫描批量添加
-    // 的地址去重语义一致。
+    // 的去重语义一致。
     const dupKey = hostKey(address, port)
     if (computeExistingKeys(profiles.value).has(dupKey)) {
       throw new Error(i18n.t('error.duplicateDevice'))
-    }
-    // 单条添加路径的名字唯一性：设备名是用户可读的唯一标识，与现有设备重名时阻止添加。
-    // 注意：扫描批量添加走 dedupeName 自动追加 "(2)"（批量场景静默改名更友好），
-    // 与这里的"阻止并提示"是有意的差异，不是同一语义。
-    if (computeExistingNames(profiles.value).has(trimmedName)) {
-      throw new Error(i18n.t('error.duplicateName'))
     }
 
     const id = `p1604_${Date.now()}`
     const profile: PressureProfile = {
       id,
-      name: trimmedName,
+      name,
       address,
       localAddress,
       port,
