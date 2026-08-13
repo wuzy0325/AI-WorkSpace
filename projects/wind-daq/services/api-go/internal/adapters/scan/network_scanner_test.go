@@ -959,3 +959,24 @@ func TestNetworkScanner_MockListenPacket_TimeoutReturnsEmpty(t *testing.T) {
 		t.Errorf("expected empty results on timeout, got %d", len(results))
 	}
 }
+
+// TestScanNeverDetectsDaqT1602 DAQ-T-1602 是标准 Modbus TCP（端口 502）设备，
+// 不响应 T1603 私有广播发现协议；扫描器不得把任何响应误识别为 DAQ-T-1602
+// （spec-daq-t1602 §触点枚举：T1602 仅支持手动添加，不做自动发现）。
+func TestScanNeverDetectsDaqT1602(t *testing.T) {
+	payloads := [][]byte{
+		// CSV 发现响应，model 为 T1602
+		[]byte("192.168.3.201, AA-BB-CC-DD-EE-22, 0, T1602, v1.0, 1, 1, 502"),
+		// JSON 发现响应，model 为 T1602
+		[]byte(`{"ip":"192.168.3.201","port":502,"model":"T1602","mac":"AA-BB-CC-DD-EE-22"}`),
+		// Modbus TCP 帧（MBAP + FC4 请求），不应被识别为任何已知设备
+		{0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01, 0x04, 0x00, 0x00, 0x00, 0x08},
+		// 短前缀
+		[]byte("DAQT1602"),
+	}
+	for _, payload := range payloads {
+		if result := deviceDispatcher(payload, "192.168.3.201:502"); result != nil && result.Type == device.DeviceDaqT1602 {
+			t.Fatalf("dispatcher misidentified payload %q as DAQ-T-1602: %+v", payload, result)
+		}
+	}
+}

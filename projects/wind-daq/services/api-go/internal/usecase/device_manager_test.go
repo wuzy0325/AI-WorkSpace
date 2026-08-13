@@ -464,6 +464,68 @@ func TestDeviceManagerDaqT1603ConfigPersistsProfileConfig(t *testing.T) {
 	}
 }
 
+func TestDeviceManagerDaqT1602ConfigPersistsProfileConfig(t *testing.T) {
+	profile := newTestProfile("temp-t1602", device.DeviceDaqT1602)
+	store := &memoryProfileStore{profiles: []device.Profile{profile}}
+	manager, err := newTestDeviceManager(store, simulatedFactory{}, nil)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+
+	var config device.DaqT1602HardwareConfig
+	for i := range config.TypeCodes {
+		config.TypeCodes[i] = 2 // T 型
+	}
+	config.TypeCodes[0] = 1 // K 型
+	if err := manager.ApplyDaqT1602Config("temp-t1602", config); err != nil {
+		t.Fatalf("ApplyDaqT1602Config returned error: %v", err)
+	}
+
+	got, err := manager.GetDaqT1602Config("temp-t1602")
+	if err != nil {
+		t.Fatalf("GetDaqT1602Config returned error: %v", err)
+	}
+	if got != config {
+		t.Fatalf("expected config %+v, got %+v", config, got)
+	}
+	if store.profiles[0].DaqT1602Config != config {
+		t.Fatalf("expected persisted config %+v, got %+v", config, store.profiles[0].DaqT1602Config)
+	}
+}
+
+func TestDeviceManagerApplyDaqT1602ConfigRejectsInvalidTypeCode(t *testing.T) {
+	profile := newTestProfile("temp-t1602", device.DeviceDaqT1602)
+	store := &memoryProfileStore{profiles: []device.Profile{profile}}
+	manager, err := newTestDeviceManager(store, simulatedFactory{}, nil)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+
+	var config device.DaqT1602HardwareConfig
+	config.TypeCodes[7] = 8 // 超出 0-7 合法范围
+	if err := manager.ApplyDaqT1602Config("temp-t1602", config); err == nil {
+		t.Fatal("expected validation error for out-of-range typeCode")
+	}
+	if store.profiles[0].DaqT1602Config != (device.DaqT1602HardwareConfig{}) {
+		t.Fatalf("expected profile config untouched on validation failure, got %+v", store.profiles[0].DaqT1602Config)
+	}
+}
+
+func TestDeviceManagerDaqT1602ConfigNotFound(t *testing.T) {
+	store := &memoryProfileStore{}
+	manager, err := newTestDeviceManager(store, simulatedFactory{}, nil)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+
+	if _, err := manager.GetDaqT1602Config("missing"); err == nil {
+		t.Fatal("expected error for missing profile")
+	}
+	if err := manager.ApplyDaqT1602Config("missing", device.DaqT1602HardwareConfig{}); err == nil {
+		t.Fatal("expected error for missing profile")
+	}
+}
+
 func TestDeviceManagerAcquisitionFeedsAcquisitionHub(t *testing.T) {
 	store := &memoryProfileStore{profiles: []device.Profile{
 		newTestProfile("sim-1", device.DeviceSimulated),

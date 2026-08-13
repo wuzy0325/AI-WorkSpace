@@ -72,6 +72,7 @@ type (
 	DeviceScanResult       = device.ScanResult
 	DeviceChannelConfig    = device.ChannelConfig
 	DaqT1603HardwareConfig = device.DaqT1603HardwareConfig
+	DaqT1602HardwareConfig = device.DaqT1602HardwareConfig
 	DSA3217ScanConfig      = device.DSA3217ScanConfig
 )
 
@@ -81,6 +82,7 @@ const (
 	DeviceTypeDAQP1604    = device.DeviceDAQP1604
 	DeviceTypeDAQP1604Pre = device.DeviceDAQP1604Pre
 	DeviceTypeDaqT1603    = device.DeviceDaqT1603
+	DeviceTypeDaqT1602    = device.DeviceDaqT1602
 	DeviceTypeWTNPXI      = device.DeviceWTNPXI
 	DeviceTypeDSA3217     = device.DeviceDSA3217
 )

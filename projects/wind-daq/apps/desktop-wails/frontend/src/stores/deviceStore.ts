@@ -557,7 +557,7 @@ export const useDeviceStore = defineStore('devices', () => {
    *
    * 识别策略基于通道名称（而非索引），以兼容不同设备类型：
    *   - SIMULATED / DAQ-P-1604：通道 16=大气压、17=大气温度
-   *   - DAQ-T-1603 / DAQ-P-1604Pre / DSA3217：无此类通道
+   *   - DAQ-T-1603 / DAQ-T-1602 / DAQ-P-1604Pre / DSA3217：无此类通道
    *   - WTN_PXI：通道布局完全不同
    * 命名守卫与 migrateAtmPressureUnit 保持一致，同时支持中英文。
    */

@@ -959,6 +959,9 @@ const zh: Record<string, string> = {
   dev_t1603_triggerEdgeFalling: '下降沿',
   dev_t1603_triggerEdgeToggle: '跳变',
 
+  // DAQ-T-1602 专属配置字段（dev_t1602_）
+  dev_t1602_sectionTitle: 'DAQ-T-1602 热电偶类型',
+
   // DAQ-P-1603 专属配置字段（dev_p1603_）
   dev_p1603_samplingRate: '采样率 (Hz)',
   dev_p1603_samplingRateRangeHint: '范围 {min} ~ {max} Hz',
@@ -2719,6 +2722,9 @@ const en: Record<string, string> = {
   dev_t1603_triggerEdgeRising: 'Rising',
   dev_t1603_triggerEdgeFalling: 'Falling',
   dev_t1603_triggerEdgeToggle: 'Toggle',
+
+  // DAQ-T-1602 specific config fields (dev_t1602_)
+  dev_t1602_sectionTitle: 'DAQ-T-1602 Thermocouple Types',
 
   // DAQ-P-1603 specific config fields (dev_p1603_)
   dev_p1603_samplingRate: 'Sampling Rate (Hz)',

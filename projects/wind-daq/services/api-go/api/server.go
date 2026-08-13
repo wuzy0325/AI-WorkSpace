@@ -980,6 +980,24 @@ func handleDeviceByID(w http.ResponseWriter, r *http.Request, deps Deps) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	case r.Method == http.MethodGet && action == "daqT1602Config":
+		config, err := deps.DeviceManager.GetDaqT1602Config(id)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, config)
+	case r.Method == http.MethodPut && action == "daqT1602Config":
+		var config device.DaqT1602HardwareConfig
+		if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := deps.DeviceManager.ApplyDaqT1602Config(id, config); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 	case r.Method == http.MethodGet && action == "dsa3217ScanConfig":
 		config, err := deps.DeviceManager.GetDsa3217ScanConfig(id)
 		if err != nil {
