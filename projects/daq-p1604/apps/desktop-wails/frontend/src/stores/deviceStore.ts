@@ -349,8 +349,10 @@ export const useDeviceStore = defineStore('device', () => {
       profiles.value = list.map((p) => ({
         ...p,
         channels: p.channels.map((ch) => {
-          const legacy = LEGACY_CHANNEL_COLORS[ch.index % LEGACY_CHANNEL_COLORS.length]
-          return ch.color === legacy ? { ...ch, color: '' } : ch
+          const isLegacy = LEGACY_CHANNEL_COLORS.some(
+            (palette) => ch.color === palette[ch.index % palette.length],
+          )
+          return isLegacy ? { ...ch, color: '' } : ch
         }),
       }))
       // 加载配置后默认全选所有已启用通道
