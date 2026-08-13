@@ -21,6 +21,13 @@ type DaqT1603Configurable interface {
 	ApplyDaqT1603Config(config device.DaqT1603HardwareConfig) error
 }
 
+// DaqT1602Configurable DAQ-T-1602 热电偶类型配置接口。
+// 与 DaqT1603Configurable 完全隔离（独立类型，禁止复用），见 spec-daq-t1602。
+type DaqT1602Configurable interface {
+	GetDaqT1602Config() (device.DaqT1602HardwareConfig, error)
+	ApplyDaqT1602Config(config device.DaqT1602HardwareConfig) error
+}
+
 // DAQP1603Configurable DAQ-P-1603 运行时配置接口。
 // 与 DaqT1603Configurable 不同：1603 的配置直接以完整 profile 形式提交，
 // 因为采样率、通道传感器类型、单位、精度都需要在已连接时同步到 DLL

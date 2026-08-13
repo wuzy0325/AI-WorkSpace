@@ -13,6 +13,9 @@ const (
 	// 与 DAQ-P-1604 并列存在：1604 为压力专用、1603 每通道可接入压力或温度传感器，
 	// 因此在 ChannelConfig 上扩展 SensorType 字段以区分通道用途。
 	DeviceDAQP1603 Type = "DAQ-P-1603"
+	// DeviceDaqT1602 DAQ-T-1602 温度扫描阀：Modbus TCP（端口 502），
+	// 机内 2 张独立采集卡（Unit ID 1/2），每卡 8 通道，合并对外 16 通道。
+	DeviceDaqT1602 Type = "DAQ-T-1602"
 )
 
 // ChannelSensorType 通道传感器类型枚举。
@@ -74,6 +77,7 @@ type Profile struct {
 	SamplingRate   int                    `json:"samplingRate"`
 	Channels       []ChannelConfig        `json:"channels"`
 	DaqT1603Config DaqT1603HardwareConfig `json:"daqT1603Config,omitempty"`
+	DaqT1602Config DaqT1602HardwareConfig `json:"daqT1602Config,omitempty"`
 }
 
 type DaqT1603HardwareConfig struct {
@@ -88,6 +92,16 @@ type DaqT1603HardwareConfig struct {
 	ShowTimestamp     bool   `json:"showTimestamp"`
 	ShowSequence      bool   `json:"showSequence"`
 	OpenCircuitCheck  string `json:"openCircuitCheck"` // hex mask
+}
+
+// DaqT1602HardwareConfig DAQ-T-1602 硬件配置镜像。
+// T1602 固件固定 ~100ms 采集周期，无采样率/通道掩码/触发概念（spec Q5），
+// 唯一可配置项是 16 通道热电偶类型。
+type DaqT1602HardwareConfig struct {
+	// TypeCodes 16 通道热电偶类型码（0=J 1=K 2=T 3=E 4=R 5=S 6=B 7=N，
+	// 见 spec-daq-t1602 §Type Code 枚举）；索引 0~7 为卡1（Unit ID 1，
+	// Holding 200~207），索引 8~15 为卡2（Unit ID 2，Holding 200~207）。
+	TypeCodes [16]uint8 `json:"typeCodes"`
 }
 
 type Status struct {

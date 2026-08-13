@@ -44,6 +44,14 @@ func NewDefaultProfile(id string, deviceType device.Type) device.Profile {
 			BinaryFormat:      false,
 			AverageCount:      1,
 		}
+	case device.DeviceDaqT1602:
+		// DAQ-T-1602：Modbus TCP 温度扫描阀，默认 IP/端口来自 spec-daq-t1602 真机实测。
+		// 固件固定 ~100ms 采集周期，无采样率配置；默认 16 通道全 T 型（type code 2，
+		// 与设备出厂现值一致）。
+		profile.Address = "192.168.3.201"
+		profile.Port = 502
+		profile.Channels = defaultDaqT1602Channels()
+		profile.DaqT1602Config = defaultDaqT1602Config()
 	case device.DeviceDAQP1604Pre:
 		// 实测 DAQ-P-1604Pre 默认 IP/Port（与 Cursor DAQ 一致）
 		profile.Address = "192.168.3.232"
@@ -89,7 +97,7 @@ func NormalizeProfile(profile device.Profile) device.Profile {
 		}
 	}
 
-	needsDefaultProfile := len(profile.Channels) == 0 || profile.Type == device.DeviceDaqT1603
+	needsDefaultProfile := len(profile.Channels) == 0 || profile.Type == device.DeviceDaqT1603 || profile.Type == device.DeviceDaqT1602
 	var defaultProfile device.Profile
 	if needsDefaultProfile {
 		defaultProfile = NewDefaultProfile(profile.ID, profile.Type)
@@ -115,6 +123,9 @@ func NormalizeProfile(profile device.Profile) device.Profile {
 	}
 	if profile.Type == device.DeviceDaqT1603 {
 		profile.DaqT1603Config = normalizeDaqT1603Config(profile.DaqT1603Config, defaultProfile.DaqT1603Config)
+	}
+	if profile.Type == device.DeviceDaqT1602 {
+		profile.DaqT1602Config = normalizeDaqT1602Config(profile.DaqT1602Config, defaultProfile.DaqT1602Config)
 	}
 	// DAQ-P-1604Pre 兼容升级：旧 profile 仅 16 通道压力，不包含气象通道。
 	// 此处补齐 Atm (Index=16) 与 AtmTemp (Index=17)，保留用户对前 16 通道的自定义。
@@ -172,6 +183,33 @@ func normalizeDaqT1603Config(config device.DaqT1603HardwareConfig, defaults devi
 	return config
 }
 
+// normalizeDaqT1602Config 回填缺失的 T1602 配置默认值。
+// TypeCodes 是定长数组无空值语义，约定"全零"视为未设置（16 通道全 J 型的合法
+// 配置与零值无法区分，实践中不会出现；且 Connect 后驱动会从设备读回实际类型
+// 经 OnConfigSynced 覆盖本地值）。
+func normalizeDaqT1602Config(config device.DaqT1602HardwareConfig, defaults device.DaqT1602HardwareConfig) device.DaqT1602HardwareConfig {
+	allZero := true
+	for _, code := range config.TypeCodes {
+		if code != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		return defaults
+	}
+	return config
+}
+
+// defaultDaqT1602Config 默认 16 通道全为 T 型热电偶（type code 2，与设备出厂现值一致）。
+func defaultDaqT1602Config() device.DaqT1602HardwareConfig {
+	var cfg device.DaqT1602HardwareConfig
+	for i := range cfg.TypeCodes {
+		cfg.TypeCodes[i] = 2
+	}
+	return cfg
+}
+
 func defaultSimulatedChannels() []device.ChannelConfig {
 	channels := make([]device.ChannelConfig, 18)
 	for i := 0; i < 16; i++ {
@@ -197,6 +235,22 @@ func defaultSimulatedChannels() []device.ChannelConfig {
 }
 
 func defaultDaqT1603Channels() []device.ChannelConfig {
+	channels := make([]device.ChannelConfig, 16)
+	for i := range channels {
+		channels[i] = device.ChannelConfig{
+			Index:     i,
+			Name:      fmt.Sprintf("TC%d", i+1),
+			Enabled:   true,
+			Unit:      "degC",
+			Precision: 2,
+		}
+	}
+	return channels
+}
+
+// defaultDaqT1602Channels 生成 DAQ-T-1602 的 16 通道默认配置（TC1..TC16，degC）。
+// 索引 0~7 为卡1（Unit ID 1），索引 8~15 为卡2（Unit ID 2）。
+func defaultDaqT1602Channels() []device.ChannelConfig {
 	channels := make([]device.ChannelConfig, 16)
 	for i := range channels {
 		channels[i] = device.ChannelConfig{

@@ -7,6 +7,7 @@ import { deviceApi } from '@api/deviceApi'
 import type { DeviceProfile, DeviceType, ScanResult, ChannelConfig, ChannelSensorType } from '@api/types'
 import UiSelect from '@components/ui/UiSelect.vue'
 import DaqT1603Config from '@components/device/DaqT1603Config.vue'
+import DaqT1602Config from '@components/device/DaqT1602Config.vue'
 import DaqP1603Config from '@components/device/DaqP1603Config.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiInput from '@components/ui/UiInput.vue'
@@ -104,6 +105,7 @@ const deviceTypeOptions = computed(() => [
   { value: 'DAQ-P-1603', label: 'DAQ-P-1603' },
   { value: 'DAQ-P-1604Pre', label: 'DAQ-P-1604Pre' },
   { value: 'DAQ-T-1603', label: 'DAQ-T-1603' },
+  { value: 'DAQ-T-1602', label: 'DAQ-T-1602' },
   { value: 'WTN_PXI', label: 'WTN_PXI' },
   { value: 'DSA3217', label: 'DSA3217' },
 ])
@@ -119,12 +121,12 @@ const pressureUnitOptions = computed(() =>
 
 function isTcpType(t: DeviceType): boolean {
   // DAQ-P-1603 走 DLL FFI 路径，DLL 内部封装 TCP，对外仍属 TCP 类型
-  return t === 'DAQ-P-1604' || t === 'DAQ-P-1603' || t === 'DAQ-P-1604Pre' || t === 'DAQ-T-1603' || t === 'WTN_PXI' || t === 'DSA3217'
+  return t === 'DAQ-P-1604' || t === 'DAQ-P-1603' || t === 'DAQ-P-1604Pre' || t === 'DAQ-T-1603' || t === 'DAQ-T-1602' || t === 'WTN_PXI' || t === 'DSA3217'
 }
 
 function supportsTransportSwitch(t: DeviceType): boolean {
-  // DAQ-P-1603 由 DLL 管理通信，不支持切串口
-  return t !== 'WTN_PXI' && t !== 'DAQ-P-1604' && t !== 'DAQ-P-1603' && t !== 'DAQ-P-1604Pre' && t !== 'DSA3217'
+  // DAQ-P-1603 由 DLL 管理通信，不支持切串口；DAQ-T-1602 仅支持 Modbus TCP
+  return t !== 'WTN_PXI' && t !== 'DAQ-P-1604' && t !== 'DAQ-P-1603' && t !== 'DAQ-P-1604Pre' && t !== 'DAQ-T-1602' && t !== 'DSA3217'
 }
 
 function isPortRequired(t: DeviceType): boolean {
@@ -134,7 +136,7 @@ function isPortRequired(t: DeviceType): boolean {
 }
 
 function isTempUnitFixed(t: DeviceType): boolean {
-  return t === 'DAQ-T-1603'
+  return t === 'DAQ-T-1603' || t === 'DAQ-T-1602'
 }
 
 function isWtnPxiType(t: DeviceType): boolean {
@@ -246,6 +248,11 @@ function createDefaultChannels(type: DeviceType): ChannelConfig[] {
       return Array.from({ length: 16 }, (_, i) => ({
         index: i, name: `TC${i + 1}`, enabled: true, unit: 'degC', precision: 2, thermocoupleType: 'K',
       }))
+    case 'DAQ-T-1602':
+      // 热电偶类型由 daqT1602Config.typeCodes 承载（type code 0~7），通道表不存 thermocoupleType
+      return Array.from({ length: 16 }, (_, i) => ({
+        index: i, name: `TC${i + 1}`, enabled: true, unit: 'degC', precision: 2,
+      }))
     case 'SIMULATED':
       return [
         ...Array.from({ length: 16 }, (_, i) => ({
@@ -306,6 +313,11 @@ function createBlankProfile(type: DeviceType): DeviceProfile {
     address = '192.168.1.100'
     port = 5000
   }
+  if (type === 'DAQ-T-1602') {
+    // Modbus TCP：默认 IP/端口与真机实测一致（spec §Protocol）
+    address = '192.168.3.201'
+    port = 502
+  }
   if (type === 'DSA3217') {
     address = '192.168.1.254'
     port = 5000
@@ -325,6 +337,10 @@ function createBlankProfile(type: DeviceType): DeviceProfile {
     autoConnect: true, channels,
     daqT1603Config: type === 'DAQ-T-1603'
       ? { thermocoupleTypes: 'KKKKKKKKKKKKKKKK', channelMask: 'FFFF', samplingRate: 10, binaryFormat: false, averageCount: 4, triggerMode: 0, triggerEdge: 0, triggerCount: 0, showTimestamp: false, showSequence: false, openCircuitCheck: '0000' }
+      : undefined,
+    // DAQ-T-1602 默认 16 通道全 T 型（type code 2），与真机出厂现值一致
+    daqT1602Config: type === 'DAQ-T-1602'
+      ? { typeCodes: Array(16).fill(2) }
       : undefined,
     // DAQ-P-1604 默认开启硬件时间戳（更精确），与 daq-p1604 项目对齐；用户可在"基本信息"中关闭回退到系统时间。
     daqP1604UseDeviceTimestamp: type === 'DAQ-P-1604' ? true : undefined,
@@ -462,6 +478,10 @@ function openEdit(p: DeviceProfile) {
       draft.value.channels[i].thermocoupleType = stored[i] || 'K'
     }
   }
+  // DAQ-T-1602：兼容缺省配置的旧 profile，补默认（16 通道全 T 型）
+  if (draft.value.type === 'DAQ-T-1602' && !draft.value.daqT1602Config) {
+    draft.value.daqT1602Config = { typeCodes: Array(16).fill(2) }
+  }
   // DSA3217：恢复上次保存的 AVG/PERIOD（未连接时初始化为默认）
   dsa3217Avg.value = 32
   dsa3217Period.value = 500
@@ -504,6 +524,10 @@ async function onTypeChanged(next: DeviceType) {
     draft.value.daqT1603Config = { thermocoupleTypes: 'KKKKKKKKKKKKKKKK', channelMask: 'FFFF', samplingRate: 10, binaryFormat: false, averageCount: 4, triggerMode: 0, triggerEdge: 0, triggerCount: 0, showTimestamp: false, showSequence: false, openCircuitCheck: '0000' }
     draft.value.address = '192.168.3.101'
     draft.value.port = 9000
+  } else if (next === 'DAQ-T-1602') {
+    draft.value.daqT1602Config = { typeCodes: Array(16).fill(2) }
+    draft.value.address = '192.168.3.201'
+    draft.value.port = 502
   } else if (next === 'DAQ-P-1604' || next === 'WTN_PXI') {
     draft.value.address = '192.168.3.101'
     draft.value.port = 9000
@@ -1423,6 +1447,14 @@ const scanError = ref<string | null>(null)
                     </tbody>
                   </table>
                 </div>
+              </div>
+
+              <!-- DAQ-T-1602 专用配置：仅 16 通道热电偶类型，展示逻辑在面板组件内 -->
+              <div v-else-if="draft.type === 'DAQ-T-1602' && draft.daqT1602Config" class="editor-channels-special">
+                <DaqT1602Config
+                  v-model:type-codes="draft.daqT1602Config.typeCodes"
+                  :disabled="isReadOnly"
+                />
               </div>
 
               <!-- DAQ-P-1603 专用配置：16 通道传感器类型/单位/量程独立配置 -->

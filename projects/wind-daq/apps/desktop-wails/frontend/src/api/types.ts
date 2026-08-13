@@ -1,4 +1,4 @@
-export type DeviceType = 'SIMULATED' | 'DAQ-P-1604' | 'DAQ-P-1603' | 'DAQ-T-1603' | 'DAQ-P-1604Pre' | 'WTN_PXI' | 'DSA3217'
+export type DeviceType = 'SIMULATED' | 'DAQ-P-1604' | 'DAQ-P-1603' | 'DAQ-T-1603' | 'DAQ-T-1602' | 'DAQ-P-1604Pre' | 'WTN_PXI' | 'DSA3217'
 
 /**
  * 通道传感器类型（仅 DAQ-P-1603 使用）。
@@ -39,6 +39,15 @@ export interface DaqT1603HardwareConfig {
   openCircuitCheck: string
 }
 
+/**
+ * DAQ-T-1602 专属硬件配置（Modbus TCP 温度扫描阀，2 卡 × 8 通道）。
+ * 与后端 shared SDK 的 TypeCodes [16]uint8 对应：
+ * 16 个通道的热电偶类型码，取值 0~7（0=J 1=K 2=T 3=E 4=R 5=S 6=B 7=N）。
+ */
+export interface DaqT1602HardwareConfig {
+  typeCodes: number[]
+}
+
 /** DSA3217 扫描配置（从 LIST S 读取） */
 export interface DSA3217ScanConfig {
   /** 平均值 1~240 */
@@ -67,6 +76,7 @@ export interface DeviceProfile {
   samplingRate: number
   channels: ChannelConfig[]
   daqT1603Config?: DaqT1603HardwareConfig
+  daqT1602Config?: DaqT1602HardwareConfig
   /** DAQ-P-1604 专属：是否使用设备帧内硬件时间戳（关闭时使用主机接收时间） */
   daqP1604UseDeviceTimestamp?: boolean
 }

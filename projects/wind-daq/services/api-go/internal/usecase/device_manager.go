@@ -407,6 +407,61 @@ func (m *DeviceManager) ApplyDaqT1603Config(id string, config device.DaqT1603Har
 	return m.store.SaveProfiles(m.profiles)
 }
 
+func (m *DeviceManager) GetDaqT1602Config(id string) (device.DaqT1602HardwareConfig, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if dev, ok := m.devices[id]; ok {
+		if configurable, ok := dev.(ports.DaqT1602Configurable); ok {
+			return configurable.GetDaqT1602Config()
+		}
+	}
+	profile, ok := m.findProfileLocked(id)
+	if !ok {
+		return device.DaqT1602HardwareConfig{}, fmt.Errorf("device profile not found: %s", id)
+	}
+	return profile.DaqT1602Config, nil
+}
+
+func (m *DeviceManager) ApplyDaqT1602Config(id string, config device.DaqT1602HardwareConfig) error {
+	if err := validateDaqT1602Config(config); err != nil {
+		return err
+	}
+
+	// 网络 I/O 在锁外执行（可能被 LSP 卡死，持全局锁会冻结整个应用）。
+	m.mu.Lock()
+	profileIndex, ok := m.findProfileIndexLocked(id)
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("device profile not found: %s", id)
+	}
+	var configurable ports.DaqT1602Configurable
+	if dev, ok := m.devices[id]; ok {
+		var isCfg bool
+		configurable, isCfg = dev.(ports.DaqT1602Configurable)
+		if !isCfg {
+			m.mu.Unlock()
+			return fmt.Errorf("device does not support DAQ-T-1602 configuration: %s", id)
+		}
+	}
+	m.mu.Unlock()
+
+	if configurable != nil {
+		if err := configurable.ApplyDaqT1602Config(config); err != nil {
+			return err
+		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	profileIndex, ok = m.findProfileIndexLocked(id)
+	if !ok {
+		return fmt.Errorf("device profile not found: %s", id)
+	}
+	m.profiles[profileIndex].DaqT1602Config = config
+	return m.store.SaveProfiles(m.profiles)
+}
+
 // GetDsa3217ScanConfig 获取 DSA3217 设备的扫描配置
 // 注意：GetDsa3217ScanConfig 内部走网络命令（sendCommand），必须在锁外执行
 // （LSP 环境可能卡死，持全局锁会冻结整个应用）。与 ApplyDsa3217ScanConfig
@@ -1220,6 +1275,17 @@ func validateDaqT1603Config(config device.DaqT1603HardwareConfig) error {
 	if config.OpenCircuitCheck != "" {
 		if _, err := strconv.ParseUint(config.OpenCircuitCheck, 16, 16); err != nil {
 			return fmt.Errorf("openCircuitCheck must be a hex mask in 0000-FFFF range")
+		}
+	}
+	return nil
+}
+
+// validateDaqT1602Config 校验 16 通道热电偶类型码（spec-daq-t1602 §Type Code 枚举：
+// 0=J 1=K 2=T 3=E 4=R 5=S 6=B 7=N）。
+func validateDaqT1602Config(config device.DaqT1602HardwareConfig) error {
+	for ch, code := range config.TypeCodes {
+		if code > 7 {
+			return fmt.Errorf("typeCodes[%d]=%d out of range; valid: 0-7 (J,K,T,E,R,S,B,N)", ch, code)
 		}
 	}
 	return nil

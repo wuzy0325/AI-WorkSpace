@@ -300,6 +300,67 @@ func TestDeviceConfigurationHTTPFlow(t *testing.T) {
 	request(t, router, http.MethodPost, "/api/v1/devices/temp-1/clearCalibration?channelIndex=-1", nil, http.StatusBadRequest)
 }
 
+// TestDaqT1602ConfigHTTPFlow 验证 DAQ-T-1602 配置端点：
+// PUT 应用并持久化 → GET 回读一致；非法类型码被拒绝且不污染 profile。
+func TestDaqT1602ConfigHTTPFlow(t *testing.T) {
+	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
+	store := &apiProfileStore{}
+	manager, err := usecase.NewDeviceManager(store, apiDeviceFactory{}, hub.OnData)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+	router := api.NewRouter(api.Deps{DeviceManager: manager, AcquisitionHub: hub})
+
+	profile := windaqconfig.NewDefaultProfile("temp-t1602", device.DeviceDaqT1602)
+	profileBody, err := json.Marshal(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request(t, router, http.MethodPut, "/api/device/profiles", profileBody, http.StatusOK)
+
+	// 默认配置：16 通道全 T 型（type code 2）
+	resp := request(t, router, http.MethodGet, "/api/device/temp-t1602/daqT1602Config", nil, http.StatusOK)
+	var defaults device.DaqT1602HardwareConfig
+	if err := json.Unmarshal(resp.Body.Bytes(), &defaults); err != nil {
+		t.Fatalf("decode daqT1602 config response: %v", err)
+	}
+	for i, code := range defaults.TypeCodes {
+		if code != 2 {
+			t.Fatalf("expected default typeCode 2 (T) at channel %d, got %d", i, code)
+		}
+	}
+
+	// 应用自定义配置（卡2 CH0 改为 E 型）
+	custom := defaults
+	custom.TypeCodes[8] = 3
+	customBody, err := json.Marshal(custom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request(t, router, http.MethodPut, "/api/device/temp-t1602/daqT1602Config", customBody, http.StatusOK)
+
+	resp = request(t, router, http.MethodGet, "/api/device/temp-t1602/daqT1602Config", nil, http.StatusOK)
+	var got device.DaqT1602HardwareConfig
+	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode daqT1602 config response: %v", err)
+	}
+	if got != custom {
+		t.Fatalf("unexpected daqT1602 config: %+v", got)
+	}
+	if store.profiles[0].DaqT1602Config != custom {
+		t.Fatalf("expected persisted config %+v, got %+v", custom, store.profiles[0].DaqT1602Config)
+	}
+
+	// 非法类型码（>7）→ 400
+	invalid := custom
+	invalid.TypeCodes[0] = 9
+	invalidBody, err := json.Marshal(invalid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request(t, router, http.MethodPut, "/api/device/temp-t1602/daqT1602Config", invalidBody, http.StatusBadRequest)
+}
+
 func TestDeviceCalibrationRequiresAcquisition(t *testing.T) {
 	hub := usecase.NewAcquisitionHub(apiPublisher{}, 20)
 	store := &apiProfileStore{profiles: []device.Profile{windaqconfig.NewDefaultProfile("pressure-1", device.DeviceDAQP1604)}}

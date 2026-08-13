@@ -39,6 +39,55 @@ func TestDefaultSimulatedProfileHasEnabledChannels(t *testing.T) {
 	}
 }
 
+func TestDefaultDaqT1602ProfileHasTemperatureChannels(t *testing.T) {
+	profile := NewDefaultProfile("temp-t1602", device.DeviceDaqT1602)
+
+	if profile.Address != "192.168.3.201" {
+		t.Fatalf("expected default address 192.168.3.201, got %q", profile.Address)
+	}
+	if profile.Port != 502 {
+		t.Fatalf("expected default port 502, got %d", profile.Port)
+	}
+	if len(profile.Channels) != 16 {
+		t.Fatalf("expected 16 default channels, got %d", len(profile.Channels))
+	}
+	if profile.Channels[15].Name != "TC16" {
+		t.Fatalf("expected last channel name TC16, got %q", profile.Channels[15].Name)
+	}
+	for i, code := range profile.DaqT1602Config.TypeCodes {
+		if code != 2 {
+			t.Fatalf("expected default typeCode 2 (T) at channel %d, got %d", i, code)
+		}
+	}
+}
+
+func TestNormalizeProfileBackfillsDaqT1602Config(t *testing.T) {
+	profile := NewDefaultProfile("temp-t1602", device.DeviceDaqT1602)
+	profile.DaqT1602Config = device.DaqT1602HardwareConfig{} // 模拟缺失 daqT1602Config 的 profile
+
+	normalized := NormalizeProfile(profile)
+
+	for i, code := range normalized.DaqT1602Config.TypeCodes {
+		if code != 2 {
+			t.Fatalf("expected backfilled typeCode 2 (T) at channel %d, got %d", i, code)
+		}
+	}
+}
+
+func TestNormalizeProfilePreservesDaqT1602ConfigValues(t *testing.T) {
+	profile := NewDefaultProfile("temp-t1602", device.DeviceDaqT1602)
+	custom := defaultDaqT1602Config()
+	custom.TypeCodes[0] = 1 // K 型
+	custom.TypeCodes[8] = 3 // E 型（卡2 CH0）
+	profile.DaqT1602Config = custom
+
+	normalized := NormalizeProfile(profile)
+
+	if normalized.DaqT1602Config != custom {
+		t.Fatalf("expected config to be preserved, got %+v", normalized.DaqT1602Config)
+	}
+}
+
 func TestDefaultDaqT1603ProfileHasTemperatureChannels(t *testing.T) {
 	profile := NewDefaultProfile("temp-1", device.DeviceDaqT1603)
 
