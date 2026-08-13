@@ -143,11 +143,10 @@ async function confirmAddDevice() {
     <MainTopBar
       :version="appVersion"
       :is-toggling="isToggling || isTransitioning"
-      @add-device="openAddDevice"
       @toggle-acquisition="toggleAcquisition"
     />
     <div class="shell__body">
-      <DeviceSidebar @scan="openScanDialog" />
+      <DeviceSidebar @scan="openScanDialog" @add-device="openAddDevice" />
       <main class="shell__main">
         <slot />
       </main>
