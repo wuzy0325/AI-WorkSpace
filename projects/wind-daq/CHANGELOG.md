@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.15.1] - 2026-08-13
+
+### Fixed
+
+- **MC4 位移机构不可达时应用启动即崩溃**：ffiGate 调用侧超时返回后 worker 仍可能在 WTNMC4A DLL 内执行未返回的 FFI 调用，而清理路径随即 FreeLibrary 卸载 DLL，worker 返回时执行已卸载代码导致 Exception 0xc0000005 进程崩溃。DLL 改为进程级单例常驻加载、永不卸载；导出解析失败改为返回错误而非 panic。
+
+### Verification
+
+- `go vet ./motion/... && go test ./motion/...`（shared/device-sdk）: passed
+- 不可达地址（192.0.2.1）反复 Connect 复现验证：修复前首次超时后进程崩溃，修复后 5 次干净返回错误、进程存活
+- 生产构建 + NSIS 打包 + 冒烟启动：见 releases/0.15.1.md
+
+### Known Issues
+
+- UI 修改热电偶类型保存后仅持久化到 profile，不会立即下发到已连接设备（与 DAQ-T-1603 现状一致）。
+
 ## [0.15.0] - 2026-08-13
 
 ### Added
