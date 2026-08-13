@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.15.0] - 2026-08-13
+
+### Added
+
+- **新增 DAQ-T-1602 温度扫描阀设备支持**：Modbus TCP 温度采集设备（机内 2 张采集卡 × 8 通道 = 16 通道热电偶），设备管理抽屉中可添加 `DAQ-T-1602` 类型设备（默认 192.168.3.201:502），连接后自动读回 16 通道热电偶类型（J/K/T/E/R/S/B/N），支持修改通道类型并写入设备，采集帧率 ~4.9 Hz（固件串行节流上限）。
+
+### Internal
+
+- 新增 workspace 首个 Modbus TCP 协议栈（`shared/device-sdk/go/protocol/modbus`，纯标准库手写 MBAP+PDU，FC3/FC4/FC6，Transaction ID 回显校验，1s 响应超时，ADR-009 WatchdogClose/AbortConnection 兜底；`Close` 经 atomic 标记不抢事务锁，极端故障场景下不阻塞）。
+- 新增 `daq_t1602` 驱动：单 TCP 连接 + Unit ID 1/2 复用寻址双卡，FC6 写 + 读回校验，双卡串行轮询线性换算输出工程值 ℃。
+- 热电偶量程表为设备固件实际表（用户提供并经真机交叉验证：K 型 raw 1513 → 27.7℃ 与室温吻合；无信号通道 raw=0 → 0℃），非教科书标准量程。
+- 后端：`/daqT1602Config` GET/PUT 路由、usecase 校验、三处工厂注册、scan 误识别负向测试；前端：`DaqT1602Config.vue` 独立配置面板。
+- 文档：`docs/specs/spec-daq-t1602.md`、`tasks-daq-t1602.md`、`DAQ-T1602-LabVIEW逻辑解析.md`（含 2026-08-12/13 真机实测记录）。
+
+### Verification
+
+- `go build ./... && go vet ./... && go test ./daq/... ./protocol/...`（shared/device-sdk）: passed（含 `-race`）
+- `go build -buildvcs=false ./... && go vet ./... && go test ./internal/... ./api/... ./tests/...`（services/api-go）: passed
+- `npm run typecheck && npm run build`（frontend）: passed
+- 真机测试 `DAQ_T1602_REAL=1 go test -run Real ./daq/hardware/`（192.168.3.201）: passed（16 通道类型读回、10s 轮询 4.76 Hz、FC6 类型写回校验）
+
+### Known Issues
+
+- UI 修改热电偶类型保存后仅持久化到 profile，不会立即下发到已连接设备（与 DAQ-T-1603 现状一致）；设备下次连接时以设备实际值为准。
+- 既有问题（非本版本引入）：MC4 位移机构不可达时 WTNMC4A FFI gate 超时后进程崩溃（`wtnmc4a_motion.go:432`），0.14.1 行为相同，详见 `releases/0.15.0.md`。
+
 ## [0.14.1] - 2026-08-12
 
 ### Fixed
