@@ -98,7 +98,7 @@ function currentAcquiring(): boolean {
   return profile.value ? deviceStore.acquiringFor(profile.value.id) : false
 }
 
-function formatChannel(ch: number, raw: number): string {
+function formatChannel(ch: number, raw: number | null): string {
   const id = deviceStore.selectedDeviceId ?? ''
   return deviceStore.formatValue(id, ch, raw)
 }
@@ -117,10 +117,12 @@ function channelRange(channelIndex: number): { min: number; max: number } {
   }
 }
 
-function detailChannelTone(channelIndex: number, rawValue: number): 'active' | 'warning' {
+function detailChannelTone(channelIndex: number, rawValue: number | null): 'active' | 'warning' {
   const id = deviceStore.selectedDeviceId ?? ''
   const status = currentStatus()
   if (status === 'Error' || status === 'Disconnected') return 'warning'
+  // null/NaN（无有效测量值，如 T1602 未接入通道）不参与越限判断，保持中性色
+  if (rawValue === null || Number.isNaN(rawValue)) return 'active'
 
   const range = channelRange(channelIndex)
   const span = range.max - range.min

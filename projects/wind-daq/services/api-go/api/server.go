@@ -1187,6 +1187,8 @@ func marshalDataPayload(p device.DataPayload) []byte {
 	}
 
 	// channels（[]float64；nil 输出 null，非 nil 输出数组）
+	// NaN/Inf 输出 null：Go encoding/json 默认会序列化为 "NaN" 字符串（非法 JSON），
+	// 且 T1602 用 NaN 表示"通道未接入热电偶"，前端以 null 渲染为 "--"/波形空点。
 	buf = append(buf, `,"channels":`...)
 	if p.Channels == nil {
 		buf = append(buf, `null`...)
@@ -1195,6 +1197,10 @@ func marshalDataPayload(p device.DataPayload) []byte {
 		for i, v := range p.Channels {
 			if i > 0 {
 				buf = append(buf, ',')
+			}
+			if math.IsNaN(v) || math.IsInf(v, 0) {
+				buf = append(buf, `null`...)
+				continue
 			}
 			// 'g' 精度 -1 与 encoding/json floatEncoder(64) 一致
 			buf = strconv.AppendFloat(buf, v, 'g', -1, 64)

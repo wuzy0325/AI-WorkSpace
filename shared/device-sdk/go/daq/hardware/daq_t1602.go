@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"runtime/debug"
 	"sync"
@@ -336,7 +337,15 @@ func (d *DAQT1602) emitTemps(raw []uint16) {
 // t1602RawToTemp 线性换算：temp = raw/65535×(max-min)+min。
 // 公式经用户确认（LabVIEW 逆向 + 真机验证 2026-08-13：K 型 raw 1513 → 27.7℃
 // 与室温吻合；T 型配置 raw 1369 → 27.2℃ 交叉一致）。
+//
+// raw == 0 表示该通道未接入热电偶（设备开路输出 0，2026-08-13 用户确认），
+// 不是"量程下限温度"——返回 NaN 表示无测量值，由上层序列化为 null、
+// UI 显示 "--"、波形图留空。注意 T 型量程下限恰为 0℃ 时真实 0℃ 测量与
+// 未接入不可区分，这是该约定的已知边界（用户确认可接受）。
 func t1602RawToTemp(raw uint16, typeCode uint8) float64 {
+	if raw == 0 {
+		return math.NaN()
+	}
 	r := t1602RangeOf(typeCode)
 	return float64(raw)/65535*(r[1]-r[0]) + r[0]
 }

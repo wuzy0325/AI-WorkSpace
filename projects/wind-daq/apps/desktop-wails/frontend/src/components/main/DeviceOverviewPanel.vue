@@ -62,9 +62,11 @@ function channelDisplayName(deviceId: string, channelIndex: number): string {
   return name
 }
 
-function channelTone(deviceId: string, channelIndex: number, rawValue: number): 'active' | 'warning' {
+function channelTone(deviceId: string, channelIndex: number, rawValue: number | null): 'active' | 'warning' {
   const status = deviceStore.statusFor(deviceId)
   if (status === 'Error' || status === 'Disconnected') return 'warning'
+  // null/NaN（无有效测量值，如 T1602 未接入通道）不参与越限判断，保持中性色
+  if (rawValue === null || Number.isNaN(rawValue)) return 'active'
 
   const range = deviceStore.getChannelRange(deviceId, channelIndex)
   const span = range.max - range.min

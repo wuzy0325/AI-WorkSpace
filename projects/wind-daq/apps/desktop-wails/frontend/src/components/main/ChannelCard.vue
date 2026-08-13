@@ -5,7 +5,8 @@ import { useI18nStore } from '@stores/i18nStore'
 /** 单个通道卡片的预计算数据，由 DeviceDetailPanel 的 channelCards computed 产出。 */
 export interface ChannelCardData {
   index: number
-  rawValue: number
+  // null 表示无有效测量值（如 T1602 未接入热电偶通道），卡片显示 formattedValue 为 "--"
+  rawValue: number | null
   formattedValue: string
   unit: string
   tone: 'active' | 'warning'
