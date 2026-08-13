@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.15.2] - 2026-08-13
+
+### Fixed
+
+- **DAQ-T-1602 未接入热电偶的通道显示 "--" 而非 0℃**：raw 寄存器值为 0 表示通道未接入（设备开路输出），不是量程下限温度。通道卡片显示 "--"、波形图留空点、tooltip 显示 "-"；越限变色对无数据通道保持中性。同时修复 SSE 数据流把 NaN 序列化为非法 JSON 的隐患（NaN/Inf 现输出为 null）。
+- 已知边界：T 型量程下限恰为 0℃，真实 0℃ 测量与未接入不可区分（已与用户确认可接受）。
+
+### Verification
+
+- `go test ./daq/... ./protocol/... ./motion/...`（shared/device-sdk）: passed
+- `go test ./internal/... ./api/... ./tests/...`（services/api-go，含新增 marshal NaN→null 用例）: passed
+- `npm run typecheck && npm run build && npm run test`（frontend，356 用例）: passed
+- 生产构建 + NSIS 打包 + 冒烟启动：见 releases/0.15.2.md
+
+### Known Issues
+
+- UI 修改热电偶类型保存后仅持久化到 profile，不会立即下发到已连接设备（与 DAQ-T-1603 现状一致）。
+
 ## [0.15.1] - 2026-08-13
 
 ### Fixed
