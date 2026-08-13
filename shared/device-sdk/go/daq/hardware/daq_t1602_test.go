@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"strings"
 	"sync"
@@ -225,7 +226,7 @@ func TestDAQT1602AcquisitionEmitsConvertedTemps(t *testing.T) {
 	for i := range fake.types {
 		fake.types[i] = 2 // 全 T 型
 	}
-	// T 型量程 (0,1300)：raw 65535 → 1300℃，raw 0 → 0℃（公式端点精确值）。
+	// T 型量程 (0,1300)：raw 65535 → 1300℃；raw 0 → 未接入（NaN）。
 	fake.raws[0] = 65535
 	fake.raws[1] = 0
 	// 卡2 CH0（全局 CH8）改 K 型（0,1200）验证跨卡类型映射。
@@ -259,8 +260,8 @@ func TestDAQT1602AcquisitionEmitsConvertedTemps(t *testing.T) {
 		if p.Channels[0] != 1300 {
 			t.Fatalf("CH0 = %v, want 1300 (T 型 raw 65535)", p.Channels[0])
 		}
-		if p.Channels[1] != 0 {
-			t.Fatalf("CH1 = %v, want 0 (T 型 raw 0)", p.Channels[1])
+		if !math.IsNaN(p.Channels[1]) {
+			t.Fatalf("CH1 = %v, want NaN (raw 0 = 未接入热电偶)", p.Channels[1])
 		}
 		if p.Channels[8] != 1200 {
 			t.Fatalf("CH8 = %v, want 1200 (K 型 raw 65535)", p.Channels[8])
@@ -447,7 +448,7 @@ func TestDAQT1602StopAfterReadLoopFailure(t *testing.T) {
 }
 
 // TestDAQT1602ConversionMatchesTypeCodeTable 用用户提供的量程表（2026-08-13，
-// 已真机验证）逐类型验证换算端点：raw 0 → RangeMin，raw 65535 → RangeMax。
+// 已真机验证）逐类型验证换算：raw 0 → NaN（未接入热电偶），raw 65535 → RangeMax。
 func TestDAQT1602ConversionMatchesTypeCodeTable(t *testing.T) {
 	cases := []struct {
 		code     uint8
@@ -464,11 +465,16 @@ func TestDAQT1602ConversionMatchesTypeCodeTable(t *testing.T) {
 		{255, 0, 1800}, // 未知类型码按 N 型兜底
 	}
 	for _, tc := range cases {
-		if got := t1602RawToTemp(0, tc.code); got != tc.min {
-			t.Errorf("code %d raw 0 = %v, want %v", tc.code, got, tc.min)
+		if got := t1602RawToTemp(0, tc.code); !math.IsNaN(got) {
+			t.Errorf("code %d raw 0 = %v, want NaN (未接入)", tc.code, got)
 		}
 		if got := t1602RawToTemp(65535, tc.code); got != tc.max {
 			t.Errorf("code %d raw 65535 = %v, want %v", tc.code, got, tc.max)
+		}
+		// raw 1 → 量程最低点上方一个步进（验证 min 偏移仍生效）
+		wantLow := tc.min + (tc.max-tc.min)/65535
+		if got := t1602RawToTemp(1, tc.code); got != wantLow {
+			t.Errorf("code %d raw 1 = %v, want %v", tc.code, got, wantLow)
 		}
 	}
 	// 中点线性：T 型 raw 32768 ≈ 32768/65535×1300 ≈ 650.06。

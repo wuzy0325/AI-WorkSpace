@@ -412,8 +412,9 @@ export const useDeviceStore = defineStore('devices', () => {
     }
   }
 
-  const formatValue = (id: string, channelIndex: number, rawValue: number): string => {
-    if (!Number.isFinite(rawValue)) return ''
+  const formatValue = (id: string, channelIndex: number, rawValue: number | null): string => {
+    // null/NaN 表示无有效测量值（如 T1602 未接入热电偶通道），显示 "--" 而非数值
+    if (rawValue === null || !Number.isFinite(rawValue)) return '--'
     return rawValue.toFixed(getChannelPrecision(id, channelIndex))
   }
 

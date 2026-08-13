@@ -137,7 +137,9 @@ export interface DataPayload {
   deviceName?: string
   timestamp: number
   deviceTimestamp?: number
-  channels: number[]
+  // null 表示该通道无有效测量值（如 DAQ-T-1602 未接入热电偶的通道，
+  // 后端把 NaN 序列化为 null）。展示层应渲染 "--"，波形图留空点。
+  channels: (number | null)[]
   channelIndices: number[]
 }
 
