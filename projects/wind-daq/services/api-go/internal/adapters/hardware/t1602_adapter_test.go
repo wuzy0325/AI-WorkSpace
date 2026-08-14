@@ -17,6 +17,18 @@ func TestT1602AdapterImplementsInterfaces(t *testing.T) {
 	_ = a
 }
 
+func TestT1602Adapter_SampleRateHzRoundTrip(t *testing.T) {
+	in := device.DaqT1602HardwareConfig{SampleRateHz: 3}
+	shared := mapToSharedT1602Config(in)
+	if shared.SampleRateHz != 3 {
+		t.Fatalf("mapToShared SampleRateHz = %v, want 3", shared.SampleRateHz)
+	}
+	out := mapFromSharedT1602Config(shared)
+	if out.SampleRateHz != 3 {
+		t.Fatalf("mapFromShared SampleRateHz = %v, want 3", out.SampleRateHz)
+	}
+}
+
 func TestT1602Adapter_ID(t *testing.T) {
 	a := NewT1602Adapter(device.Profile{ID: "my-t1602", Name: "Test"})
 	if a.ID() != "my-t1602" {

@@ -6,7 +6,7 @@ import type { SelectOption } from 'naive-ui'
 const props = withDefaults(
   defineProps<{
     modelValue?: string
-    options?: Array<{ value: string; label: string }>
+    options?: Array<{ value: string; label: string; title?: string }>
     placeholder?: string
     size?: 'sm' | 'md' | 'lg'
     disabled?: boolean
@@ -29,17 +29,22 @@ const naiveSize = computed(() => {
   return 'medium'
 })
 
-// 当前选中的文本：用于触发器 hover 提示，解决选项/占位符被截断后无法识别的问题
+// 当前选中的文本：用于触发器 hover 提示，解决选项/占位符被截断后无法识别的问题。
+// 选项可带 title（如 "K（0~1200 ℃）"），优先级高于 label。
 const selectedLabel = computed(() => {
   if (!props.modelValue) return props.placeholder || ''
-  return props.options.find(o => o.value === props.modelValue)?.label ?? (props.fallback ? props.modelValue : props.placeholder || '')
+  const found = props.options.find(o => o.value === props.modelValue)
+  return found?.title ?? found?.label ?? (props.fallback ? props.modelValue : props.placeholder || '')
 })
 
 // 下拉选项渲染：给每个选项加原生 title，鼠标悬停即可看到完整名称
 function renderLabel(option: SelectOption) {
   // 项目内 options 的 label 均为字符串；非字符串时回退到 value，避免调用签名不确定的渲染函数
   const text: string = typeof option.label === 'string' ? option.label : String(option.value ?? '')
-  return h('span', { title: text }, text)
+  const title: string = typeof (option as { title?: unknown }).title === 'string'
+    ? (option as { title?: string }).title as string
+    : text
+  return h('span', { title }, text)
 }
 
 // 菜单使用自定义类，便于通过全局样式限制最大宽度（菜单通过 portal 渲染到 body，无法用 scoped 样式）
