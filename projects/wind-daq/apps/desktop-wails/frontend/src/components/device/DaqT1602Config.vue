@@ -6,6 +6,7 @@ import UiPanel from '@components/ui/UiPanel.vue'
 import UiFormField from '@components/ui/UiFormField.vue'
 import UiInputNumber from '@components/ui/UiInputNumber.vue'
 import { Cpu } from '@lucide/vue'
+import { T1602_TC_TYPES, T1602_DEFAULT_TYPE_CODE, type T1602TcType } from '@utils/t1602Range'
 
 // ============================================================
 // DAQ-T-1602 专属配置面板（Modbus TCP 温度扫描阀）
@@ -30,7 +31,7 @@ const props = withDefaults(
     disabled?: boolean
   }>(),
   {
-    typeCodes: () => Array(16).fill(2),
+    typeCodes: () => Array(16).fill(T1602_DEFAULT_TYPE_CODE),
     sampleRate: 5,
     disabled: false,
   },
@@ -46,21 +47,9 @@ const i18n = useI18nStore()
 // 通道数固定 16（卡1 CH0~7 + 卡2 CH0~7）
 const CHANNEL_COUNT = 16
 
-// 热电偶类型：code 与设备 Type Code 寄存器值一致（0=J 1=K 2=T 3=E 4=R 5=S 6=B 7=N）。
-// 量程 [min,max] ℃ 为用户提供的设备固件量程表（spec-daq-t1602 §Type Code 枚举，
-// 2026-08-13 真机交叉验证，含非教科书量程如 code 3=E (-200,400)）。
-const TC_TYPES = [
-  { code: 0, label: 'J', min: -50, max: 50 },
-  { code: 1, label: 'K', min: 0, max: 1200 },
-  { code: 2, label: 'T', min: 0, max: 1300 },
-  { code: 3, label: 'E', min: -200, max: 400 },
-  { code: 4, label: 'R', min: 0, max: 1000 },
-  { code: 5, label: 'S', min: 0, max: 1700 },
-  { code: 6, label: 'B', min: 0, max: 1768 },
-  { code: 7, label: 'N', min: 0, max: 1800 },
-]
-
-type TcType = (typeof TC_TYPES)[number]
+// 热电偶类型：code 与设备 Type Code 寄存器值一致（0=J 1=K 2=T 3=E 4=R 5=S 6=B 7=N），
+// 量程来自共享表 @utils/t1602Range（spec-daq-t1602 §Type Code 枚举，真机交叉验证）。
+type TcType = T1602TcType
 
 /** 完整选项文案：如 "K（0~1200 ℃）"，用于全通道下拉与通道 hover 提示 */
 function rangeLabel(t: TcType): string {
@@ -68,14 +57,14 @@ function rangeLabel(t: TcType): string {
 }
 
 // 16 通道下拉：短标签（J/K/...），title 带量程提示（hover 可见）
-const channelOptions = TC_TYPES.map(t => ({
+const channelOptions = T1602_TC_TYPES.map(t => ({
   value: String(t.code),
   label: t.label,
   title: rangeLabel(t),
 }))
 
 // 全通道下拉：完整标签（含量程），选择后立即应用到全部通道
-const applyAllOptions = TC_TYPES.map(t => ({
+const applyAllOptions = T1602_TC_TYPES.map(t => ({
   value: String(t.code),
   label: rangeLabel(t),
 }))
@@ -85,18 +74,18 @@ const applyAllValue = ref('')
 
 /** 量程图例文本：J: -50~50 ℃ · K: 0~1200 ℃ · ... */
 const rangeLegend = computed(() =>
-  TC_TYPES.map(t => `${t.label}: ${t.min}~${t.max} ℃`).join('  ·  '),
+  T1602_TC_TYPES.map(t => `${t.label}: ${t.min}~${t.max} ℃`).join('  ·  '),
 )
 
 const channels = computed(() => Array.from({ length: CHANNEL_COUNT }, (_, i) => i))
 
 function codeAt(index: number): string {
-  return String(props.typeCodes[index] ?? 2)
+  return String(props.typeCodes[index] ?? T1602_DEFAULT_TYPE_CODE)
 }
 
 function updateCode(index: number, value: string) {
   const next = props.typeCodes.slice(0, CHANNEL_COUNT)
-  while (next.length < CHANNEL_COUNT) next.push(2)
+  while (next.length < CHANNEL_COUNT) next.push(T1602_DEFAULT_TYPE_CODE)
   next[index] = Number(value)
   emit('update:typeCodes', next)
 }

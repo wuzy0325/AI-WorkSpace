@@ -3,6 +3,7 @@ import { computed, ref, shallowRef } from 'vue'
 import type { DeviceProfile, DeviceStatus, DataPayload, DSA3217ScanConfig, ChannelConfig, CalibrationResult } from '@api/types'
 import { deviceApi } from '@api/deviceApi'
 import { createRingBuffer, type RingBuffer } from '@composables/ringBuffer'
+import { getDeviceChannelRange } from '@utils/t1602Range'
 import { useStorageStore, computeHistoryCapacity, HISTORY_CAPACITY_HARD_CAP } from '@stores/storageStore'
 import { useI18nStore } from '@stores/i18nStore'
 
@@ -507,10 +508,11 @@ export const useDeviceStore = defineStore('devices', () => {
   }
 
   function getChannelRange(id: string, channelIndex: number): { min: number; max: number } {
-    const channel = findChannel(id, channelIndex)
-    const min = channel?.rangeMin ?? -10
-    const max = channel?.rangeMax ?? 10
-    return min === max ? { min: min - 1, max: max + 1 } : { min, max }
+    const profile = profiles.value.find((p) => p.id === id)
+    // T1602 量程由热电偶类型码决定，其余设备读通道表 rangeMin/rangeMax，
+    // 统一收敛到 @utils/t1602Range.getDeviceChannelRange。
+    const r = getDeviceChannelRange(profile, channelIndex)
+    return r.min === r.max ? { min: r.min - 1, max: r.max + 1 } : r
   }
 
   function getChannelPrecision(id: string, channelIndex: number): number {

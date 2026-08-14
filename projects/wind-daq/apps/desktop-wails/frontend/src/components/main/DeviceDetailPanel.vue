@@ -14,6 +14,7 @@ import {
   isTemperatureUnit,
 } from '@utils/deviceCalibration'
 import { channelUnit as fixedChannelUnit } from '@utils/channelUnit'
+import { getDeviceChannelRange } from '@utils/t1602Range'
 import ChannelCard, { type ChannelCardData } from './ChannelCard.vue'
 import ChartSelector, { type SelectorChannel } from './ChartSelector.vue'
 // RealtimeChart 异步加载：echarts 是重量依赖（gzip ~250 KB），仅当用户进入设备面板时才下载，
@@ -110,11 +111,9 @@ function channelUnit(channelIndex: number): string {
 }
 
 function channelRange(channelIndex: number): { min: number; max: number } {
-  const channel = profile.value?.channels.find((item) => item.index === channelIndex)
-  return {
-    min: channel?.rangeMin ?? -10,
-    max: channel?.rangeMax ?? 10,
-  }
+  // T1602 量程由热电偶类型码决定，其余设备读通道表 rangeMin/rangeMax，
+  // 统一收敛到 @utils/t1602Range.getDeviceChannelRange。
+  return getDeviceChannelRange(profile.value, channelIndex)
 }
 
 function detailChannelTone(channelIndex: number, rawValue: number | null): 'active' | 'warning' {
