@@ -20,7 +20,7 @@ import (
 //   - CalibrationManager 通过 NewCalibrationManager(nil, nil, nil, nil) 构造，
 //     PreviewSevenHolePoints 是纯计算方法（不依赖 reader/motion/sink/store 注入）
 //   - httptest.NewRecorder + http.NewRequest 模拟 HTTP 请求
-//   - 完整模式 673 点 = 169 内区 + 504 外区；数据集模式 481 点 = 169 内区 + 312 外区
+//   - 完整模式 715 点 = 169 内区 + 546 外区；数据集模式 481 点 = 169 内区 + 312 外区
 
 // newTestCalibrationManager 构造纯计算用的 CalibrationManager。
 //
@@ -31,11 +31,11 @@ func newTestCalibrationManager() *usecase.CalibrationManager {
 	return usecase.NewCalibrationManager(nil, nil, nil, nil)
 }
 
-// TestHandleSevenHolePreview_FullMode 【P0】完整模式预览返回 673 点
+// TestHandleSevenHolePreview_FullMode 【P0】完整模式预览返回 715 点
 //
 // 测试前置：构造完整模式 SevenHoleConfig（内区 [-30,30] 步长 5°；外区 θ [30,60] 步长 5°、φ [0,355] 步长 5°）
 //
-// 期待结果：HTTP 200，totalCount=673、innerCount=169、outerCount=504
+// 期待结果：HTTP 200，totalCount=715、innerCount=169、outerCount=546
 func TestHandleSevenHolePreview_FullMode(t *testing.T) {
 	mgr := newTestCalibrationManager()
 	body := `{
@@ -66,17 +66,17 @@ func TestHandleSevenHolePreview_FullMode(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if resp.TotalCount != 673 {
-		t.Errorf("totalCount should be 673, got %d", resp.TotalCount)
+	if resp.TotalCount != 715 {
+		t.Errorf("totalCount should be 715, got %d", resp.TotalCount)
 	}
 	if resp.InnerCount != 169 {
 		t.Errorf("innerCount should be 169, got %d", resp.InnerCount)
 	}
-	if resp.OuterCount != 504 {
-		t.Errorf("outerCount should be 504, got %d", resp.OuterCount)
+	if resp.OuterCount != 546 {
+		t.Errorf("outerCount should be 546, got %d", resp.OuterCount)
 	}
-	if len(resp.Points) != 673 {
-		t.Errorf("points length should be 673, got %d", len(resp.Points))
+	if len(resp.Points) != 715 {
+		t.Errorf("points length should be 715, got %d", len(resp.Points))
 	}
 }
 
@@ -371,19 +371,19 @@ func TestSanitizeFloatMap_NormalValues(t *testing.T) {
 // TestSanitizeSevenHolePreview_PreservesCounts 【P1】聚合统计字段保留
 func TestSanitizeSevenHolePreview_PreservesCounts(t *testing.T) {
 	result := calibration.SevenHolePreviewResult{
-		Points:      []calibration.CalPoint{},
-		TotalCount:  673,
-		InnerCount:  169,
-		OuterCount:  504,
+		Points:     []calibration.CalPoint{},
+		TotalCount: 715,
+		InnerCount: 169,
+		OuterCount: 546,
 	}
 	sanitized := sanitizeSevenHolePreview(result)
-	if sanitized["totalCount"] != 673 {
-		t.Errorf("totalCount should be 673, got %v", sanitized["totalCount"])
+	if sanitized["totalCount"] != 715 {
+		t.Errorf("totalCount should be 715, got %v", sanitized["totalCount"])
 	}
 	if sanitized["innerCount"] != 169 {
 		t.Errorf("innerCount should be 169, got %v", sanitized["innerCount"])
 	}
-	if sanitized["outerCount"] != 504 {
-		t.Errorf("outerCount should be 504, got %v", sanitized["outerCount"])
+	if sanitized["outerCount"] != 546 {
+		t.Errorf("outerCount should be 546, got %v", sanitized["outerCount"])
 	}
 }

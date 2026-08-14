@@ -2,7 +2,7 @@
 //
 // 测试覆盖：
 //   - createAlgorithm 工厂分支：TypeSevenHole → *SevenHoleAlgorithm
-//   - PreviewSevenHolePoints：完整模式 673 点 / 数据集模式 481 点
+//   - PreviewSevenHolePoints：完整模式 715 点 / 数据集模式 481 点
 //   - 七孔 CSV writer 路由：region+sector 分流、文件命名、懒加载、flush
 //
 // 测试不依赖真实文件 I/O——通过 fakeSevenHoleWriterFactory 桩注入，
@@ -83,7 +83,7 @@ func TestCreateAlgorithmUnknownType(t *testing.T) {
 
 // ==================== PreviewSevenHolePoints 测试 ====================
 
-// sevenHoleBuildFullConfig 构建完整模式默认配置（673 点）
+// sevenHoleBuildFullConfig 构建完整模式默认配置（715 点）
 // 与 core/calibration/seven_hole_points_test.go 的 sevenHoleBuildFullConfig 对齐
 func sevenHoleBuildFullConfig() calibration.SevenHoleConfig {
 	return calibration.SevenHoleConfig{
@@ -104,25 +104,25 @@ func sevenHoleBuildFullConfig() calibration.SevenHoleConfig {
 	}
 }
 
-// TestPreviewSevenHolePoints_FullMode 验证完整模式返回 673 点（内区 169 + 外区 504）
+// TestPreviewSevenHolePoints_FullMode 验证完整模式返回 715 点（内区 169 + 外区 546）
 //
 // 测试前置：默认完整模式配置（α/β ±30° 步长 5°，θ 30-60° 步长 5°，φ 0-355° 步长 5°）
 // 测试步骤：调用 PreviewSevenHolePoints
-// 期待结果：TotalCount=673, InnerCount=169, OuterCount=504
+// 期待结果：TotalCount=715, InnerCount=169, OuterCount=546
 func TestPreviewSevenHolePoints_FullMode(t *testing.T) {
 	manager := NewCalibrationManager(nil, nil, nil, nil)
 	result, err := manager.PreviewSevenHolePoints(sevenHoleBuildFullConfig())
 	if err != nil {
 		t.Fatalf("PreviewSevenHolePoints(full) 返回错误: %v", err)
 	}
-	if result.TotalCount != 673 {
-		t.Errorf("TotalCount = %d，期望 673", result.TotalCount)
+	if result.TotalCount != 715 {
+		t.Errorf("TotalCount = %d，期望 715", result.TotalCount)
 	}
 	if result.InnerCount != 169 {
 		t.Errorf("InnerCount = %d，期望 169", result.InnerCount)
 	}
-	if result.OuterCount != 504 {
-		t.Errorf("OuterCount = %d，期望 504", result.OuterCount)
+	if result.OuterCount != 546 {
+		t.Errorf("OuterCount = %d，期望 546", result.OuterCount)
 	}
 	if len(result.Points) != result.TotalCount {
 		t.Errorf("len(Points) = %d，期望 %d", len(result.Points), result.TotalCount)

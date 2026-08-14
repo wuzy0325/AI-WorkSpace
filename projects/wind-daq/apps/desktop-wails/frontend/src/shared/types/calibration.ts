@@ -266,7 +266,7 @@ export interface TotalPressureDataPoint {
 // 字段语义参考 spec §3.1 / §4.1 / §4.2 / §6.2，及后端 seven_hole.go 同名结构注释。
 
 /** 七孔校准模式（spec §3.1）
- * - 'full'：完整模式，外区 θ/φ 由用户配置范围+步长生成（最多 673 点 = 169 内 + 504 外）
+ * - 'full'：完整模式，外区 θ/φ 由用户配置范围+步长生成（默认 715 点 = 169 内 + 546 外）
  * - 'dataset'：数据集模式，外区 θ 硬编码 {30°,35°,40°,45°}，φ 按扇区独立配置（481 点 = 169 内 + 312 外）
  */
 export type SevenHoleMode = 'full' | 'dataset'
@@ -300,7 +300,7 @@ export interface SevenHoleConfig {
 
 /** 七孔点位预览结果（与后端 calibration.SevenHolePreviewResult 对齐）
  *
- * 用于"配置向导"实时显示总点数（如 673 点 = 169 内区 + 504 外区），
+ * 用于"配置向导"实时显示总点数（如 715 点 = 169 内区 + 546 外区），
  * 帮助用户在启动校准前确认点位规模与预计耗时。
  */
 export interface SevenHolePreviewResult {
