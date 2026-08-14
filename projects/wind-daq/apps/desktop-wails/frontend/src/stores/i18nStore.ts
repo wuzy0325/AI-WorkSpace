@@ -962,7 +962,7 @@ const zh: Record<string, string> = {
   // DAQ-T-1602 专属配置字段（dev_t1602_）
   dev_t1602_sectionTitle: 'DAQ-T-1602 采集配置',
   dev_t1602_sampleRate: '采样频率',
-  dev_t1602_sampleRateHint: '范围 1~5 Hz，控制采集与保存频率（设备固件采集周期固定 ~100ms）',
+  dev_t1602_sampleRateHint: '范围 1~5 Hz，控制采集与保存频率',
   dev_t1602_applyAllLabel: '全通道类型',
   dev_t1602_applyAllHint: '选择后立即应用到全部 16 通道',
   dev_t1602_applyAllPlaceholder: '选择热电偶类型…',
@@ -2732,7 +2732,7 @@ const en: Record<string, string> = {
   // DAQ-T-1602 specific config fields (dev_t1602_)
   dev_t1602_sectionTitle: 'DAQ-T-1602 Acquisition Config',
   dev_t1602_sampleRate: 'Sampling Rate',
-  dev_t1602_sampleRateHint: 'Range 1~5 Hz, controls acquisition and save rate (firmware sampling period is fixed ~100ms)',
+  dev_t1602_sampleRateHint: 'Range 1~5 Hz, controls acquisition and save rate',
   dev_t1602_applyAllLabel: 'All-channel Type',
   dev_t1602_applyAllHint: 'Applies to all 16 channels immediately',
   dev_t1602_applyAllPlaceholder: 'Select thermocouple type…',
