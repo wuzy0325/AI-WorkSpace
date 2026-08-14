@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.15.4] - 2026-08-14
+
+### Fixed
+
+- **DAQ-T-1602 仪表盘卡片量程显示错误**：卡片此前固定显示 `MIN: -10 / MAX: 10`，与热电偶实际量程不符。现按各通道热电偶类型码（J/K/T/E/R/S/B/N）从共享固件量程表取量程，例如 T 型显示 `MIN: 0 / MAX: 1300`。
+- **DAQ-T-1602 配置面板提示文案**：移除采样频率 hint 中「设备固件采集周期固定 ~100ms」的说明，保留「范围 1~5 Hz，控制采集与保存频率」。
+
+### Internal
+
+- 新增共享工具 `utils/t1602Range.ts`：热电偶类型量程表 + `getDeviceChannelRange`，配置面板与仪表盘卡片共用同一量程来源；`DeviceDetailPanel`/`deviceStore` 的量程逻辑去重收敛到该 helper。
+
+### Verification
+
+- `npm run typecheck`（frontend）: passed
+- `npm run build`（frontend）: passed
+- `npx vitest run`（frontend）: passed（38 文件 / 366 用例，含新增 `t1602Range.test.ts`）
+- 生产构建 + NSIS 打包 + 冒烟启动：见 releases/0.15.4.md
+
+### Known Issues
+
+- 暂无新增。已知限制同 0.15.3：T 型量程下限恰为 0℃ 时真实 0℃ 测量与未接入不可区分；UI 修改热电偶类型保存后不会立即下发到已连接设备。
+
 ## [0.15.3] - 2026-08-14
 
 ### Fixed
