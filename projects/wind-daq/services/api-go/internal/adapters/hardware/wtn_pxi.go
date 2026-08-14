@@ -24,6 +24,12 @@ const (
 	WTN_PXI_LENGTH_PREFIX_BYTES = 4
 	WTN_PXI_MAX_PAYLOAD_BYTES   = 64 * 1024
 	WTN_PXI_REQUIRED_CHANNELS   = 8
+	// WTN_PXI_ARRAY_LEN_OFFSET 数据帧 payload 内数组长度字段偏移（2 字节协议前缀后）。
+	WTN_PXI_ARRAY_LEN_OFFSET = 2
+	// WTN_PXI_ARRAY_LEN_BYTES 数组长度字段字节数（LabVIEW 大端 uint32）。
+	WTN_PXI_ARRAY_LEN_BYTES = 4
+	// WTN_PXI_HEADER_BYTES 数据帧头部总字节数 = 2 字节前缀 + 4 字节数组长度。
+	WTN_PXI_HEADER_BYTES = 6
 )
 
 // wtnPXINoDataTimeout 是允许的最长无数据时间，超过则判定为连接异常。
@@ -528,7 +534,10 @@ func (d *WTNPXI) handlePayload(payload []byte) {
 		return
 	}
 
-	valueCount := len(payload) / 4
+	// 真实设备数据帧（LabVIEW Unflatten From String + double[]）：
+	//   payload = 2 字节协议前缀 + 4 字节大端数组长度 + N × double（大端）
+	// 长度校验 len(payload) == 6 + count*8 严格区分旧 float32 小端格式。
+	valueCount := decodeWTNPXICount(payload)
 	if valueCount < WTN_PXI_REQUIRED_CHANNELS {
 		slog.Debug("WTN_PXI insufficient values", "device", d.profile.ID, "count", valueCount)
 		return
@@ -542,10 +551,9 @@ func (d *WTNPXI) handlePayload(payload []byte) {
 			continue
 		}
 		if ch.Index >= 0 && ch.Index < valueCount {
-			idx := ch.Index * 4
-			val := math.Float32frombits(binary.LittleEndian.Uint32(payload[idx : idx+4]))
+			val := decodeWTNPXIDouble(payload, ch.Index)
 			indices = append(indices, ch.Index)
-			values = append(values, float64(val))
+			values = append(values, val)
 		}
 	}
 
@@ -557,4 +565,25 @@ func (d *WTNPXI) handlePayload(payload []byte) {
 		Channels:       values,
 		ChannelIndices: indices,
 	})
+}
+
+// decodeWTNPXICount 返回数据帧 payload 内的数组长度（大端 uint32 @[2:6]）。
+// 不是数据帧时返回 -1，上层据此跳过（设备信息帧等）。
+func decodeWTNPXICount(payload []byte) int {
+	if len(payload) < WTN_PXI_HEADER_BYTES {
+		return -1
+	}
+	count := int(binary.BigEndian.Uint32(payload[WTN_PXI_ARRAY_LEN_OFFSET : WTN_PXI_ARRAY_LEN_OFFSET+WTN_PXI_ARRAY_LEN_BYTES]))
+	if count <= 0 || count > WTN_PXI_MAX_PAYLOAD_BYTES/8 {
+		return -1
+	}
+	if len(payload) != WTN_PXI_HEADER_BYTES+count*8 {
+		return -1
+	}
+	return count
+}
+
+// decodeWTNPXIDouble 读取数据帧第 idx 个 double 值（大端，从偏移 6 起）。
+func decodeWTNPXIDouble(payload []byte, idx int) float64 {
+	return math.Float64frombits(binary.BigEndian.Uint64(payload[WTN_PXI_HEADER_BYTES+idx*8:]))
 }

@@ -207,6 +207,8 @@ func defaultDaqT1602Config() device.DaqT1602HardwareConfig {
 	for i := range cfg.TypeCodes {
 		cfg.TypeCodes[i] = 2
 	}
+	// 默认 5Hz（设备全速 ~4.9Hz 上限），采集/保存频率独立于全局刷新频率设置。
+	cfg.SampleRateHz = 5
 	return cfg
 }
 
@@ -375,9 +377,12 @@ func defaultDAQP1603Channels() []device.ChannelConfig {
 func defaultWTNPXIChannels() []device.ChannelConfig {
 	// 通道 3 是球罐稳定时间（秒），由 sphere tank gate 逻辑读取并解析为稳定时间，
 	// 通道 4~7 是 4 路球罐温度。原"球罐温度1"位置被稳定时间通道占用，温度顺延。
-	names := []string{"球罐压力", "球罐总压", "球罐静压", "球罐稳定时间", "球罐温度1", "球罐温度2", "球罐温度3", "球罐温度4"}
-	units := []string{"Pa", "Pa", "Pa", "s", "degC", "degC", "degC", "degC"}
-	channels := make([]device.ChannelConfig, 8)
+	//
+	// 真实设备（LabVIEW double[]）数据帧含 12 路，前 8 路为球罐通道，
+	// 第 9~12 路（索引 8~11）为通用附加通道 CH8~CH11。
+	names := []string{"球罐压力", "球罐总压", "球罐静压", "球罐稳定时间", "球罐温度1", "球罐温度2", "球罐温度3", "球罐温度4", "CH8", "CH9", "CH10", "CH11"}
+	units := []string{"Pa", "Pa", "Pa", "s", "degC", "degC", "degC", "degC", "", "", "", ""}
+	channels := make([]device.ChannelConfig, len(names))
 	for i := range channels {
 		channels[i] = device.ChannelConfig{
 			Index:     i,
