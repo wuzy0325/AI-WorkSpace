@@ -4,6 +4,7 @@ import (
 	"embed"
 	"log"
 	"log/slog"
+	"os"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -26,7 +27,7 @@ func main() {
 
 	app := backend.NewApp(appCtx)
 
-	wailsApp := application.New(application.Options{
+	appOpts := application.Options{
 		Name:        "Motion Controller",
 		Description: "Standalone motion controller desktop app",
 		LogLevel:    slog.LevelInfo,
@@ -40,7 +41,14 @@ func main() {
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
-	})
+	}
+	if cdpPort := os.Getenv("MOTION_CONTROLLER_CDP_PORT"); cdpPort != "" {
+		slog.Info("CDP debugging enabled (E2E test mode)", "port", cdpPort)
+		// go-webview2 会清空 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS，必须走
+		// WindowsOptions.AdditionalBrowserArgs（与 daq-p1604 的 E2E 机制一致）。
+		appOpts.Windows.AdditionalBrowserArgs = []string{"--remote-debugging-port=" + cdpPort}
+	}
+	wailsApp := application.New(appOpts)
 
 	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:         "Motion Controller",
