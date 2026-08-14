@@ -44,4 +44,12 @@
 
 - [x] T4.1 `validate-structure.ps1`：仅 2 个**既有**失败项（顶层 `tmp/` 目录、未跟踪的 `cmd/wtnpxi-gui/main.go` 588 行），与本次改动无关
 - [x] T4.2 真机验收（2026-08-13）：✅ `DAQ_T1602_REAL=1` 测试通过——16 通道类型读回、10s 轮询 48 帧 = 4.76 Hz（≈4.9 Hz 理论值）、类型写回校验通过
-- [ ] T4.3 spec §Success Criteria 逐条过：自动化项 + 真机项均已通过；剩余待办：移除前端"待校准"提示条（量程已定案）
+- [x] T4.3 spec §Success Criteria 逐条过：自动化项 + 真机项均已通过；"待校准"提示条与 i18n 键已移除（量程已定案）
+
+## Phase 5 — 配置面板 UI 增强（2026-08-19）
+
+- [x] T5.2 全通道类型设置：`DaqT1602Config.vue` 面板顶部新增"全通道类型"下拉（选项含量程），选择后一次性应用到全部 16 通道并复位（避免陈旧显示）
+- [x] T5.3 热电偶范围显示：量程表（设备固件 10 行表，§Type Code 枚举）在图例行展示（J: -50~50 ℃ · K: 0~1200 ℃ · …）；通道下拉 hover 提示量程（`UiSelect` 选项支持可选 `title`，向后兼容）
+- [x] T5.4 验证：`npm run typecheck` + `npm run build` + `vitest run` 全绿；`validate-frontend-structure.ps1 -CheckFileSize` 无新增问题（命中项均为既有）
+- [x] T5.5 **T1602 独立采样频率 1~5 Hz**（2026-08-19 定案）：T1602 配置面板新增"采样频率"（`DaqT1602HardwareConfig.SampleRateHz`，默认 5，独立于全局刷新频率，**全局刷新频率保持 1~10 不动**）——`shared/device-sdk/go/daq/hardware/daq_t1602_poll.go`（`SetPollIntervalFn` + 帧节拍器：间隔动态变化即时生效、读耗时超间隔自动追赶不积压）；适配器从 `config.SampleRateHz` 动态喂驱动（ApplyConfig 即时生效）；core/shared 类型 + 默认 profile + usecase 校验同步。设 1Hz 每秒读存 1 帧，设 5Hz 全速 ~4.9Hz；其他设备不受影响。测试：驱动节流/全速默认/动态变更 3 用例 + 适配器 SampleRateHz 往返用例
+- [x] T5.6 验证：`go build/vet/test`（shared SDK `-race` + wind-daq `./internal/... ./api/...`）+ 前端 `typecheck/build/test` 全绿

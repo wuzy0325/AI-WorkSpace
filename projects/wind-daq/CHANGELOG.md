@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.15.3] - 2026-08-14
+
+### Fixed
+
+- **WTN-PXI 数据帧解码错误**：真实设备（LabVIEW `Unflatten From String` + double[]）数据帧格式为 `2 字节前缀 + 4 字节大端数组长度 + N × double（大端）`，原实现按 `N × float32（小端）` 解析导致所有通道显示天文数字（-6.055e+31 等）。驱动 `wtn_pxi.go`、GUI/CLI 调试工具（`wtnpxi-gui`/`wtnpxi-diag`）均已修正：
+  - 数据帧按 `[2:6]` 大端 uint32 数组长度 + 偏移 6 起的 double（大端）解析，长度校验 `len == 6 + count*8` 严格区分旧格式
+  - 连接后首个 20B 帧为设备信息帧（TLV，含 "crio" 设备名），不再被误解析为通道值，日志显示 `[设备信息]`
+  - WTN-PXI 默认通道从 8 路扩展到 12 路（CH8~CH11 附加通道），与设备 12 值对齐
+- **NSIS 安装包 WebView2 下载**：runtime 已存在时跳过下载，下载失败改为警告不中断安装。
+
+### Internal
+
+- 新增 WTN-PXI 通讯协议调试工具 `cmd/wtnpxi-diag`（CLI）/ `cmd/wtnpxi-gui`（GUI）及协议抓包校准说明。
+- DAQ-T-1602 采集/保存频率支持设备专属采样率配置（`SampleRateHz`，独立于全局刷新频率），配置变更后下一帧即生效。
+- 七孔探针校准点生成与预览相关调整（含扇区分区坐标约定、方向补偿）。
+
+### Verification
+
+- `go test ./internal/... ./api/... ./cmd/...`（services/api-go）: passed
+- `go build ./...`（services/api-go）: passed
+- `npm run typecheck && npm run build`（frontend）: passed
+- 生产构建 + NSIS 打包 + 冒烟启动：见 releases/0.15.3.md
+
+### Known Issues
+
+- 暂无新增。已知限制同 0.15.2：T 型量程下限恰为 0℃ 时真实 0℃ 测量与未接入不可区分；UI 修改热电偶类型保存后不会立即下发到已连接设备。
+
 ## [0.15.2] - 2026-08-13
 
 ### Fixed
