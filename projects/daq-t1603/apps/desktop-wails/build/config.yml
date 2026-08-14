@@ -10,7 +10,7 @@ info:
   description: "DAQ-T-1603 温度采集"
   copyright: "(c) 2026, DAQ-T-1603 Team"
   comments: "Wails v3 desktop edition"
-  version: "0.6.9"
+  version: "0.6.10"
 
 # wails3 dev 监听 Go 源代码变化时的配置
 dev_mode:

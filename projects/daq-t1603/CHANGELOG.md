@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.6.10] - 2026-08-13
+
+### Added
+- 设备列表侧栏新增搜索过滤：按设备名称或 `IP:端口` 过滤（不区分大小写），设备计数随过滤结果实时更新。
+- 搜索无匹配时显示"未找到匹配设备"与"清除搜索"按钮，与"暂无设备"空状态区分，避免误导用户重复添加。
+
+### Changed
+- "添加设备"入口从顶栏移到侧栏头部，与扫描按钮并列，操作位置更贴近设备列表。
+- 侧栏头部按钮统一为小图标按钮样式（添加 / 扫描）。
+
+### Internal
+- `AppShell` 将 `add-device` 事件从 `MainTopBar` 迁移到 `DeviceSidebar`；`DeviceSidebar` 新增 `filteredSorted` 计算属性与搜索框组件。
+- i18n 新增 `sidebar.searchDevices` / `sidebar.noSearchMatch` / `sidebar.clearSearch` / `sidebar.addDevice` / `common.clear` 词条（中英双语）。
+- 同步 6 个版本号文件到 0.6.10：`VERSION` / `wails.json` / `frontend/package.json` / `frontend/package-lock.json`（含 `packages[""]`）/ `build/windows/installer/project.nsi` / `build/config.yml`。
+
+### Verification
+- `npm run typecheck`: passed.
+- `npm run build`: passed.
+- `$env:GOWORK="off"; go test ./... -count=1 -timeout 120s`: passed.
+- `task release`: passed.
+- `makensis '-DARG_WAILS_AMD64_BINARY=..\..\bin\daq-t1603.exe' project.nsi`（在 `build/windows/installer/` 目录下执行）: passed.
+
+### Known Issues
+- 内嵌 exe 的 ProductVersion 资源为空字符串是 wails3 v3.0.0-alpha2.106 已知限制，NSIS installer 壳版本显示正常。
+
 ## [0.6.9] - 2026-08-05
 
 ### Fixed
