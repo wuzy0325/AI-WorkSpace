@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
+	"sort"
 	"sync"
 	"time"
 )
@@ -502,11 +504,11 @@ func (a *SevenHoleAlgorithm) AcquireDataWithChannels(
 // ==================== 七孔探针点位生成（spec Task 6 / §6.2 / §9.1） ====================
 //
 // 七孔校准点位分内区（α-β 网格）与外区（θ-φ 网格）两套：
-//   - 内区点：Coordinates={α,β}, MotionCoordinates={α,β}（相同），Region="inner", Sector=7
-//   - 外区点：Coordinates={θ,φ}, MotionCoordinates={α',β'}（按 §3.3 正向公式换算），Region="outer", Sector=n（1~6）
+//   - 内区点：Coordinates={α,β}, MotionCoordinates={-α,β}（运动台 α 方向补偿），Region="inner", Sector=7
+//   - 外区点：Coordinates={θ,φ}, MotionCoordinates={-α',β'}（换算后补偿运动台 α 方向），Region="outer", Sector=n（1~6）
 //
 // 两种校准模式（spec §6.2）：
-//   - 完整模式（产品默认）：内区 169 + 外区 504 = 673 点
+//   - 完整模式（产品默认）：内区 169 + 外区 546 = 715 点
 //   - 数据集模式（验证基准）：内区 169 + 外区 312 = 481 点
 //
 // 蛇形顺序（spec Task 6）：外层 β/φ 循环，奇数行 α/θ 反向
@@ -525,9 +527,9 @@ func (a *SevenHoleAlgorithm) AcquireDataWithChannels(
 type SevenHoleMode string
 
 const (
-	// SevenHoleModeFull 完整模式（产品默认，673 点）
+	// SevenHoleModeFull 完整模式（产品默认，715 点）
 	// 内区 α∈[-30°,30°] 步长 5° × β∈[-30°,30°] 步长 5° = 169 点
-	// 外区 θ∈[30°,60°] 步长 5° × φ∈[0°,355°] 步长 5° = 504 点
+	// 外区 θ∈[30°,60°] 步长 5° × 6 扇区 × 13 个闭合 φ 网格点 = 546 点
 	SevenHoleModeFull SevenHoleMode = "full"
 
 	// SevenHoleModeDataset 数据集模式（验证基准，481 点）
@@ -586,12 +588,12 @@ const (
 // GenerateSevenHolePoints 根据配置生成七孔校准的所有点位（spec §9.1 接口契约）
 //
 // 返回 []CalPoint，每个点同时填充 Coordinates（逻辑坐标）和 MotionCoordinates（运动坐标）：
-//   - 内区点：Coordinates={α,β}, MotionCoordinates={α,β}（相同），Region="inner", Sector=7
-//   - 外区点：Coordinates={θ,φ}, MotionCoordinates={α',β'}（按 §3.3 正向公式换算），Region="outer", Sector=n（1~6）
+//   - 内区点：Coordinates={α,β}, MotionCoordinates={-α,β}（运动台 α 方向补偿），Region="inner", Sector=7
+//   - 外区点：Coordinates={θ,φ}, MotionCoordinates={-α',β'}（换算后补偿运动台 α 方向），Region="outer", Sector=n（1~6）
 //
 // 蛇形顺序（spec Task 6）：外层 β/φ 循环，奇数行 α/θ 反向（reverse := Serpentine && bi%2 == 1）
 //
-// 完整模式：内区 169 + 外区 504 = 673 点
+// 完整模式：内区 169 + 外区 546 = 715 点
 // 数据集模式：内区 169 + 外区 312 = 481 点
 //
 // 错误返回：
@@ -645,7 +647,7 @@ func GenerateSevenHolePoints(config SevenHoleConfig) ([]CalPoint, error) {
 //   - Points：完整点位列表（含 Coordinates + MotionCoordinates + Region + Sector）
 //   - TotalCount：总点数 = InnerCount + OuterCount
 //   - InnerCount：内区点数（α-β 网格，默认 169 点）
-//   - OuterCount：外区点数（6 扇区 × φ/θ 网格，完整模式 504 点 / 数据集模式 312 点）
+//   - OuterCount：外区点数（6 扇区 × φ/θ 网格，完整模式 546 点 / 数据集模式 312 点）
 //
 // Points 字段供前端可视化布点（如未启动校准时的"点位预览图"）；TotalCount 等聚合字段
 // 供前端状态栏直接显示，避免前端遍历 600+ 点计算分布。
@@ -664,7 +666,7 @@ type SevenHolePreviewResult struct {
 //
 // 内区点字段填充：
 //   - Coordinates = {"α": alpha, "β": beta}
-//   - MotionCoordinates = {"α": alpha, "β": beta}（与逻辑坐标相同）
+//   - MotionCoordinates = {"α": -alpha, "β": beta}（补偿运动台 α 方向）
 //   - Region = "inner", Sector = 7
 func generateSevenHoleInnerPoints(config SevenHoleConfig) ([]CalPoint, error) {
 	if config.InnerAlphaStep <= 0 || config.InnerBetaStep <= 0 {
@@ -696,7 +698,7 @@ func generateSevenHoleInnerPoints(config SevenHoleConfig) ([]CalPoint, error) {
 			points = append(points, CalPoint{
 				ID:                id,
 				Coordinates:       map[string]float64{"α": alpha, "β": beta},
-				MotionCoordinates: map[string]float64{"α": alpha, "β": beta},
+				MotionCoordinates: map[string]float64{"α": -alpha, "β": beta},
 				Region:            "inner",
 				Sector:            7,
 			})
@@ -715,14 +717,14 @@ func generateSevenHoleInnerPoints(config SevenHoleConfig) ([]CalPoint, error) {
 //     物理含义：俯仰角变更代价高（探针姿态调整），滚转角代价低（旋转台扫描），
 //     先固定 θ 扫一圈 φ 可减少机构换姿态次数，与既有校准数据时序完全一致。
 //
-// 蛇形走位（spec Task 6）：奇数 θ 行的 φ 反向
-//   - 例：θ=30°（第0行）φ 正向；θ=35°（第1行）φ 反向
+// 蛇形走位（spec Task 6）：奇数 θ 行同时反向扇区顺序和 φ 顺序
+//   - 例：θ=30°（第0行）扇区/φ 正向；θ=35°（第1行）扇区/φ 反向
 //   - 旋转台无需回程即可直接进入下一俯仰角，缩短校准时间
 //
 // 外区点字段填充：
 //   - Coordinates = {"θ": theta, "φ": phi}
-//   - MotionCoordinates = {"α": alpha', "β": beta'}（按 §3.3 正向公式换算）
-//   - Region = "outer", Sector = computeSectorFromPhi(phi)
+//   - MotionCoordinates = {"α": -alpha', "β": beta'}（按 §3.3 换算后补偿运动台 α 方向）
+//   - Region = "outer"；普通点归单一扇区，边界点在相邻扇区各生成一个独立采样点
 func generateSevenHoleFullOuterPoints(config SevenHoleConfig) ([]CalPoint, error) {
 	if config.OuterThetaStep <= 0 || config.OuterPhiStep <= 0 {
 		return nil, fmt.Errorf("外区步长必须 > 0 (theta=%.6f, phi=%.6f)", config.OuterThetaStep, config.OuterPhiStep)
@@ -739,38 +741,63 @@ func generateSevenHoleFullOuterPoints(config SevenHoleConfig) ([]CalPoint, error
 	// 调用方 GenerateSevenHolePoints 先生成内区再生成外区，外区 ID 起始 = 内区点数 + 1
 	// 但此处 generateSevenHoleFullOuterPoints 不知道内区点数，由 GenerateSevenHolePoints 重新编号
 	// 简化：此处 ID 从 1 开始，最后由 GenerateSevenHolePoints 合并时重编号
-	points := make([]CalPoint, 0, thetaCount*phiCount)
+	points := make([]CalPoint, 0, thetaCount*(phiCount+6))
 	id := 1
 
 	// 外层：θ 循环（俯仰角，慢轴）
 	for ti := 0; ti < thetaCount; ti++ {
 		theta := roundTo1Decimal(config.OuterThetaMin + float64(ti)*config.OuterThetaStep)
-		// 蛇形走位：奇数 θ 行的 φ 反向（spec Task 6）
 		reverse := config.Serpentine && ti%2 == 1
-
-		// 内层：φ 循环（滚转角，旋转台快速轴）
-		for pi := 0; pi < phiCount; pi++ {
-			phiIdx := pi
-			if reverse {
-				phiIdx = phiCount - 1 - pi
-			}
-			phi := roundTo1Decimal(config.OuterPhiMin + float64(phiIdx)*config.OuterPhiStep)
-
-			alpha, beta := ConvertThetaPhiToAlphaBeta(theta, phi)
-			sector := computeSectorFromPhi(phi)
-
-			points = append(points, CalPoint{
-				ID:                id,
-				Coordinates:       map[string]float64{"θ": theta, "φ": phi},
-				MotionCoordinates: map[string]float64{"α": roundTo1Decimal(alpha), "β": roundTo1Decimal(beta)},
-				Region:            "outer",
-				Sector:            sector,
-			})
+		row := generateSevenHoleFullOuterRow(theta, config, phiCount, reverse)
+		for i := range row {
+			row[i].ID = id
 			id++
 		}
+		points = append(points, row...)
 	}
 
 	return points, nil
+}
+
+func generateSevenHoleFullOuterRow(theta float64, config SevenHoleConfig, phiCount int, reverse bool) []CalPoint {
+	bySector := make([][]float64, 6)
+	for pi := 0; pi < phiCount; pi++ {
+		phi := roundTo1Decimal(config.OuterPhiMin + float64(pi)*config.OuterPhiStep)
+		sector := computeSectorFromPhi(phi)
+		bySector[sector-1] = append(bySector[sector-1], phi)
+		if lower, upper, ok := SevenHoleSectorBoundaryNeighbors(phi); ok {
+			other := lower
+			if sector == lower {
+				other = upper
+			}
+			bySector[other-1] = append(bySector[other-1], phi)
+		}
+	}
+
+	points := make([]CalPoint, 0, phiCount+6)
+	for si := 0; si < 6; si++ {
+		sector := si + 1
+		sort.Slice(bySector[si], func(i, j int) bool {
+			start := float64(sector-1)*sevenHoleDatasetSectorSpan - sevenHoleDatasetSectorSpan/2
+			return normalizeAngleFrom(start, bySector[si][i]) < normalizeAngleFrom(start, bySector[si][j])
+		})
+		for _, phi := range bySector[si] {
+			alpha, beta := ConvertThetaPhiToAlphaBeta(theta, phi)
+			points = append(points, CalPoint{
+				Coordinates:       map[string]float64{"θ": theta, "φ": phi},
+				MotionCoordinates: map[string]float64{"α": roundTo1Decimal(-alpha), "β": roundTo1Decimal(beta)},
+				Region:            "outer", Sector: sector,
+			})
+		}
+	}
+	if reverse {
+		slices.Reverse(points)
+	}
+	return points
+}
+
+func normalizeAngleFrom(start, angle float64) float64 {
+	return math.Mod(math.Mod(angle-start, 360.0)+360.0, 360.0)
 }
 
 // generateSevenHoleDatasetOuterPoints 数据集模式外区点位生成（spec §6.2）
@@ -857,7 +884,7 @@ func generateSevenHoleDatasetOuterPoints(config SevenHoleConfig) ([]CalPoint, er
 				points = append(points, CalPoint{
 					ID:                id,
 					Coordinates:       map[string]float64{"θ": theta, "φ": phi},
-					MotionCoordinates: map[string]float64{"α": roundTo1Decimal(alpha), "β": roundTo1Decimal(beta)},
+					MotionCoordinates: map[string]float64{"α": roundTo1Decimal(-alpha), "β": roundTo1Decimal(beta)},
 					Region:            "outer",
 					Sector:            sector,
 				})

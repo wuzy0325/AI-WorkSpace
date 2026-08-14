@@ -9,7 +9,7 @@ import (
 // ==================== 七孔探针点位生成测试（spec Task 6 / §3.3 / §6.2 / §9.1） ====================
 //
 // 测试覆盖 spec Task 6 验收标准的全部要求：
-//   - 点数：完整模式 673 点（169 内区 + 504 外区）；数据集模式 481 点（169 内区 + 312 外区）
+//   - 点数：完整模式 715 点（169 内区 + 546 外区）；数据集模式 481 点（169 内区 + 312 外区）
 //   - 双坐标：外区 MotionCoordinates 与 Coordinates 通过 §3.3 正向公式换算一致
 //   - 黄金用例 G1~G5：覆盖 φ=0°/90°/180°/270°/330° 五个方位，验证 α 公式负号正确性
 //   - 蛇形顺序：奇数行 α/θ 反向
@@ -25,8 +25,8 @@ import (
 // sevenHoleBuildFullConfig 构造完整模式默认配置（spec §6.2 推荐值）
 //
 // 内区 α/β ∈ [-30°, 30°] 步长 5° → 13×13 = 169 点
-// 外区 θ ∈ [30°, 60°] 步长 5° × φ ∈ [0°, 355°] 步长 5° → 7×72 = 504 点
-// 总计 673 点
+// 外区 θ ∈ [30°, 60°] 步长 5° × 6 扇区 × 13 φ = 546 点
+// 总计 715 点
 func sevenHoleBuildFullConfig(serpentine bool) SevenHoleConfig {
 	return SevenHoleConfig{
 		Mode:           SevenHoleModeFull,
@@ -50,7 +50,9 @@ func sevenHoleBuildFullConfig(serpentine bool) SevenHoleConfig {
 //
 // 内区 169 点同完整模式
 // 外区 θ ∈ {30°, 35°, 40°, 45°}（4 值，忽略 config 的 OuterTheta 范围）
-//        × 每扇区 φ 跨 60° 步长 5° = 13 点 × 6 扇区 = 312 点
+//
+//	× 每扇区 φ 跨 60° 步长 5° = 13 点 × 6 扇区 = 312 点
+//
 // 总计 481 点
 //
 // 注意：数据集模式下 OuterTheta/OuterPhi 字段被忽略，但为可读性仍填写推荐值
@@ -62,22 +64,22 @@ func sevenHoleBuildDatasetConfig(serpentine bool) SevenHoleConfig {
 
 // ==================== P0 核心测试：点数与黄金用例 ====================
 
-// TestGenerateSevenHolePointsFullMode 【P0】验证完整模式生成 673 点（169 内区 + 504 外区）
+// TestGenerateSevenHolePointsFullMode 【P0】验证完整模式生成 715 点（169 内区 + 546 外区）
 //
 // 测试前置：构造完整模式默认配置（内区 [-30°,30°] 步长 5°，外区 θ[30°,60°] 步长 5° × φ[0°,355°] 步长 5°）
 // 测试步骤：调用 GenerateSevenHolePoints
 // 期待结果：
-//   - 总点数 = 673
+//   - 总点数 = 715
 //   - 内区点数 = 169（Region="inner", Sector=7）
-//   - 外区点数 = 504（Region="outer", Sector ∈ {1..6}）
+//   - 外区点数 = 546（Region="outer", Sector ∈ {1..6}）
 func TestGenerateSevenHolePointsFullMode(t *testing.T) {
 	points, err := GenerateSevenHolePoints(sevenHoleBuildFullConfig(false))
 	if err != nil {
 		t.Fatalf("完整模式点位生成失败: %v", err)
 	}
 
-	if len(points) != 673 {
-		t.Errorf("完整模式总点数应为 673, 实际 %d", len(points))
+	if len(points) != 715 {
+		t.Errorf("完整模式总点数应为 715, 实际 %d", len(points))
 	}
 
 	// 统计内/外区点数
@@ -102,8 +104,95 @@ func TestGenerateSevenHolePointsFullMode(t *testing.T) {
 	if innerCount != 169 {
 		t.Errorf("内区点数应为 169, 实际 %d", innerCount)
 	}
-	if outerCount != 504 {
-		t.Errorf("外区点数应为 504, 实际 %d", outerCount)
+	if outerCount != 546 {
+		t.Errorf("外区点数应为 546, 实际 %d", outerCount)
+	}
+}
+
+func TestGenerateSevenHolePointsFullModeUsesClosedSectorGrids(t *testing.T) {
+	points, err := GenerateSevenHolePoints(sevenHoleBuildFullConfig(false))
+	if err != nil {
+		t.Fatalf("完整模式点位生成失败: %v", err)
+	}
+
+	sectorOnePhi := make([]float64, 0, 13)
+	sectorCounts := make(map[int]int, 6)
+	for _, point := range points {
+		if point.Region != "outer" {
+			continue
+		}
+		sectorCounts[point.Sector]++
+		if point.Sector == 1 && point.Coordinates["θ"] == 30 {
+			sectorOnePhi = append(sectorOnePhi, point.Coordinates["φ"])
+		}
+	}
+
+	wantPhi := []float64{330, 335, 340, 345, 350, 355, 0, 5, 10, 15, 20, 25, 30}
+	if len(sectorOnePhi) != len(wantPhi) {
+		t.Fatalf("完整模式 1 区每个 θ 应有 13 个 φ 点, 实际 %d: %v", len(sectorOnePhi), sectorOnePhi)
+	}
+	for i, want := range wantPhi {
+		if sectorOnePhi[i] != want {
+			t.Errorf("完整模式 1 区第 %d 个 φ 应为 %.1f, 实际 %.1f", i, want, sectorOnePhi[i])
+		}
+	}
+	for sector := 1; sector <= 6; sector++ {
+		if sectorCounts[sector] != 91 {
+			t.Errorf("完整模式 %d 区应有 91 点 (7 θ × 13 φ), 实际 %d", sector, sectorCounts[sector])
+		}
+	}
+}
+
+func TestGenerateSevenHolePointsFullModeMatchesFourThetaReferenceLayout(t *testing.T) {
+	config := sevenHoleBuildFullConfig(false)
+	config.OuterThetaMax = 45
+
+	points, err := GenerateSevenHolePoints(config)
+	if err != nil {
+		t.Fatalf("完整模式点位生成失败: %v", err)
+	}
+	if len(points) != 481 {
+		t.Fatalf("四层 θ 的标准布局应有 481 点 (169+312), 实际 %d", len(points))
+	}
+
+	sectorCounts := make(map[int]int, 6)
+	for _, point := range points {
+		if point.Region == "outer" {
+			sectorCounts[point.Sector]++
+		}
+	}
+	for sector := 1; sector <= 6; sector++ {
+		if sectorCounts[sector] != 52 {
+			t.Errorf("标准布局 %d 区应有 52 点, 实际 %d", sector, sectorCounts[sector])
+		}
+	}
+}
+
+func TestGenerateSevenHolePointsCompensatesAlphaMotionDirection(t *testing.T) {
+	innerConfig := SevenHoleConfig{
+		Mode:          SevenHoleModeFull,
+		InnerAlphaMin: 30, InnerAlphaMax: 30, InnerAlphaStep: 5,
+		InnerBetaMin: 0, InnerBetaMax: 0, InnerBetaStep: 5,
+		OuterThetaMin: 30, OuterThetaMax: 30, OuterThetaStep: 5,
+		OuterPhiMin: 90, OuterPhiMax: 90, OuterPhiStep: 5,
+	}
+	points, err := GenerateSevenHolePoints(innerConfig)
+	if err != nil {
+		t.Fatalf("点位生成失败: %v", err)
+	}
+	if len(points) != 3 {
+		t.Fatalf("φ=90° 边界应生成 1 个内区点和 2 个相邻扇区外区点, 实际 %d", len(points))
+	}
+	if points[1].Sector != 2 || points[2].Sector != 3 {
+		t.Fatalf("φ=90° 边界外区扇区应为 2 和 3, 实际 %d 和 %d", points[1].Sector, points[2].Sector)
+	}
+
+	if got := points[0].MotionCoordinates["α"]; got != -30 {
+		t.Errorf("内区逻辑 α=30° 时物理 α 应为 -30°, 实际 %.1f", got)
+	}
+	outer := points[1]
+	if got := outer.MotionCoordinates["α"]; got != 30 {
+		t.Errorf("外区 θ=30°/φ=90° 时物理 α 应为 30°, 实际 %.1f", got)
 	}
 }
 
@@ -162,46 +251,51 @@ func TestGenerateSevenHolePointsDatasetMode(t *testing.T) {
 // 这组用例覆盖 φ=0°/90°/180°/270° 四个主轴方位 + φ=330° 数据集验证点，
 // 用于捕获 α 公式负号被误删的回归——若负号丢失，G2/G4 的 α 符号会反转。
 //
-// 测试前置：构造单点完整模式配置（外区仅 1 个点，按用例输入 θ/φ）
-// 测试步骤：调用 GenerateSevenHolePoints，取第一个外区点
+// 测试前置：构造单 φ 完整模式配置（边界 φ 会复制到两个相邻扇区）
+// 测试步骤：调用 GenerateSevenHolePoints，检查外区点数、扇区与换算结果
 // 期待结果：MotionCoordinates 的 (α, β) 与 spec §3.3 表中正向输出一致（误差 < 0.1°）
 func TestSevenHoleGoldenCases(t *testing.T) {
 	cases := []struct {
-		name        string
-		theta, phi  float64
-		expectAlpha float64
-		expectBeta  float64
+		name          string
+		theta, phi    float64
+		expectAlpha   float64
+		expectBeta    float64
+		expectSectors []int
 	}{
-		{"G1_φ0°_P1", 30.0, 0.0, 0.0, 30.0},
-		{"G2_φ90°_P2P3", 30.0, 90.0, -30.0, 0.0},
-		{"G3_φ180°_P4", 30.0, 180.0, 0.0, -30.0},
-		{"G4_φ270°_P5P6", 30.0, 270.0, 30.0, 0.0},
-		{"G5_φ330°_P1", 30.0, 330.0, 16.1, 26.6},
+		{"G1_φ0°_P1", 30.0, 0.0, 0.0, 30.0, []int{1}},
+		{"G2_φ90°_P2P3", 30.0, 90.0, 30.0, 0.0, []int{2, 3}},
+		{"G3_φ180°_P4", 30.0, 180.0, 0.0, -30.0, []int{4}},
+		{"G4_φ270°_P5P6", 30.0, 270.0, -30.0, 0.0, []int{5, 6}},
+		{"G5_φ330°_P1P6", 30.0, 330.0, -16.1, 26.6, []int{1, 6}},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			// 构造仅含一个外区点的配置（θ/φ 范围收紧到目标点）
 			cfg := SevenHoleConfig{
-				Mode:           SevenHoleModeFull,
-				InnerAlphaMin:  0.0, InnerAlphaMax: 0.0, InnerAlphaStep: 1.0,
-				InnerBetaMin:   0.0, InnerBetaMax: 0.0, InnerBetaStep: 1.0,
-				OuterThetaMin:  c.theta, OuterThetaMax: c.theta, OuterThetaStep: 1.0,
-				OuterPhiMin:    c.phi, OuterPhiMax: c.phi, OuterPhiStep: 1.0,
-				Serpentine:     false,
+				Mode:          SevenHoleModeFull,
+				InnerAlphaMin: 0.0, InnerAlphaMax: 0.0, InnerAlphaStep: 1.0,
+				InnerBetaMin: 0.0, InnerBetaMax: 0.0, InnerBetaStep: 1.0,
+				OuterThetaMin: c.theta, OuterThetaMax: c.theta, OuterThetaStep: 1.0,
+				OuterPhiMin: c.phi, OuterPhiMax: c.phi, OuterPhiStep: 1.0,
+				Serpentine: false,
 			}
 			points, err := GenerateSevenHolePoints(cfg)
 			if err != nil {
 				t.Fatalf("用例 %s 点位生成失败: %v", c.name, err)
 			}
-			// 内区 1 点 + 外区 1 点 = 2 点
-			if len(points) != 2 {
-				t.Fatalf("用例 %s 应生成 2 点 (1 内 + 1 外), 实际 %d", c.name, len(points))
+			wantCount := 1 + len(c.expectSectors)
+			if len(points) != wantCount {
+				t.Fatalf("用例 %s 应生成 %d 个点（边界 φ 双扇区复制）, 实际 %d", c.name, wantCount, len(points))
+			}
+			for i, sector := range c.expectSectors {
+				outerPoint := points[i+1]
+				if outerPoint.Region != "outer" || outerPoint.Sector != sector {
+					t.Fatalf("用例 %s 第 %d 个外区点应属于扇区 %d, 实际 Region=%s Sector=%d",
+						c.name, i+1, sector, outerPoint.Region, outerPoint.Sector)
+				}
 			}
 			outer := points[1]
-			if outer.Region != "outer" {
-				t.Fatalf("用例 %s 第 2 个点应为外区, 实际 Region=%s", c.name, outer.Region)
-			}
 
 			alpha := outer.MotionCoordinates["α"]
 			beta := outer.MotionCoordinates["β"]
@@ -215,8 +309,8 @@ func TestSevenHoleGoldenCases(t *testing.T) {
 					c.name, c.expectBeta, beta, math.Abs(beta-c.expectBeta))
 			}
 
-			// 反向回算验证（θ, φ）一致性
-			thetaBack, phiBack := ConvertAlphaBetaToThetaPhi(alpha, beta)
+			// 反向回算前恢复算法坐标系的 α 符号。
+			thetaBack, phiBack := ConvertAlphaBetaToThetaPhi(-alpha, beta)
 			if math.Abs(thetaBack-c.theta) > 0.1 {
 				t.Errorf("用例 %s 反向 θ 应为 %.1f°, 实际 %.4f°", c.name, c.theta, thetaBack)
 			}
@@ -319,6 +413,7 @@ func TestSevenHoleAlphaSign(t *testing.T) {
 // 测试步骤：
 //   - 调用 GenerateSevenHolePoints
 //   - 遍历所有外区点，对每个点用 ConvertThetaPhiToAlphaBeta 独立换算并 round 到 1 位小数
+//
 // 期待结果：每个外区点的 MotionCoordinates 与"独立换算 + round"结果完全一致
 func TestSevenHoleDualCoordinates(t *testing.T) {
 	points, err := GenerateSevenHolePoints(sevenHoleBuildFullConfig(false))
@@ -334,7 +429,7 @@ func TestSevenHoleDualCoordinates(t *testing.T) {
 		phi := p.Coordinates["φ"]
 		rawAlpha, rawBeta := ConvertThetaPhiToAlphaBeta(theta, phi)
 		// 与实现保持一致：换算后 round 到 1 位小数（spec Task 6）
-		expectAlpha := roundTo1Decimal(rawAlpha)
+		expectAlpha := roundTo1Decimal(-rawAlpha)
 		expectBeta := roundTo1Decimal(rawBeta)
 
 		actualAlpha := p.MotionCoordinates["α"]
@@ -356,7 +451,7 @@ func TestSevenHoleDualCoordinates(t *testing.T) {
 // TestGenerateSevenHolePoints_IDUniqueness 【P1】验证 ID 全局唯一且从 1 递增
 //
 // 防止 Task 6.1 实现中"子生成器各自从 1 编号、合并未重编号"的回归——
-// 该 bug 会导致内区 ID=1..169 与外区 ID=1..504 冲突。
+// 该 bug 会导致内区 ID=1..169 与外区 ID=1..546 冲突。
 //
 // 测试前置：构造完整模式默认配置
 // 测试步骤：调用 GenerateSevenHolePoints，收集所有 ID 并排序
@@ -381,7 +476,7 @@ func TestGenerateSevenHolePoints_IDUniqueness(t *testing.T) {
 		t.Errorf("ID 唯一性失败: 总点数 %d, 唯一 ID 数 %d", len(points), len(ids))
 	}
 
-	// 验证 ID 范围 [1, 673]
+	// 验证 ID 范围 [1, 715]
 	sortedIDs := make([]int, 0, len(points))
 	for _, p := range points {
 		sortedIDs = append(sortedIDs, p.ID)
@@ -390,8 +485,8 @@ func TestGenerateSevenHolePoints_IDUniqueness(t *testing.T) {
 	if sortedIDs[0] != 1 {
 		t.Errorf("最小 ID 应为 1, 实际 %d", sortedIDs[0])
 	}
-	if sortedIDs[len(sortedIDs)-1] != 673 {
-		t.Errorf("最大 ID 应为 673, 实际 %d", sortedIDs[len(sortedIDs)-1])
+	if sortedIDs[len(sortedIDs)-1] != 715 {
+		t.Errorf("最大 ID 应为 715, 实际 %d", sortedIDs[len(sortedIDs)-1])
 	}
 
 	// 验证内/外区 ID 衔接：内区最后一个点 ID=169，外区第一个点 ID=170
@@ -405,14 +500,13 @@ func TestGenerateSevenHolePoints_IDUniqueness(t *testing.T) {
 	}
 }
 
-// TestGenerateSevenHolePoints_InnerCoordinates 【P1】验证内区点 Coordinates 与 MotionCoordinates 相同
+// TestGenerateSevenHolePoints_InnerCoordinates 【P1】验证内区点逻辑坐标与运动台方向补偿
 //
-// spec §3.4 双坐标模型：内区点 MotionCoordinates = {"α", "β"}（与逻辑坐标相同），
-// 不做换算——内区本就用 α-β 坐标系，无需转换。
+// 内区逻辑坐标保留标准数据的 α/β 定义；运动坐标仅将 α 反号，以补偿当前运动台安装方向。
 //
 // 测试前置：构造完整模式默认配置
 // 测试步骤：调用 GenerateSevenHolePoints，遍历内区点
-// 期待结果：每个内区点的 Coordinates 与 MotionCoordinates 完全相同
+// 期待结果：MotionCoordinates.α = -Coordinates.α，β 保持相同
 func TestGenerateSevenHolePoints_InnerCoordinates(t *testing.T) {
 	points, err := GenerateSevenHolePoints(sevenHoleBuildFullConfig(false))
 	if err != nil {
@@ -428,8 +522,8 @@ func TestGenerateSevenHolePoints_InnerCoordinates(t *testing.T) {
 		alphaM := p.MotionCoordinates["α"]
 		betaM := p.MotionCoordinates["β"]
 
-		if math.Abs(alphaC-alphaM) > epsilon {
-			t.Errorf("内区点 ID=%d α 逻辑坐标 %.4f ≠ 运动坐标 %.4f", p.ID, alphaC, alphaM)
+		if math.Abs(alphaC+alphaM) > epsilon {
+			t.Errorf("内区点 ID=%d α 运动坐标应为逻辑坐标反号: %.4f/%.4f", p.ID, alphaC, alphaM)
 		}
 		if math.Abs(betaC-betaM) > epsilon {
 			t.Errorf("内区点 ID=%d β 逻辑坐标 %.4f ≠ 运动坐标 %.4f", p.ID, betaC, betaM)
@@ -538,6 +632,31 @@ func TestGenerateSevenHolePoints_Serpentine(t *testing.T) {
 			t.Errorf("第 1 行位置 %d β 应相同（蛇形不反转 β）: normal=%.1f serp=%.1f",
 				i, betaNormal, betaSerp)
 		}
+	}
+}
+
+func TestGenerateSevenHolePoints_FullSerpentineOuterReversesSectorAndPhiOrder(t *testing.T) {
+	points, err := GenerateSevenHolePoints(sevenHoleBuildFullConfig(true))
+	if err != nil {
+		t.Fatalf("完整模式蛇形点位生成失败: %v", err)
+	}
+
+	const (
+		innerCount   = 169
+		outerRowSize = 78
+	)
+	oddRow := points[innerCount+outerRowSize : innerCount+2*outerRowSize]
+	if oddRow[0].Sector != 6 || oddRow[len(oddRow)-1].Sector != 1 {
+		t.Fatalf("奇数 θ 行扇区应从 6 反向到 1, 实际首尾扇区 %d→%d", oddRow[0].Sector, oddRow[len(oddRow)-1].Sector)
+	}
+	wantFirstPhi := []float64{330, 325, 320, 315}
+	for i, want := range wantFirstPhi {
+		if got := oddRow[i].Coordinates["φ"]; got != want {
+			t.Errorf("奇数 θ 行 Sector 6 第 %d 个 φ 应为 %.1f, 实际 %.1f", i, want, got)
+		}
+	}
+	if got := oddRow[0].Coordinates["θ"]; got != 35 {
+		t.Errorf("奇数外区行 θ 应为 35, 实际 %.1f", got)
 	}
 }
 
@@ -659,7 +778,7 @@ func TestGenerateSevenHolePoints_StepValidation(t *testing.T) {
 //
 // 测试前置：构造 Mode="" 的配置（其他字段同完整模式）
 // 测试步骤：调用 GenerateSevenHolePoints
-// 期待结果：返回 673 点（与 SevenHoleModeFull 一致）
+// 期待结果：返回 715 点（与 SevenHoleModeFull 一致）
 func TestGenerateSevenHolePoints_DefaultMode(t *testing.T) {
 	cfg := sevenHoleBuildFullConfig(false)
 	cfg.Mode = "" // 空模式
@@ -668,8 +787,8 @@ func TestGenerateSevenHolePoints_DefaultMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("空 Mode 点位生成失败: %v", err)
 	}
-	if len(points) != 673 {
-		t.Errorf("空 Mode 应默认走完整模式 (673 点), 实际 %d 点", len(points))
+	if len(points) != 715 {
+		t.Errorf("空 Mode 应默认走完整模式 (715 点), 实际 %d 点", len(points))
 	}
 }
 
