@@ -40,14 +40,14 @@ const (
 )
 
 type ChannelConfig struct {
-	Index      int                `json:"index"`
-	Name       string             `json:"name"`
-	Enabled    bool               `json:"enabled"`
-	Unit       string             `json:"unit"`
-	Precision  int                `json:"precision"`
-	RangeMin   float64            `json:"rangeMin,omitempty"`
-	RangeMax   float64            `json:"rangeMax,omitempty"`
-	TareOffset float64            `json:"tareOffset,omitempty"`
+	Index      int     `json:"index"`
+	Name       string  `json:"name"`
+	Enabled    bool    `json:"enabled"`
+	Unit       string  `json:"unit"`
+	Precision  int     `json:"precision"`
+	RangeMin   float64 `json:"rangeMin,omitempty"`
+	RangeMax   float64 `json:"rangeMax,omitempty"`
+	TareOffset float64 `json:"tareOffset,omitempty"`
 	// SensorType 通道传感器类型（pressure/temperature）。
 	// 仅 DAQ-P-1603 使用：每通道物理接口可接入压力或温度传感器。
 	// 旧 profile（DAQ-P-1604 / DAQ-T-1603）无此字段，反序列化时由 UnmarshalJSON 默认填充 "pressure"，
@@ -55,17 +55,15 @@ type ChannelConfig struct {
 	SensorType ChannelSensorType `json:"sensorType,omitempty"`
 
 	// ---- v2 校零字段（与 wind-daq device.ChannelConfig 同步）----
-	CalibrationOffset  float64 `json:"calibrationOffset,omitempty"`
-	CalibrationUnit    string  `json:"calibrationUnit,omitempty"`
-	CalibrationAt      int64   `json:"calibrationAt,omitempty"`
+	CalibrationOffset float64 `json:"calibrationOffset,omitempty"`
+	CalibrationUnit   string  `json:"calibrationUnit,omitempty"`
+	CalibrationAt     int64   `json:"calibrationAt,omitempty"`
 	// CalibrationEnabled 不使用 omitempty：false 是用户主动设置的合法值
 	// （DAQ-P-1603 逐通道可关闭校零应用），加 omitempty 会在序列化时丢字段，
 	// 导致 HTTP 回读 / 持久化 JSON 后前端拿到 undefined，UI 复选框跳回默认勾选状态，
 	// 造成"配置无法保存"的观感。必须与 wind-daq device.ChannelConfig 保持一致。
 	CalibrationEnabled bool `json:"calibrationEnabled"`
 }
-
-
 
 type Profile struct {
 	ID             string                 `json:"id"`
@@ -82,12 +80,12 @@ type Profile struct {
 
 type DaqT1603HardwareConfig struct {
 	ThermocoupleTypes string `json:"thermocoupleTypes"` // 16 chars, one per channel, e.g. "KKKKKKKKKKKKKKKK"
-	ChannelMask       string `json:"channelMask"`        // hex 0000-FFFF
-	SamplingRate      int    `json:"samplingRate"`       // Hz
-	BinaryFormat      bool   `json:"binaryFormat"`       // true=float32 LE, false=ASCII text
-	AverageCount      int    `json:"averageCount"`       // 1-100
-	TriggerMode       int    `json:"triggerMode"`        // 0=software, 2=hardware
-	TriggerEdge       int    `json:"triggerEdge"`        // 0=rising, 1=falling, 2=change
+	ChannelMask       string `json:"channelMask"`       // hex 0000-FFFF
+	SamplingRate      int    `json:"samplingRate"`      // Hz
+	BinaryFormat      bool   `json:"binaryFormat"`      // true=float32 LE, false=ASCII text
+	AverageCount      int    `json:"averageCount"`      // 1-100
+	TriggerMode       int    `json:"triggerMode"`       // 0=software, 2=hardware
+	TriggerEdge       int    `json:"triggerEdge"`       // 0=rising, 1=falling, 2=change
 	TriggerCount      int    `json:"triggerCount"`
 	ShowTimestamp     bool   `json:"showTimestamp"`
 	ShowSequence      bool   `json:"showSequence"`
@@ -96,12 +94,15 @@ type DaqT1603HardwareConfig struct {
 
 // DaqT1602HardwareConfig DAQ-T-1602 硬件配置镜像。
 // T1602 固件固定 ~100ms 采集周期，无采样率/通道掩码/触发概念（spec Q5），
-// 唯一可配置项是 16 通道热电偶类型。
+// 但"读取/保存"频率由软件轮询间隔控制（见 hardware.DAQT1602.SetPollIntervalFn）。
 type DaqT1602HardwareConfig struct {
 	// TypeCodes 16 通道热电偶类型码（0=J 1=K 2=T 3=E 4=R 5=S 6=B 7=N，
 	// 见 spec-daq-t1602 §Type Code 枚举）；索引 0~7 为卡1（Unit ID 1，
 	// Holding 200~207），索引 8~15 为卡2（Unit ID 2，Holding 200~207）。
 	TypeCodes [16]uint8 `json:"typeCodes"`
+	// SampleRateHz 采集/保存频率（Hz），范围 1~5；<=0 表示全速
+	// （驱动按设备单帧上限 ~4.9Hz）。仅控制驱动轮询节奏，不写设备寄存器。
+	SampleRateHz float64 `json:"sampleRateHz,omitempty"`
 }
 
 type Status struct {

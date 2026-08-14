@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"shared.local/device-sdk/go/pkg/slog"
 	"reflect"
 	"strconv"
@@ -1281,12 +1282,16 @@ func validateDaqT1603Config(config device.DaqT1603HardwareConfig) error {
 }
 
 // validateDaqT1602Config 校验 16 通道热电偶类型码（spec-daq-t1602 §Type Code 枚举：
-// 0=J 1=K 2=T 3=E 4=R 5=S 6=B 7=N）。
+// 0=J 1=K 2=T 3=E 4=R 5=S 6=B 7=N）与采样频率（1~5Hz，0 表示全速/缺省）。
 func validateDaqT1602Config(config device.DaqT1602HardwareConfig) error {
 	for ch, code := range config.TypeCodes {
 		if code > 7 {
 			return fmt.Errorf("typeCodes[%d]=%d out of range; valid: 0-7 (J,K,T,E,R,S,B,N)", ch, code)
 		}
+	}
+	if math.IsNaN(config.SampleRateHz) || math.IsInf(config.SampleRateHz, 0) ||
+		(config.SampleRateHz != 0 && (config.SampleRateHz < 1 || config.SampleRateHz > 5 || config.SampleRateHz != math.Trunc(config.SampleRateHz))) {
+		return fmt.Errorf("sampleRateHz=%v out of range; valid: integer 1-5 (0 = full speed)", config.SampleRateHz)
 	}
 	return nil
 }

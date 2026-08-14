@@ -960,7 +960,13 @@ const zh: Record<string, string> = {
   dev_t1603_triggerEdgeToggle: '跳变',
 
   // DAQ-T-1602 专属配置字段（dev_t1602_）
-  dev_t1602_sectionTitle: 'DAQ-T-1602 热电偶类型',
+  dev_t1602_sectionTitle: 'DAQ-T-1602 采集配置',
+  dev_t1602_sampleRate: '采样频率',
+  dev_t1602_sampleRateHint: '范围 1~5 Hz，控制采集与保存频率（设备固件采集周期固定 ~100ms）',
+  dev_t1602_applyAllLabel: '全通道类型',
+  dev_t1602_applyAllHint: '选择后立即应用到全部 16 通道',
+  dev_t1602_applyAllPlaceholder: '选择热电偶类型…',
+  dev_t1602_rangeTitle: '热电偶量程（℃）',
 
   // DAQ-P-1603 专属配置字段（dev_p1603_）
   dev_p1603_samplingRate: '采样率 (Hz)',
@@ -1430,7 +1436,7 @@ const zh: Record<string, string> = {
   ch_sevenHoleDesc: '大角度流场测量，支持内区(α-β)与外区(θ-φ)双坐标系自动校准。',
   ch_sevenHoleFeat1: '内区Kα-Kβ+外区Kθ-Kφ双套系数',
   ch_sevenHoleFeat2: 'P7中心孔优先分区判定',
-  ch_sevenHoleFeat3: '481点数据集/673点完整模式',
+  ch_sevenHoleFeat3: '481点数据集/715点完整模式',
   ch_threeHoleName: '三孔探针校准',
   ch_threeHoleDesc: '二维平面流动测量，专注于偏航角(θ)的精准方向标定。',
   ch_threeHoleFeat1: '方向系数K线性拟合',
@@ -2724,7 +2730,13 @@ const en: Record<string, string> = {
   dev_t1603_triggerEdgeToggle: 'Toggle',
 
   // DAQ-T-1602 specific config fields (dev_t1602_)
-  dev_t1602_sectionTitle: 'DAQ-T-1602 Thermocouple Types',
+  dev_t1602_sectionTitle: 'DAQ-T-1602 Acquisition Config',
+  dev_t1602_sampleRate: 'Sampling Rate',
+  dev_t1602_sampleRateHint: 'Range 1~5 Hz, controls acquisition and save rate (firmware sampling period is fixed ~100ms)',
+  dev_t1602_applyAllLabel: 'All-channel Type',
+  dev_t1602_applyAllHint: 'Applies to all 16 channels immediately',
+  dev_t1602_applyAllPlaceholder: 'Select thermocouple type…',
+  dev_t1602_rangeTitle: 'Thermocouple range (℃)',
 
   // DAQ-P-1603 specific config fields (dev_p1603_)
   dev_p1603_samplingRate: 'Sampling Rate (Hz)',
@@ -3196,7 +3208,7 @@ const en: Record<string, string> = {
   ch_sevenHoleDesc: 'Large-angle flow measurement with dual coordinate systems (inner α-β / outer θ-φ).',
   ch_sevenHoleFeat1: 'Inner Kα-Kβ + outer Kθ-Kφ dual coefficients',
   ch_sevenHoleFeat2: 'P7 center hole priority region detection',
-  ch_sevenHoleFeat3: '481-point dataset / 673-point full mode',
+  ch_sevenHoleFeat3: '481-point dataset / 715-point full mode',
   ch_threeHoleName: 'Three-Hole Probe Calibration',
   ch_threeHoleDesc: '2D planar flow measurement focused on precise yaw angle (θ) direction calibration.',
   ch_threeHoleFeat1: 'Direction coefficient K linear fitting',

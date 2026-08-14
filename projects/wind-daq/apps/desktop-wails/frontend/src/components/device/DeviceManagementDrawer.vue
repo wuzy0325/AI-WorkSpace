@@ -338,9 +338,9 @@ function createBlankProfile(type: DeviceType): DeviceProfile {
     daqT1603Config: type === 'DAQ-T-1603'
       ? { thermocoupleTypes: 'KKKKKKKKKKKKKKKK', channelMask: 'FFFF', samplingRate: 10, binaryFormat: false, averageCount: 4, triggerMode: 0, triggerEdge: 0, triggerCount: 0, showTimestamp: false, showSequence: false, openCircuitCheck: '0000' }
       : undefined,
-    // DAQ-T-1602 默认 16 通道全 T 型（type code 2），与真机出厂现值一致
+    // DAQ-T-1602 默认 16 通道全 T 型（type code 2），采样频率 5Hz（设备全速上限）
     daqT1602Config: type === 'DAQ-T-1602'
-      ? { typeCodes: Array(16).fill(2) }
+      ? { typeCodes: Array(16).fill(2), sampleRateHz: 5 }
       : undefined,
     // DAQ-P-1604 默认开启硬件时间戳（更精确），与 daq-p1604 项目对齐；用户可在"基本信息"中关闭回退到系统时间。
     daqP1604UseDeviceTimestamp: type === 'DAQ-P-1604' ? true : undefined,
@@ -478,9 +478,13 @@ function openEdit(p: DeviceProfile) {
       draft.value.channels[i].thermocoupleType = stored[i] || 'K'
     }
   }
-  // DAQ-T-1602：兼容缺省配置的旧 profile，补默认（16 通道全 T 型）
-  if (draft.value.type === 'DAQ-T-1602' && !draft.value.daqT1602Config) {
-    draft.value.daqT1602Config = { typeCodes: Array(16).fill(2) }
+  // DAQ-T-1602：兼容旧 profile，补齐缺省配置字段（16 通道全 T 型 + 5Hz）
+  if (draft.value.type === 'DAQ-T-1602') {
+    const config = draft.value.daqT1602Config ?? { typeCodes: Array(16).fill(2), sampleRateHz: 5 }
+    draft.value.daqT1602Config = {
+      typeCodes: config.typeCodes?.length ? config.typeCodes : Array(16).fill(2),
+      sampleRateHz: config.sampleRateHz ?? 5,
+    }
   }
   // DSA3217：恢复上次保存的 AVG/PERIOD（未连接时初始化为默认）
   dsa3217Avg.value = 32
@@ -525,7 +529,7 @@ async function onTypeChanged(next: DeviceType) {
     draft.value.address = '192.168.3.101'
     draft.value.port = 9000
   } else if (next === 'DAQ-T-1602') {
-    draft.value.daqT1602Config = { typeCodes: Array(16).fill(2) }
+    draft.value.daqT1602Config = { typeCodes: Array(16).fill(2), sampleRateHz: 5 }
     draft.value.address = '192.168.3.201'
     draft.value.port = 502
   } else if (next === 'DAQ-P-1604' || next === 'WTN_PXI') {
@@ -1453,6 +1457,7 @@ const scanError = ref<string | null>(null)
               <div v-else-if="draft.type === 'DAQ-T-1602' && draft.daqT1602Config" class="editor-channels-special">
                 <DaqT1602Config
                   v-model:type-codes="draft.daqT1602Config.typeCodes"
+                  v-model:sample-rate="draft.daqT1602Config.sampleRateHz"
                   :disabled="isReadOnly"
                 />
               </div>

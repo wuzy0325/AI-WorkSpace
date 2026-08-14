@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	sharedcore "shared.local/device-sdk/go/daq/core"
 	sharedhw "shared.local/device-sdk/go/daq/hardware"
@@ -56,6 +57,18 @@ func (a *T1602Adapter) Connect() error {
 	}
 
 	dev := sharedhw.NewDAQT1602(mapToSharedT1602Profile(a.profile))
+	// T1602 采集/保存频率来自设备专属配置 SampleRateHz（独立于全局刷新频率）：
+	// 驱动轮询间隔 = 1000/hz ms，每次采样前动态读取（hz<=0 视为全速）。
+	// 配置变更（ApplyDaqT1602Config）后下一帧即生效，无需重启采集。
+	dev.SetPollIntervalFn(func() time.Duration {
+		a.mu.RLock()
+		hz := a.config.SampleRateHz
+		a.mu.RUnlock()
+		if hz <= 0 {
+			return 0
+		}
+		return time.Duration(float64(time.Second) / hz)
+	})
 	dev.OnLog(func(entry sharedhw.LogEntry) {
 		// sharedhw 把收发命令 emitLog 为 debug 级别；
 		// 适配器需统一降级到 Debug，避免高频收发把 ring buffer 与日志文件刷爆。
@@ -259,12 +272,14 @@ func mapToSharedT1602Profile(p device.Profile) sharedcore.Profile {
 
 func mapToSharedT1602Config(cfg device.DaqT1602HardwareConfig) sharedcore.DaqT1602HardwareConfig {
 	return sharedcore.DaqT1602HardwareConfig{
-		TypeCodes: cfg.TypeCodes,
+		TypeCodes:    cfg.TypeCodes,
+		SampleRateHz: cfg.SampleRateHz,
 	}
 }
 
 func mapFromSharedT1602Config(cfg sharedcore.DaqT1602HardwareConfig) device.DaqT1602HardwareConfig {
 	return device.DaqT1602HardwareConfig{
-		TypeCodes: cfg.TypeCodes,
+		TypeCodes:    cfg.TypeCodes,
+		SampleRateHz: cfg.SampleRateHz,
 	}
 }

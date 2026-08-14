@@ -46,6 +46,8 @@ export interface DaqT1603HardwareConfig {
  */
 export interface DaqT1602HardwareConfig {
   typeCodes: number[]
+  /** 采集/保存频率（Hz），范围 1~5；设备固件采集周期固定 ~100ms，此处控制软件轮询节奏 */
+  sampleRateHz?: number
 }
 
 /** DSA3217 扫描配置（从 LIST S 读取） */

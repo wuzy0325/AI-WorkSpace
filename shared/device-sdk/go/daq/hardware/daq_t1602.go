@@ -77,6 +77,13 @@ type DAQT1602 struct {
 	onReadLoopExit func(error)
 	onLog          func(LogEntry)
 	dialTCP        func(string, string, time.Duration) (net.Conn, error)
+
+	// 轮询间隔提供者（nil=全速，默认行为）。采集频率跟随全局刷新频率设置，
+	// 见 daq_t1602_poll.go 与 spec-daq-t1602 §前端集成约定。
+	pollIntervalFn func() time.Duration
+	// 帧节拍状态：仅 readLoop goroutine 访问（waitForNextTick），无需加锁。
+	lastInterval time.Duration
+	nextTick     time.Time
 }
 
 func NewDAQT1602(profile core.Profile) *DAQT1602 {
@@ -282,6 +289,9 @@ func (d *DAQT1602) readLoop(conn net.Conn, mb *modbus.Conn, stop chan struct{}, 
 		case <-stop:
 			return
 		default:
+		}
+		if !d.waitForNextTick(stop) {
+			return
 		}
 		raw, err := d.pollOnce(mb)
 		if err != nil {

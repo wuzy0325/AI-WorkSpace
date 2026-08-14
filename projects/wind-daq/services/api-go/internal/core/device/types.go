@@ -176,11 +176,14 @@ type DaqT1603HardwareConfig struct {
 
 // DaqT1602HardwareConfig DAQ-T-1602 硬件配置（镜像 shared SDK daq/core.DaqT1602HardwareConfig）。
 // T1602 固件固定 ~100ms 采集周期，无采样率/通道掩码/触发概念（spec-daq-t1602 Q5），
-// 唯一可配置项是 16 通道热电偶类型码。
+// 可配置项是 16 通道热电偶类型码 + 采集/保存频率（软件轮询间隔控制）。
 type DaqT1602HardwareConfig struct {
 	// TypeCodes 16 通道热电偶类型码（0=J 1=K 2=T 3=E 4=R 5=S 6=B 7=N）；
 	// 索引 0~7 为卡1（Unit ID 1，Holding 200~207），索引 8~15 为卡2（Unit ID 2）。
 	TypeCodes [16]uint8 `json:"typeCodes"`
+	// SampleRateHz 采集/保存频率（Hz），范围 1~5；<=0 表示全速
+	// （驱动按设备单帧上限 ~4.9Hz）。仅控制驱动轮询节奏，不写设备寄存器。
+	SampleRateHz float64 `json:"sampleRateHz,omitempty"`
 }
 
 // DSA3217ScanConfig DSA3217 扫描配置（从 LIST S 读取）

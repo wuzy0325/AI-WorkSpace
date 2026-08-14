@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -508,6 +509,20 @@ func TestDeviceManagerApplyDaqT1602ConfigRejectsInvalidTypeCode(t *testing.T) {
 	}
 	if store.profiles[0].DaqT1602Config != (device.DaqT1602HardwareConfig{}) {
 		t.Fatalf("expected profile config untouched on validation failure, got %+v", store.profiles[0].DaqT1602Config)
+	}
+}
+
+func TestValidateDaqT1602ConfigSampleRate(t *testing.T) {
+	for _, hz := range []float64{0, 1, 2, 3, 4, 5} {
+		if err := validateDaqT1602Config(device.DaqT1602HardwareConfig{SampleRateHz: hz}); err != nil {
+			t.Errorf("sampleRateHz=%v 应合法, 实际错误: %v", hz, err)
+		}
+	}
+
+	for _, hz := range []float64{-1, 0.5, 2.7, 6, math.NaN(), math.Inf(1), math.Inf(-1)} {
+		if err := validateDaqT1602Config(device.DaqT1602HardwareConfig{SampleRateHz: hz}); err == nil {
+			t.Errorf("sampleRateHz=%v 应被拒绝", hz)
+		}
 	}
 }
 
