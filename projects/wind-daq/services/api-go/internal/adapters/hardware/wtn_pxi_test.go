@@ -1,6 +1,8 @@
 package hardware
 
 import (
+	"encoding/binary"
+	"math"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -288,4 +290,78 @@ func TestWTNPXIReadLoop_InvalidatesConnOnNoDataTimeout(t *testing.T) {
 	if atomic.LoadInt32(&onErrorCalled) != 0 {
 		t.Error("onError should NOT be invoked (readLoop exits silently on closed conn)")
 	}
+}
+
+// TestWTNPXIDecodeWTNPXICountAndDouble 验证真实设备数据帧解码：
+// payload = 2 字节协议前缀 + 4 字节大端数组长度 + 12 × double（大端），
+// 复现 temp/log.txt 帧 #2（102B）。
+func TestWTNPXIDecodeWTNPXICountAndDouble(t *testing.T) {
+	l1 := "00000000000C3FF4AB277C00000740F8"
+	l2 := "74837CFEFFFD40F8586A20C080060000"
+	l3 := "000000000000C0F07BC90B11E7FAC0F0"
+	l4 := "7BC90B11E7FAC0F07BC90B11E7FAC0F0"
+	l5 := "7BC90B11E7FAC0F07A42619F8A4EC0F0"
+	l6 := "7A42619F8A4E40A4158BEE1C810940A4"
+	l7 := "158BEE1C8109"
+	payload := mustHex(t, l1+l2+l3+l4+l5+l6+l7)
+
+	count := decodeWTNPXICount(payload)
+	if count != 12 {
+		t.Fatalf("count = %d, want 12", count)
+	}
+
+	want := []float64{
+		1.2917857021093384, 100168.2180166244, 99718.6329960824, 0.0,
+		-67516.56520262352, -67516.56520262352, -67516.56520262352, -67516.56520262352,
+		-67492.14883379007, -67492.14883379007, 2570.773301020385, 2570.773301020385,
+	}
+	for i := range want {
+		if got := decodeWTNPXIDouble(payload, i); math.Abs(got-want[i]) > 1e-6 {
+			t.Fatalf("val[%d] = %v, want %v", i, got, want[i])
+		}
+	}
+}
+
+// TestWTNPXIDecodeWTNPXIRejectsNonDataFrame 验证设备信息帧（20B TLV 含 "crio"）
+// 不被当作数据帧（decodeWTNPXICount 返回 -1）。
+func TestWTNPXIDecodeWTNPXIRejectsNonDataFrame(t *testing.T) {
+	payload := mustHex(t, "0000000200000004D1B9C1A6000000046372696F")
+	if count := decodeWTNPXICount(payload); count != -1 {
+		t.Fatalf("info frame count = %d, want -1", count)
+	}
+}
+
+// TestWTNPXIDecodeWTNPXICountSupportsFloat32Fallback 确认旧 float32 小端帧
+// 无法通过长度校验（返回 -1），不会误解析。
+func TestWTNPXIDecodeWTNPXICountSupportsFloat32Fallback(t *testing.T) {
+	payload := make([]byte, 8*4)
+	for i := 0; i < 8; i++ {
+		binary.LittleEndian.PutUint32(payload[i*4:], math.Float32bits(float32(100+i)))
+	}
+	if count := decodeWTNPXICount(payload); count != -1 {
+		t.Fatalf("float32 frame count = %d, want -1 (not a double frame)", count)
+	}
+}
+
+func mustHex(t *testing.T, s string) []byte {
+	t.Helper()
+	b := make([]byte, len(s)/2)
+	for i := 0; i < len(b); i++ {
+		hi := hexVal(s[i*2])
+		lo := hexVal(s[i*2+1])
+		b[i] = hi<<4 | lo
+	}
+	return b
+}
+
+func hexVal(c byte) byte {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0'
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10
+	}
+	panic("bad hex")
 }

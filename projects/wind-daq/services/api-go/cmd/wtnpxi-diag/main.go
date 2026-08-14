@@ -1,9 +1,12 @@
 // WTN-PXI 球罐数据采集设备通讯协议调试工具。
 //
-// 协议定义（对齐 wind-daq services/api-go/internal/adapters/hardware/wtn_pxi.go）：
+// 协议定义（依据现场抓包 temp/log.txt 校准，可能偏离 wind-daq wtn_pxi.go 旧假设）：
 //   - TCP 连接，设备主动推送数据流
 //   - 每帧 = 4 字节大端长度前缀（payload 字节数）+ payload
-//   - payload = N × float32（小端），至少 8 路（球罐压力/总压/静压/稳定时间/温度1~4）
+//   - 数据帧 payload = 2 字节协议前缀 + 4 字节大端数组长度 + N × double（大端）
+//   - 连接建立后首个 20B 帧为设备信息帧（TLV：记录数 + 若干(长度+数据)，含 "crio" 设备名），
+//     不是通道数据，不应解析为通道值
+//   - 兜底：仍支持 N × float32（小端）旧格式（模拟服务器 / 其他设备）
 //
 // 用法：
 //
@@ -345,6 +348,78 @@ func decodeAndStore(payload []byte, st *toolState) {
 }
 
 func decodePayload(payload []byte) []float64 {
+	if vals, ok := decodeFloat64Payload(payload); ok {
+		return vals
+	}
+	if vals, ok := decodeInfoFrame(payload); ok {
+		return vals
+	}
+	return decodeFloat32Payload(payload)
+}
+
+// decodeFloat64Payload 识别 LabVIEW 数组数据帧：2 字节协议前缀 +
+// 4 字节大端数组长度 + N × double（大端）。
+// 长度校验：len(payload) == 6 + count*8，能严格区分 float32 小端帧。
+func decodeFloat64Payload(payload []byte) ([]float64, bool) {
+	if len(payload) < 6 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(payload[2:6]))
+	if count <= 0 || count > maxPayload/8 {
+		return nil, false
+	}
+	if len(payload) != 6+count*8 {
+		return nil, false
+	}
+	vals := make([]float64, count)
+	for i := 0; i < count; i++ {
+		vals[i] = math.Float64frombits(binary.BigEndian.Uint64(payload[6+i*8:]))
+	}
+	return vals, true
+}
+
+// decodeInfoFrame 识别设备信息帧（TLV）：[u32 count] + count × (u32 len + data)，含可打印 ASCII 字段。
+// 这类帧不是通道数据，返回 nil 以阻止其覆盖通道值。
+func decodeInfoFrame(payload []byte) ([]float64, bool) {
+	if len(payload) < 4 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(payload[:4]))
+	if count <= 0 || count > 64 {
+		return nil, false
+	}
+	off := 4
+	printable := false
+	for i := 0; i < count; i++ {
+		if off+4 > len(payload) {
+			return nil, false
+		}
+		l := int(binary.BigEndian.Uint32(payload[off : off+4]))
+		off += 4
+		if l <= 0 || off+l > len(payload) {
+			return nil, false
+		}
+		if isPrintableASCII(payload[off : off+l]) {
+			printable = true
+		}
+		off += l
+	}
+	if off != len(payload) || !printable {
+		return nil, false
+	}
+	return nil, true
+}
+
+func isPrintableASCII(b []byte) bool {
+	for _, c := range b {
+		if c < 0x20 || c > 0x7E {
+			return false
+		}
+	}
+	return true
+}
+
+func decodeFloat32Payload(payload []byte) []float64 {
 	count := len(payload) / 4
 	if count <= 0 {
 		return nil
@@ -365,6 +440,7 @@ func reportResync(st *toolState) {
 
 func printDetailFrame(frameNo uint64, payload []byte, st *toolState) {
 	vals := decodePayload(payload)
+	info := parseInfoFrame(payload)
 	prefix := make([]byte, 4)
 	binary.BigEndian.PutUint32(prefix, uint32(len(payload)))
 
@@ -376,6 +452,11 @@ func printDetailFrame(frameNo uint64, payload []byte, st *toolState) {
 	for _, line := range hexDumpLines(payload) {
 		fmt.Printf("  hex: %s\n", line)
 	}
+	if info != "" {
+		fmt.Printf("  [设备信息] %s\n", info)
+		fmt.Println()
+		return
+	}
 	if len(vals) < requiredValues {
 		fmt.Printf("  [警告] 值数量 %d < %d（wind-daq 要求至少 %d 路）\n",
 			len(vals), requiredValues, requiredValues)
@@ -385,6 +466,43 @@ func printDetailFrame(frameNo uint64, payload []byte, st *toolState) {
 		fmt.Printf("  [%d] %-8s %12.2f %s\n", i, ch.name, v, ch.unit)
 	}
 	fmt.Println()
+}
+
+// parseInfoFrame 解析设备信息帧（TLV：[u32 count] + count × (u32 len + data)），
+// 返回可打印字段拼接串；不是信息帧时返回空串。
+func parseInfoFrame(payload []byte) string {
+	if len(payload) < 4 {
+		return ""
+	}
+	count := int(binary.BigEndian.Uint32(payload[:4]))
+	if count <= 0 || count > 64 {
+		return ""
+	}
+	off := 4
+	parts := make([]string, 0, count)
+	printable := false
+	for i := 0; i < count; i++ {
+		if off+4 > len(payload) {
+			return ""
+		}
+		l := int(binary.BigEndian.Uint32(payload[off : off+4]))
+		off += 4
+		if l <= 0 || off+l > len(payload) {
+			return ""
+		}
+		field := payload[off : off+l]
+		off += l
+		if isPrintableASCII(field) {
+			printable = true
+			parts = append(parts, string(field))
+		} else {
+			parts = append(parts, hexify(field))
+		}
+	}
+	if off != len(payload) || !printable {
+		return ""
+	}
+	return strings.Join(parts, ", ")
 }
 
 func printSummary(deltaFrames, deltaBytes, totalFrames, totalBytes uint64, st *toolState) {
