@@ -84,6 +84,7 @@ const pointLayout = ref({
   betaMax: 30,
   betaStep: 5,
   serpentine: false,
+  angleConvert: false,
 })
 
 // 浮点容差：alphaMax-alphaMin 与整数倍 alphaStep 比较时容忍 1e-9 的累加误差
@@ -111,6 +112,15 @@ function validatePointLayout(): { valid: boolean; count: number; errors: string[
 
   if (alphaStep <= 0 || betaStep <= 0) errors.push(t.value.stepMustPositive || '步长必须为正数')
   if (alphaMax <= alphaMin || betaMax <= betaMin) errors.push(t.value.maxGreaterThanMin || '最大值必须大于最小值')
+  // α 角度换算开启时，α/β 必须在 ±90° 以内（不含 ±90°）——tan 在 ±90° 发散，
+  // cosβ 在 ±90° 退化（换算角符号翻转/重叠）。与后端 GenerateFiveHoleSnakePoints
+  // 的防呆保持一致，让用户在向导第一步就发现问题，而不是保存时才报错。
+  if (pointLayout.value.angleConvert && (Math.abs(alphaMin) >= 90 || Math.abs(alphaMax) >= 90)) {
+    errors.push(t.value.angleConvertRangeInvalid || 'α 角度换算开启时 α 范围必须在 ±90° 以内（不含 ±90°）')
+  }
+  if (pointLayout.value.angleConvert && (Math.abs(betaMin) >= 90 || Math.abs(betaMax) >= 90)) {
+    errors.push(t.value.angleConvertRangeInvalidBeta || 'α 角度换算开启时 β 范围必须在 ±90° 以内（不含 ±90°）')
+  }
 
   const alphaRange = alphaMax - alphaMin
   const betaRange = betaMax - betaMin
@@ -323,6 +333,7 @@ function sanitizePointLayout(layout: typeof pointLayout.value): typeof pointLayo
     betaMax: fix(layout.betaMax),
     betaStep: fix(layout.betaStep),
     serpentine: layout.serpentine === true,
+    angleConvert: layout.angleConvert === true,
   }
 }
 
@@ -389,7 +400,7 @@ async function loadSavedConfig() {
     const config = res.success && res.data ? applyCalibrationPrecisionDefaults(res.data) : null
     if (!config) return
     calibrationName.value = config.name
-    if (config.fiveHoleLayout) pointLayout.value = { ...pointLayout.value, ...config.fiveHoleLayout, serpentine: config.fiveHoleLayout.serpentine === true }
+    if (config.fiveHoleLayout) pointLayout.value = { ...pointLayout.value, ...config.fiveHoleLayout, serpentine: config.fiveHoleLayout.serpentine === true, angleConvert: config.fiveHoleLayout.angleConvert === true }
     if (config.probeChannels) {
       config.probeChannels.forEach((savedCh) => {
         const existingCh = probeChannels.value.find((ch) => ch.role ? ch.role === savedCh.role : ch.name === savedCh.name)
@@ -610,6 +621,9 @@ function getChannelGroupLabel(groupKey: string): string {
           <div class="layout-options">
             <UiCheckbox v-model:checked="pointLayout.serpentine">
               蛇形走位（奇数行反向遍历 α，减少空行程）
+            </UiCheckbox>
+            <UiCheckbox v-model:checked="pointLayout.angleConvert">
+              α 角度换算（α' = arctan(tanα·cosβ)，β 不变；预览/走点/CSV 均用换算角）
             </UiCheckbox>
           </div>
         </UiPanel>
@@ -870,6 +884,12 @@ function getChannelGroupLabel(groupKey: string): string {
               <span class="summary-label">走位方式</span>
               <span class="summary-value" :class="pointLayout.serpentine ? 'accent-bold' : 'muted-text'">
                 {{ pointLayout.serpentine ? '蛇形（奇数行反向）' : '逐行 raster' }}
+              </span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">α 角度换算</span>
+              <span class="summary-value" :class="pointLayout.angleConvert ? 'accent-bold' : 'muted-text'">
+                {{ pointLayout.angleConvert ? '开启（α′ = arctan(tanα·cosβ)）' : '关闭' }}
               </span>
             </div>
             <div class="summary-row">

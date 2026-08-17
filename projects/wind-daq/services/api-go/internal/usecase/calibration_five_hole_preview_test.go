@@ -99,7 +99,7 @@ func TestPreviewFiveHolePoints_InvalidStep(t *testing.T) {
 	mgr := newTestFiveHoleManager()
 	layout := calibration.FiveHolePointLayout{
 		AlphaMin: 0, AlphaMax: 10, AlphaStep: 0, // 非法
-		BetaMin:  0, BetaMax: 10, BetaStep: 5,
+		BetaMin: 0, BetaMax: 10, BetaStep: 5,
 	}
 
 	points, err := mgr.PreviewFiveHolePoints(layout)
@@ -119,7 +119,8 @@ func TestPreviewFiveHolePoints_InvalidStep(t *testing.T) {
 // 测试前置：最小 1×1 网格
 // 测试步骤：调 mgr.PreviewFiveHolePoints(layout)
 // 期待结果：返回类型为 []calibration.FiveHoleSnakePoint，长度=1；
-//           无包装对象（HTTP handler 直接 writeJSON(points)，前端收到 bare array）
+//
+//	无包装对象（HTTP handler 直接 writeJSON(points)，前端收到 bare array）
 func TestPreviewFiveHolePoints_BareArrayResponse(t *testing.T) {
 	mgr := newTestFiveHoleManager()
 	layout := calibration.FiveHolePointLayout{
@@ -205,6 +206,47 @@ func TestPreviewFiveHolePoints_NilManagerSafe(t *testing.T) {
 	}
 	if len(points) != 1 {
 		t.Errorf("expected 1 point from nil manager, got %d", len(points))
+	}
+}
+
+// TestPreviewFiveHolePoints_AngleConvert 【P0】angleConvert=true 透传 core 并返回换算坐标
+//
+// 测试前置：网格 α ∈ {-30,0,30}（步 30）、β ∈ {0,30}（步 30），AngleConvert=true
+// 测试步骤：调 mgr.PreviewFiveHolePoints(layout)
+// 期待结果：β=30 行 α 换算（30→26.6、-30→-26.6、0→0）；β=0 行 α 不变；β 全部不变
+//
+//	（spec-five-hole-angle-convert：usecase 纯透传，换算在 core 层完成）
+func TestPreviewFiveHolePoints_AngleConvert(t *testing.T) {
+	mgr := newTestFiveHoleManager()
+	layout := calibration.FiveHolePointLayout{
+		AlphaMin: -30, AlphaMax: 30, AlphaStep: 30,
+		BetaMin: 0, BetaMax: 30, BetaStep: 30,
+		AngleConvert: true,
+	}
+
+	points, err := mgr.PreviewFiveHolePoints(layout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(points) != 6 {
+		t.Fatalf("expected 6 points, got %d", len(points))
+	}
+
+	// 第一行（β=0）：换算不改变 α
+	for i, wantAlpha := range []float64{-30, 0, 30} {
+		if points[i].Coordinates["α"] != wantAlpha {
+			t.Errorf("β=0 row idx %d: expected α=%v, got %v", i, wantAlpha, points[i].Coordinates["α"])
+		}
+	}
+	// 第二行（β=30）：α 换算为 spec 黄金值，β 保持不变
+	for i, wantAlpha := range []float64{-26.6, 0, 26.6} {
+		p := points[3+i]
+		if p.Coordinates["α"] != wantAlpha {
+			t.Errorf("converted row idx %d: expected α=%v, got %v", i, wantAlpha, p.Coordinates["α"])
+		}
+		if p.Coordinates["β"] != 30 {
+			t.Errorf("converted row idx %d: β should stay 30, got %v", i, p.Coordinates["β"])
+		}
 	}
 }
 

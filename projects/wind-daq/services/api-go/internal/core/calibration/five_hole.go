@@ -26,18 +26,46 @@ type FiveHolePointLayout struct {
 	BetaMax    float64 `json:"betaMax"`
 	BetaStep   float64 `json:"betaStep"`
 	Serpentine bool    `json:"serpentine,omitempty"`
+	// AngleConvert α 轴角度换算开关（spec-five-hole-angle-convert）：
+	// true 时 α 目标角按 α' = arctan(tanα·cosβ) 换算为运动台实际走角，β 不变；
+	// 预览布点、实际走点、CSV 落盘全部使用换算后坐标。
+	// 兼容性：旧配置文件/旧请求体无此字段按 false 处理，行为与历史版本完全一致。
+	AngleConvert bool `json:"angleConvert,omitempty"`
+}
+
+// convertFiveHoleAlpha 按 angleConvert 开关把 α 轴逻辑角换算为运动台实际目标角。
+// 公式：α' = arctan(tan(α)·cos(β))（角度制输入输出），β 轴不变。
+// 物理来源：五孔探针安装在两轴运动台上，α 轴承载于 β 轴之上——探针绕 β 偏航后，
+// 其自身测量平面内的实际迎角被 cos(β) 因子衰减；运动台按换算角走点，才能保证
+// 物理布点与配置的逻辑网格一致（docs/specs/spec-five-hole-angle-convert.md）。
+// 数学前提：|α| < 90°（tan 在 ±90° 发散，|α|>90° 时 tan 变号导致符号翻转），
+// GenerateFiveHoleSnakePoints 开启换算时已做前置校验。
+func convertFiveHoleAlpha(alphaDeg, betaDeg float64) float64 {
+	alphaRad := alphaDeg * math.Pi / 180.0
+	betaRad := betaDeg * math.Pi / 180.0
+	return math.Atan(math.Tan(alphaRad)*math.Cos(betaRad)) * 180.0 / math.Pi
 }
 
 func GenerateFiveHoleSnakePoints(layout FiveHolePointLayout) ([]FiveHoleSnakePoint, error) {
 	if layout.AlphaStep <= 0 || layout.BetaStep <= 0 {
 		return nil, fmt.Errorf("step must be positive")
 	}
+	// 角度换算的数学前提防呆：tan 在 ±90° 发散，|α|>90° 时 tan 变号会使换算角
+	// 符号翻转（点位跨象限错乱）；β 同理——|β|≥90° 时 cosβ 非正，β=±90° 使整行
+	// α' 退化为 0（点位重叠落盘），|β|>90° 时 α' 符号翻转。开关开启时提前拒绝
+	// 非法区间——报错优于静默产出错点。
+	if layout.AngleConvert && (math.Abs(layout.AlphaMin) >= 90 || math.Abs(layout.AlphaMax) >= 90) {
+		return nil, fmt.Errorf("angleConvert 开启时 α 范围必须在 ±90° 以内（不含 ±90°）")
+	}
+	if layout.AngleConvert && (math.Abs(layout.BetaMin) >= 90 || math.Abs(layout.BetaMax) >= 90) {
+		return nil, fmt.Errorf("angleConvert 开启时 β 范围必须在 ±90° 以内（不含 ±90°）")
+	}
 	alphaCount := int(math.Round((layout.AlphaMax-layout.AlphaMin)/layout.AlphaStep)) + 1
 	betaCount := int(math.Round((layout.BetaMax-layout.BetaMin)/layout.BetaStep)) + 1
 	points := make([]FiveHoleSnakePoint, 0, alphaCount*betaCount)
 	id := 1
 	for bi := 0; bi < betaCount; bi++ {
-		beta := math.Round((layout.BetaMin+float64(bi)*layout.BetaStep)*10) / 10
+		beta := roundTo1Decimal(layout.BetaMin + float64(bi)*layout.BetaStep)
 		// 蛇形走位：奇数行反向遍历 α；默认（raster）每行都从 αMin 升序遍历
 		reverse := layout.Serpentine && bi%2 == 1
 		for ai := 0; ai < alphaCount; ai++ {
@@ -45,7 +73,12 @@ func GenerateFiveHoleSnakePoints(layout FiveHolePointLayout) ([]FiveHoleSnakePoi
 			if reverse {
 				alphaIdx = alphaCount - 1 - ai
 			}
-			alpha := math.Round((layout.AlphaMin+float64(alphaIdx)*layout.AlphaStep)*10) / 10
+			alpha := roundTo1Decimal(layout.AlphaMin + float64(alphaIdx)*layout.AlphaStep)
+			// 换算在舍入后的网格角上进行：先得到逻辑网格角（1 位小数），
+			// 再换算并同样保留 1 位小数，保证预览/走点/CSV 三处坐标完全一致
+			if layout.AngleConvert {
+				alpha = roundTo1Decimal(convertFiveHoleAlpha(alpha, beta))
+			}
 			points = append(points, FiveHoleSnakePoint{
 				ID:          id,
 				Coordinates: map[string]float64{"α": alpha, "β": beta},

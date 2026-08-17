@@ -308,6 +308,7 @@ export const calibrationApi = {
     alphaMin: number; alphaMax: number; alphaStep: number
     betaMin: number; betaMax: number; betaStep: number
     serpentine?: boolean
+    angleConvert?: boolean
   }): Promise<Array<{ id: number; coordinates: Record<string, number> }>> => {
     if (isWailsAvailable()) {
       // Wails 模式：调用 CalibrationPreviewFiveHole binding（GenericResponse 包装）
