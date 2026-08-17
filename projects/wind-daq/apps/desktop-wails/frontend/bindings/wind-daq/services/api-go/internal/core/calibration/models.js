@@ -239,6 +239,17 @@ export class FiveHolePointLayout {
              */
             this["serpentine"] = undefined;
         }
+        if (/** @type {any} */(false)) {
+            /**
+             * AngleConvert α 轴角度换算开关（spec-five-hole-angle-convert）：
+             * true 时 α 目标角按 α' = arctan(tanα·cosβ) 换算为运动台实际走角，β 不变；
+             * 预览布点、实际走点、CSV 落盘全部使用换算后坐标。
+             * 兼容性：旧配置文件/旧请求体无此字段按 false 处理，行为与历史版本完全一致。
+             * @member
+             * @type {boolean | undefined}
+             */
+            this["angleConvert"] = undefined;
+        }
 
         Object.assign(this, $$source);
     }
@@ -498,9 +509,9 @@ export const SevenHoleMode = {
     $zero: "",
 
     /**
-     * SevenHoleModeFull 完整模式（产品默认，673 点）
+     * SevenHoleModeFull 完整模式（产品默认，715 点）
      * 内区 α∈[-30°,30°] 步长 5° × β∈[-30°,30°] 步长 5° = 169 点
-     * 外区 θ∈[30°,60°] 步长 5° × φ∈[0°,355°] 步长 5° = 504 点
+     * 外区 θ∈[30°,60°] 步长 5° × 6 扇区 × 13 个闭合 φ 网格点 = 546 点
      */
     SevenHoleModeFull: "full",
 

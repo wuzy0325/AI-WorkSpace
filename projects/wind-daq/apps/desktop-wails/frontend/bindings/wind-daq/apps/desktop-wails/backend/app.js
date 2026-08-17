@@ -358,7 +358,7 @@ export function GetStartupMode() {
 }
 
 /**
- * GetVersion 获取版本信息
+ * GetVersion 获取版本信息（版本号来自构建期注入，见 buildVersion）
  * @returns {$CancellablePromise<$models.VersionInfo>}
  */
 export function GetVersion() {
