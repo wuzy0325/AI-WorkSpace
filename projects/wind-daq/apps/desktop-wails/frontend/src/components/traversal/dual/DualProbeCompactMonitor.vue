@@ -52,6 +52,25 @@ const t = computed(() => i18n.t)
 
 const session = computed<TraversalSessionState>(() => sessions.value[props.probeId])
 
+// 硬件连接状态：与单探针 TraversalMain 同源，驱动"运动器未连接/采集设备未开始采集"
+// 的启动门禁与按钮 tooltip。dual 页面级没有订阅 motion 状态流，由本组件自行挂接/卸载；
+// 两个 probe 各挂一个监听器，写入同一 motionStore，互不干扰。
+const motionStore = useMotionStore()
+const currentConfig = computed(() => session.value.config)
+const { axisPositions, positionerConnection, acquisitionConnection } = useHardwareConnectionStatus(currentConfig)
+
+let unsubscribeMotionStatus: (() => void) | null = null
+onMounted(() => {
+  void motionStore.refreshStatus()
+  unsubscribeMotionStatus = motionStore.attachStatusListener()
+})
+onBeforeUnmount(() => {
+  if (unsubscribeMotionStatus) {
+    unsubscribeMotionStatus()
+    unsubscribeMotionStatus = null
+  }
+})
+
 const probePresentation = computed(() =>
   TRAVERSAL_PROBE_PRESENTATION[session.value.config?.probeType ?? 'five-hole']
 )
@@ -96,7 +115,26 @@ const isTerminal = computed(() => {
   return s === 'completed' || s === 'stopped' || s === 'error'
 })
 const isStarting = computed(() => session.value.isStarting)
-const canStart = computed(() => !isUnconfigured.value && !isRunning.value && !isPaused.value && !isStarting.value && session.value.hasLoadedInterpolator)
+
+// 启动门禁：与单探针 TraversalMain.startDisabledReason 同源（严重度从高到低判定），
+// 采集设备未开始采集时禁用开始按钮并提示，避免点击后才被后端拒绝。
+const startDisabledReason = computed(() => {
+  if (isUnconfigured.value) return t.value.pleaseConfigureFirst
+  if (positionerConnection.value.state !== 'connected') return t.value.wf_motionControllerDisconnected
+  // 'acquiring' → 正常，不禁用；'connected' → 已连接但未采集（提示先开始采集）；
+  // 'unconfigured' → 配置里没有任何已启用的采集通道绑定；其他（含 'disconnected'）→ 未连接
+  switch (acquisitionConnection.value.state) {
+    case 'acquiring':
+      return ''
+    case 'connected':
+      return t.value.wf_acquisitionDeviceNotAcquiring
+    case 'unconfigured':
+      return t.value.wf_acquisitionDeviceUnconfigured
+    default:
+      return t.value.wf_acquisitionDeviceDisconnected
+  }
+})
+const canStart = computed(() => !isUnconfigured.value && !isRunning.value && !isPaused.value && !isStarting.value && session.value.hasLoadedInterpolator && !startDisabledReason.value)
 const canPause = computed(() => isRunning.value)
 const canResume = computed(() => isPaused.value)
 const canStop = computed(() => isRunning.value || isPaused.value)
@@ -123,25 +161,6 @@ const currentPointText = computed(() => {
   if (point.z !== null && point.z !== undefined) parts.push(`Z=${point.z.toFixed(2)}`)
   if (point.u !== null && point.u !== undefined) parts.push(`U=${point.u.toFixed(2)}`)
   return parts.length > 0 ? parts.join('  ') : '—'
-})
-
-// 实际位置：与单探针 TraversalLiveMonitor 同源，复用 useHardwareConnectionStatus
-// （按本 probe 配置的布点模式过滤显示轴）。dual 页面级没有订阅 motion 状态流，
-// 由本组件自行挂接/卸载；两个 probe 各挂一个监听器，写入同一 motionStore，互不干扰。
-const motionStore = useMotionStore()
-const currentConfig = computed(() => session.value.config)
-const { axisPositions } = useHardwareConnectionStatus(currentConfig)
-
-let unsubscribeMotionStatus: (() => void) | null = null
-onMounted(() => {
-  void motionStore.refreshStatus()
-  unsubscribeMotionStatus = motionStore.attachStatusListener()
-})
-onBeforeUnmount(() => {
-  if (unsubscribeMotionStatus) {
-    unsubscribeMotionStatus()
-    unsubscribeMotionStatus = null
-  }
 })
 
 // 实际位置文本：与「当前点位」同款 `X=12.34  Y=-5.01` 格式，跟随目标点显示在其后
@@ -333,6 +352,7 @@ const completedSummary = computed(() => {
         variant="primary"
         :disabled="!canStart"
         :loading="isStarting"
+        :title="startDisabledReason || undefined"
         @click="onStart"
       >
         {{ t.startRun }}

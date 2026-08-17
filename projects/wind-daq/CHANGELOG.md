@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.15.5] - 2026-08-17
+
+### Fixed
+
+- **双探针模式点位预览缺少阶段图例**：此前运动中/稳定中/采集中/已完成/未测试五个阶段示意仅在单探针模式显示，双探针点位预览的画布只有颜色变化、无图例对照，操作员无法直观判断当前点所处阶段。现双探针每个 row 的点位预览标题行右侧补齐与单探针一致的图例。
+- **双探针启动门禁与单探针不一致**：双探针模式下即使采集设备未开始采集，开始按钮仍可点击、等后端拒绝后才报错。现与单探针 `TraversalMain.startDisabledReason` 同源判定：运动器未连接、采集设备未连接/未开始采集/未配置时禁用开始按钮并通过 tooltip 提示原因。
+
+### Internal
+
+- 新增 `DualProbeCompactMonitorStartGate.contract.test.ts` 契约测试，覆盖双探针启动门禁的禁用条件与 tooltip 展示。
+
+### Verification
+
+- `npm run typecheck`（frontend）: passed
+- `npm run test`（frontend，vitest）: passed
+- 生产构建 + NSIS 打包 + 冒烟启动: 见 releases/0.15.5.md
+
+### Known Issues
+
+- 暂无新增。已知限制同 0.15.4：T 型量程下限恰为 0℃ 时真实 0℃ 测量与未接入不可区分；UI 修改热电偶类型保存后不会立即下发到已连接设备。
+
 ## [0.15.4] - 2026-08-14
 
 ### Fixed

@@ -218,6 +218,36 @@ function onOpenSettings(): void {
         <div class="dual-row__section-title">
           <Crosshair class="dual-row__section-icon" aria-hidden="true" />
           <span>{{ t.pointsPreview }}</span>
+          <!-- 点位阶段图例：与单探针 TraversalWorkspaceArea 视觉一致
+               （运动中/稳定中/采集中/已完成/未测试），双探针模式下
+               PointsPreview 自身不渲染图例，需在本 row 内补齐，否则
+               操作员无法看出当前点处于哪个阶段。 -->
+          <ul
+            v-if="layoutForPreview"
+            class="dual-row__legend"
+            :aria-label="t.pointsPreview"
+          >
+            <li class="dual-row__legend-item">
+              <span class="dual-row__legend-dot" style="background: #3b82f6"></span>
+              <span class="dual-row__legend-text">{{ t.moving }}</span>
+            </li>
+            <li class="dual-row__legend-item">
+              <span class="dual-row__legend-dot" style="background: #fbbf24"></span>
+              <span class="dual-row__legend-text">{{ t.stabilizing }}</span>
+            </li>
+            <li class="dual-row__legend-item">
+              <span class="dual-row__legend-dot" style="background: #10b981"></span>
+              <span class="dual-row__legend-text">{{ t.acquiring }}</span>
+            </li>
+            <li class="dual-row__legend-item">
+              <span class="dual-row__legend-dot" style="background: #8b5cf6"></span>
+              <span class="dual-row__legend-text">{{ t.completed }}</span>
+            </li>
+            <li class="dual-row__legend-item">
+              <span class="dual-row__legend-dot" style="background: rgba(148, 163, 184, 0.3)"></span>
+              <span class="dual-row__legend-text">{{ t.untested }}</span>
+            </li>
+          </ul>
         </div>
         <PointsPreview
           v-if="layoutForPreview"
@@ -316,6 +346,8 @@ function onOpenSettings(): void {
   display: flex;
   align-items: center;
   gap: 6px;
+  /* 窄宽度时图例换行到下一行，避免与"点位预览"标题挤压 */
+  flex-wrap: wrap;
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 500;
@@ -326,6 +358,43 @@ function onOpenSettings(): void {
   height: 14px;
   flex-shrink: 0;
   color: var(--accent-info);
+}
+
+/* 点位阶段图例：与单探针 TraversalWorkspaceArea 视觉一致
+   （运动中/稳定中/采集中/已完成/未测试）。 */
+.dual-row__legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-left: auto;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding: 2px 10px;
+  list-style: none;
+  background: var(--bg-panel-strong);
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.dual-row__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dual-row__legend-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.dual-row__legend-text {
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .dual-row__points {
