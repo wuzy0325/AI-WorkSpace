@@ -15,6 +15,8 @@
 | Master SHA | Win7 SHA | Project | Method | Verification |
 |---|---|---|---|---|
 | `481c053` | `48a3ac5` | workspace docs | `cherry-pick -x` | `git diff --check` |
+| `9142150` | `f571832` | wind-daq | `cherry-pick -x` | 前端 typecheck 通过、vitest 361 tests 全绿 |
+| `2e4429e` | `a3ad1da` | wind-daq | `cherry-pick -x`（排除 bindings 产物） | 前端 typecheck 通过、vitest 361 tests 全绿 |
 
 ## Manually Ported Commits
 
