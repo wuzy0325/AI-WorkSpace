@@ -3,7 +3,7 @@
 # 背景：makensis 对无 BOM 文件按系统 ANSI 代码页（中文 Windows 为 GBK）解析，
 # 文件一旦含非 ASCII 字节且没有 BOM，能否构建取决于打包机器的代码页——
 # UTF-8 无 BOM 直接报 "Bad text encoding"，GBK 无 BOM 换台机器就乱码。
-# wind-daq 的 project.nsi 历史上被反复改坏（UTF-8 BOM → UTF-16 → GBK → UTF-8 无 BOM），
+# windlabx4 的 project.nsi 历史上被反复改坏（UTF-8 BOM → UTF-16 → GBK → UTF-8 无 BOM），
 # AGENTS.md 的 NSIS 规则只是流程约束，没有技术强制，本脚本提供强制卡点。
 #
 # 规则（对每个 git 跟踪的 project.nsi）：
@@ -86,7 +86,7 @@ if ($failures.Count -gt 0) {
         Write-Host "  - $f" -ForegroundColor Red
     }
     Write-Host ""
-    Write-Host "规则依据：projects/wind-daq/AGENTS.md 的 NSIS Installer Hard Rules。" -ForegroundColor Red
+    Write-Host "规则依据：projects/windlabx4/AGENTS.md 的 NSIS Installer Hard Rules。" -ForegroundColor Red
     exit 1
 }
 

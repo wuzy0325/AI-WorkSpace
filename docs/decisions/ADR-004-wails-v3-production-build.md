@@ -7,8 +7,8 @@ Implemented (2026-06-29，2026-06-30 修订前后端版本锁定)
 ## Context
 
 本工作空间历史上同时存在过 Wails v2 与 Wails v3 alpha 产品桌面应用。
-2026 年 6 月，所有桌面端项目（`motion-controller`、`wind-daq`、`five-hole-interpolator`、
-`three-hole-interpolator`、`daq-t1603`、`daq-p1604`）的源码已迁移到
+2026 年 6 月，所有桌面端项目（`motion-controller`、`windlabx4`、`five-hole-interpolator`、
+`three-hole-interpolator`、`daq-t1603`、`wispa`）的源码已迁移到
 `github.com/wailsapp/wails/v3 v3.0.0-alpha2.106`。
 
 但工作空间出现了以下真实故障：
@@ -28,7 +28,7 @@ Implemented (2026-06-29，2026-06-30 修订前后端版本锁定)
 
 文档缺口是这次安装失败的根本原因，而非 Wails v3 本身。
 
-2026-06-30 又出现一次回归：wind-daq 启动运动控制器独立窗口报
+2026-06-30 又出现一次回归：windlabx4 启动运动控制器独立窗口报
 `Invalid runtime call:missing method value`。根因是 npm `@wailsio/runtime`
 与 Go `wails/v3` 出现两条平行版本序列（`alpha.*` 与 `alpha2.*`），项目
 go.mod 写 `alpha.95`，但 npm 包最新只到 `alpha.94`，两者协议不兼容导致
@@ -96,7 +96,7 @@ wails/v2 的包间接引入最终二进制，导致 `app_default_windows.go` 中
 
 **强制要求：所有 Taskfile.yml 的 `build-go` 任务必须设置 `env: GOWORK: off`。**
 
-三项目（three-hole-interpolator / daq-t1603 / daq-p1604）虽不使用自定义 Taskfile，
+三项目（three-hole-interpolator / daq-t1603 / wispa）虽不使用自定义 Taskfile，
 但其 `dev_build.cmd` 或等价脚本也必须设置 `set GOWORK=off`。
 
 ### 6. 打包前清理

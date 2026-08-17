@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    # 指定要检查的项目名（如 wind-daq / daq-p1604 / daq-t1603），不传则检查所有 Wails 项目
+    # 指定要检查的项目名（如 windlabx4 / wispa / wista），不传则检查所有 Wails 项目
     [string[]]$Projects = @(),
     # stale 阈值（分钟）：backend 比 binding 新超过此值则警告，默认 60 分钟
     [int]$StaleMinutes = 60,

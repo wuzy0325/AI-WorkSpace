@@ -1,4 +1,4 @@
-# Spec: Wind-DAQ P2 State Pattern Completion
+# Spec: WindLabX4 P2 State Pattern Completion
 
 ## Objective
 
@@ -13,7 +13,7 @@ Add loading, empty, error, offline, and saving states to all views using existin
 ## Commands
 
 ```powershell
-cd projects\wind-daq\apps\desktop-wails\frontend
+cd projects\windlabx4\apps\desktop-wails\frontend
 npm run typecheck && npm run build && npm run test
 ```
 

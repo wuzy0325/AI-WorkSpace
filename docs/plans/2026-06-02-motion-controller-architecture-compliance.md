@@ -303,7 +303,7 @@ git commit -m "chore(motion-controller): scaffold hexagonal architecture layers 
 
 ## Task 3: 重构 API 层 — 消除内联业务逻辑
 
-**目标：** 将 `services/api-go/cmd/server/main.go` 中的内联 HTTP handler 重构为使用 `api/` 包的标准路由模式，与 wind-daq 项目的 API 层风格一致。
+**目标：** 将 `services/api-go/cmd/server/main.go` 中的内联 HTTP handler 重构为使用 `api/` 包的标准路由模式，与 windlabx4 项目的 API 层风格一致。
 
 **Files:**
 - Create: `projects/motion-controller/services/api-go/api/server.go`
@@ -477,7 +477,7 @@ git commit -m "chore(motion-controller): remove duplicate DAQ device-sdk, use wo
 前端共享模块 `projects/motion-controller/shared/frontend/motion/` 暂时保留在项目级。原因：
 1. 工作空间级 `shared/frontend/` 目录尚未建立标准结构
 2. 前端共享模块的迁移需要更新 npm workspace 配置
-3. 此迁移影响 wind-daq 项目的前端引用，需要协调处理
+3. 此迁移影响 windlabx4 项目的前端引用，需要协调处理
 4. 建议作为独立任务在所有项目前端统一重构时处理
 
 ---

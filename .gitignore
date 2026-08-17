@@ -5,7 +5,7 @@ node_modules/
 dist/
 build/
 # Wails 工具链约定的入版本控制配置（NSIS 安装脚本 + 构建配置），其他 build/ 产物不入库
-# 通配符规则：wind-daq / daq-p1604 / daq-t1603 等所有项目共用
+# 通配符规则：wind-daq / wispa / wista / daq-t1603 等所有项目共用
 !projects/*/apps/desktop-wails/build/
 projects/*/apps/desktop-wails/build/*
 !projects/*/apps/desktop-wails/build/config.yml
@@ -56,10 +56,10 @@ tools/wuzy-skills/npm-cache/
 # E2E audit artifacts
 wind-daq-*.json
 
-# wind-daq 运行时录制产物（由 StorageRecorder 的 csv_sink 自动生成，
+# windlabx4 运行时录制产物（由 StorageRecorder 的 csv_sink 自动生成，
 # OutputDir 运行时通过 MkdirAll 创建，无需入库）
-projects/wind-daq/apps/desktop-wails/data/recordings/
-projects/wind-daq/apps/desktop-wails/data/logs/
+projects/windlabx4/apps/desktop-wails/data/recordings/
+projects/windlabx4/apps/desktop-wails/data/logs/
 # services/api-go 运行时录制与日志（同上，运行时产物不入库）
 projects/*/services/api-go/data/recordings/
 projects/*/services/api-go/data/logs/
@@ -138,16 +138,16 @@ tmp/
 
 # UI 原型工作区（设计稿导出产物，仅本地参考，不入库）
 wind-daq-trae-work-prototype/
-projects/wind-daq/docs/ui-views-prototype-v4*.png
-projects/wind-daq/docs/ui-views-prototype-v4*.html
+projects/windlabx4/docs/ui-views-prototype-v4*.png
+projects/windlabx4/docs/ui-views-prototype-v4*.html
 
 # PDF QA 产物（PDF 转 PNG 截图，QA 工具本地输出）
 pdf-qa/
 
 # 七孔校准实验数据（CSV 原始数据，按项目编号归档，不入库）
-projects/wind-daq/docs/W532.*.P.*-*/
+projects/windlabx4/docs/W532.*.P.*-*/
 # 七孔校准实测 CSV（按日期归档的原始采集数据，不入库）
-projects/wind-daq/docs/7-hole-cal-data/*.csv
+projects/windlabx4/docs/7-hole-cal-data/*.csv
 
 # 软件介绍材料（HTML/PDF 产物 + 配图，本地生成不入库）
 wind-daq-software-introduction.html

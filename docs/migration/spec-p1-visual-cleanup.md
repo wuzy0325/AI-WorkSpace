@@ -1,4 +1,4 @@
-# Spec: Wind-DAQ P1 Visual Cleanup — Inline Styles & Raw Values → Design Tokens
+# Spec: WindLabX4 P1 Visual Cleanup — Inline Styles & Raw Values → Design Tokens
 
 ## Objective
 
@@ -69,7 +69,7 @@ Replace all inline `style=""` attributes, raw hex colors, and hardcoded `px` val
 ## Commands
 
 ```powershell
-cd projects\wind-daq\apps\desktop-wails\frontend
+cd projects\windlabx4\apps\desktop-wails\frontend
 npm run typecheck
 npm run build
 npm run test

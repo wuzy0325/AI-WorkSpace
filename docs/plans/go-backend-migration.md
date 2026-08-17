@@ -3,7 +3,7 @@
 **Status:** Completed
 **Date:** 2026-04-23
 **Source:** `C:\Users\wuzhy\Documents\D\SVN\SoftWare\trunk\Ai Agent\Cursor DAQ\backend-go\`
-**Target:** `projects/wind-daq/services/api-go/`
+**Target:** `projects/windlabx4/services/api-go/`
 
 ## 1. Current State Analysis
 
@@ -38,7 +38,7 @@ cmd/main.go
 ## 2. Target Architecture
 
 ```
-projects/wind-daq/services/api-go/
+projects/windlabx4/services/api-go/
 ├── cmd/
 │   └── server/main.go              # Entry point, DI wiring
 ├── internal/
@@ -131,7 +131,7 @@ shared/device-sdk/go/              # Cross-project reusable device primitives
 ## 3. Migration Steps
 
 ### Phase 1: Scaffold & Module Setup
-- [x] 1.1 Create Go module at `projects/wind-daq/services/api-go/`
+- [x] 1.1 Create Go module at `projects/windlabx4/services/api-go/`
 - [x] 1.2 Create directory structure (core/*, ports/*, usecase/*, adapters/*, api/*)
 - [x] 1.3 Create shared/device-sdk/go module
 - [x] 1.4 Create `go.work` at workspace root
@@ -205,7 +205,7 @@ shared/device-sdk/go/              # Cross-project reusable device primitives
 
 | Module | Path | go.mod module name |
 |---|---|---|
-| API service | `projects/wind-daq/services/api-go/` | `wind-daq/services/api-go` |
+| API service | `projects/windlabx4/services/api-go/` | `windlabx4/services/api-go` |
 | Shared device SDK | `shared/device-sdk/go/` | `shared/device-sdk/go` |
 
 `go.work` at workspace root:
@@ -214,7 +214,7 @@ shared/device-sdk/go/              # Cross-project reusable device primitives
 go 1.21
 
 use (
-    projects/wind-daq/services/api-go
+    projects/windlabx4/services/api-go
     shared/device-sdk/go
 )
 ```

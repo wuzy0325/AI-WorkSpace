@@ -7,7 +7,7 @@
 
 ### Architecture
 
-Go backend (hexagonal) + Vue 3 + Wails, multi-project. Split layout: `apps/desktop-wails/{frontend,backend}` + `services/api-go/internal/{core,usecase,ports,adapters}`. Single-module: `apps/desktop-wails/{core,ports,usecase,adapters}` (small apps like `daq-t1603`). `shared/` = cross-project; `programs/` = CLI (`shared/*` only). Full: [CLAUDE.md](CLAUDE.md).
+Go backend (hexagonal) + Vue 3 + Wails, multi-project. Split layout: `apps/desktop-wails/{frontend,backend}` + `services/api-go/internal/{core,usecase,ports,adapters}`. Single-module: `apps/desktop-wails/{core,ports,usecase,adapters}` (small apps like `wista`). `shared/` = cross-project; `programs/` = CLI (`shared/*` only). Full: [CLAUDE.md](CLAUDE.md).
 
 ### Hard Constraints (zero-tolerance)
 
@@ -25,7 +25,7 @@ Go backend (hexagonal) + Vue 3 + Wails, multi-project. Split layout: `apps/deskt
 
 ### Environment & Commands
 
-Go + Node.js LTS + Wails v3. `daq-t1603` excluded from `go.work` (ADR-006) → `$env:GOWORK="off"`. Production: `-tags production` + `GOWORK=off` (ADR-004). Scripts: `validate-structure.ps1`, `validate-frontend-structure.ps1 -CheckFileSize`, `check-wails-bindings.ps1`. Full list: [docs/index.md](docs/index.md) §五.
+Go + Node.js LTS + Wails v3. `wista` excluded from `go.work` (ADR-006) → `$env:GOWORK="off"`. Production: `-tags production` + `GOWORK=off` (ADR-004). Scripts: `validate-structure.ps1`, `validate-frontend-structure.ps1 -CheckFileSize`, `check-wails-bindings.ps1`. Full list: [docs/index.md](docs/index.md) §五.
 
 ### Windows Network I/O Constraint
 
@@ -35,14 +35,14 @@ Go + Node.js LTS + Wails v3. `daq-t1603` excluded from `go.work` (ADR-006) → `
 
 ### Pre-submit / Release / Loading
 
-- **Pre-submit**: `validate-structure.ps1` + `go test ./...` + `npm run typecheck` + `npm run build`. Wails binding signature changes → `wails3 generate bindings -silent` (TS-binding projects `daq-t1603` / `daq-p1604` regenerate manually). Details: [development-rules.md](docs/runbooks/development-rules.md) + [frontend-ai-rules-deploy §32.1](docs/runbooks/frontend-ai-rules-deploy.zh-CN.md#321-wails-绑定同步强制零容忍).
+- **Pre-submit**: `validate-structure.ps1` + `go test ./...` + `npm run typecheck` + `npm run build`. Wails binding signature changes → `wails3 generate bindings -silent` (TS-binding projects `wista` / `wispa` regenerate manually). Details: [development-rules.md](docs/runbooks/development-rules.md) + [frontend-ai-rules-deploy §32.1](docs/runbooks/frontend-ai-rules-deploy.zh-CN.md#321-wails-绑定同步强制零容忍).
 - **Release**: [release-versioning.zh-CN.md](docs/runbooks/release-versioning.zh-CN.md) — version + changelog + note + `task release` + report artifact.
 - **Loading**: L1 (this file) → L2 ([CLAUDE.md](CLAUDE.md) + [workspace-engineering-rules](docs/architecture/workspace-engineering-rules.zh-CN.md)) → L3 (runbooks) → L4 (`projects/<name>/`) → L5 (source + tests). **Never load entire `docs/` by default.** Task map: [ai-task-context-map](docs/architecture/ai-task-context-map.zh-CN.md).
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **AI-WorkSpace** (55790 symbols, 115745 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **AI-WorkSpace** (55786 symbols, 115745 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

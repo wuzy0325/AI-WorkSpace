@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v3.json",
+  "name": "wista",
+  "version": "0.6.10",
+  "outputfilename": "WISTA",
+  "frontend": {
+    "dir": "frontend",
+    "install": "npm install --no-audit --no-fund",
+    "build": "npm run build",
+    "dev": {
+      "watcher": "npm run dev",
+      "serverUrl": "http://localhost:9245"
+    }
+  },
+  "author": {
+    "name": "WindTuner Team",
+    "email": ""
+  }
+}

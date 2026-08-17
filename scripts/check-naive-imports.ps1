@@ -1,5 +1,5 @@
 param(
-  [string]$ProjectDir = "projects/wind-daq/apps/desktop-wails/frontend/src"
+  [string]$ProjectDir = "projects/windlabx4/apps/desktop-wails/frontend/src"
 )
 
 $root = Join-Path (Split-Path $PSScriptRoot -Parent) $ProjectDir

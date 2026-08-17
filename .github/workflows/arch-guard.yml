@@ -29,10 +29,10 @@ jobs:
         shell: pwsh
         run: powershell -ExecutionPolicy Bypass -File .\scripts\validate-structure.ps1
 
-      - name: wind-daq 前端结构守卫
+      - name: windlabx4 前端结构守卫
         shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File .\scripts\validate-frontend-structure.ps1 -ProjectDir "projects/wind-daq/apps/desktop-wails/frontend/src"
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\validate-frontend-structure.ps1 -ProjectDir "projects/windlabx4/apps/desktop-wails/frontend/src"
 
-      - name: wind-daq 前端 naive-ui 误导入守卫
+      - name: windlabx4 前端 naive-ui 误导入守卫
         shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File .\scripts\check-naive-imports.ps1 -ProjectDir "projects/wind-daq/apps/desktop-wails/frontend/src"
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\check-naive-imports.ps1 -ProjectDir "projects/windlabx4/apps/desktop-wails/frontend/src"

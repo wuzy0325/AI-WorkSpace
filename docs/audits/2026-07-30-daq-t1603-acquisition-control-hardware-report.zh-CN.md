@@ -334,7 +334,7 @@ if isResyncableReadError(err) {
    - `go test -race ./daq/hardware/... -count=1 -run "TestDAQT1603"` → 通过（32.3s）
    - `go test -race ./protocol/... -count=1` → 通过（11.3s）
    - `go test ./... -count=1`（shared/device-sdk/go 全模块）→ 全绿
-   - `wind-daq/services/api-go/internal/adapters/hardware/...` → 通过（无上游回归）
+   - `windlabx4/services/api-go/internal/adapters/hardware/...` → 通过（无上游回归）
 3. **静态检查**：`go vet ./daq/hardware/...` → 无告警
 
 ### 10.8 风险与回退

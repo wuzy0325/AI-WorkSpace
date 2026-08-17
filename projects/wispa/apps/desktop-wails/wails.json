@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v3.json",
+  "name": "wispa",
+  "version": "0.7.5",
+  "outputfilename": "WISPA",
+  "frontend": {
+    "dir": "frontend",
+    "install": "npm install --no-audit --no-fund",
+    "build": "npm run build",
+    "dev": {
+      "watcher": "npm run dev",
+      "serverUrl": "http://localhost:15175"
+    }
+  },
+  "author": {
+    "name": "WindTuner Team",
+    "email": ""
+  }
+}

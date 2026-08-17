@@ -8,7 +8,7 @@ Use for larger products with an HTTP-capable Go backend and a Wails desktop shel
 
 Examples:
 
-- `projects/wind-daq`
+- `projects/windlabx4`
 - `projects/motion-controller`
 
 Shape:

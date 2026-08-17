@@ -1,0 +1,35 @@
+{
+  "name": "wista-frontend",
+  "version": "0.6.10",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:chromium": "playwright test --project=chromium",
+    "test:e2e:debug": "playwright test --debug"
+  },
+  "dependencies": {
+    "@lucide/vue": "^1.16.0",
+    "@wailsio/runtime": "3.0.0-alpha.95",
+    "echarts": "^6.1.0",
+    "naive-ui": "^2.44.1",
+    "pinia": "^3.0.0",
+    "vue": "^3.5.0",
+    "vue-echarts": "^8.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@vitejs/plugin-vue": "^5.2.0",
+    "@vue/test-utils": "^2.4.0",
+    "jsdom": "^29.1.0",
+    "typescript": "^5.8.0",
+    "vite": "^5.4.0",
+    "vitest": "^4.1.0",
+    "vue-tsc": "^2.2.0"
+  }
+}

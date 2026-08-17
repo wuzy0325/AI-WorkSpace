@@ -8,7 +8,7 @@
 2. **移除平均次数（AverageCount）** — UI 删除，不让用户设置
 3. **通道独立热电偶类型** — 每个通道可单独选择热电偶类型（K/J/T/E/N/R/S/B）
 
-涉及两个项目：`daq-t1603`（独立桌面应用）和 `wind-daq`（综合采集系统）。
+涉及两个项目：`daq-t1603`（独立桌面应用）和 `windlabx4`（综合采集系统）。
 
 ## ASSUMPTIONS
 
@@ -34,8 +34,8 @@ cd frontend
 npm run typecheck
 cd ../../../..
 
-# wind-daq
-cd projects/wind-daq/services/api-go
+# windlabx4
+cd projects/windlabx4/services/api-go
 go vet ./...
 go test ./...
 cd ../../apps/desktop-wails/frontend
@@ -57,7 +57,7 @@ cd ../../../../../..
 | `core/types.go` | `T1603Config.ThermocoupleType string` → `ThermocoupleTypes string`（或别名保持） |
 | `frontend/wailsjs/go/models.ts` | 自动生成，需 `wails generate module` 后更新 |
 
-### wind-daq — 修改的文件
+### windlabx4 — 修改的文件
 
 | 文件 | 修改内容 |
 |------|----------|
@@ -86,7 +86,7 @@ cd ../../../../../..
 </div>
 ```
 
-### wind-daq `DeviceManagementDrawer.vue` — DAQ-T-1603 通道表
+### windlabx4 `DeviceManagementDrawer.vue` — DAQ-T-1603 通道表
 
 ```vue
 <tr v-for="c in draft.channels" :key="c.index">
@@ -102,7 +102,7 @@ cd ../../../../../..
 
 ## Testing Strategy
 
-- `go test ./...` 在 daq-t1603 和 wind-daq 两个项目中通过
+- `go test ./...` 在 daq-t1603 和 windlabx4 两个项目中通过
 - `npm run typecheck` 在前端项目中通过
 - 手动确认：序号和平均次数不再出现在 UI 中
 - 手动确认：每个通道可独立选择热电偶类型
@@ -118,8 +118,8 @@ cd ../../../../../..
 1. ✅ daq-t1603 配置界面不再显示"序号"开关
 2. ✅ daq-t1603 配置界面不再显示"平均次数"下拉框
 3. ✅ daq-t1603 每个通道行右侧有独立的热电偶类型下拉框
-4. ✅ wind-daq 设备编辑器中 DAQ-T-1603 通道表增加热电偶类型列
-5. ✅ wind-daq 配置界面不再显示"平均次数"和"序号"
+4. ✅ windlabx4 设备编辑器中 DAQ-T-1603 通道表增加热电偶类型列
+5. ✅ windlabx4 配置界面不再显示"平均次数"和"序号"
 6. ✅ 保存配置后，硬件接收到的 `@f3` 命令包含正确的各通道热电偶类型
 7. ✅ `go vet ./...` 和 `npm run typecheck` 通过
 
@@ -128,4 +128,4 @@ cd ../../../../../..
 | 问题 | 决定 |
 |------|------|
 | daq-t1603 `ThermocoupleType` 字段名 | 改为 `ThermocoupleTypes string`，需 `wails generate module` 重新生成绑定 |
-| wind-daq 通道列表列位置 | 热电偶类型列放在通道名称之后
+| windlabx4 通道列表列位置 | 热电偶类型列放在通道名称之后

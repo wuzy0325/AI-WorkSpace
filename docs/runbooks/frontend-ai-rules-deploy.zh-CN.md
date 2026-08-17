@@ -393,7 +393,7 @@ mock 规则：
   - 检查 §28.2 硬编码颜色（scoped 块内 hex / rgba / hsl / color-mix fallback / 固定 blur 值）
   - 检查跨组件重复 CSS class
   - 检查 composable 缺失（store ≥ 4 或业务组件 ≥ 6 时未建 `composables/` 目录）
-- `powershell -File scripts/check-naive-imports.ps1 -ProjectDir "projects/wind-daq/apps/desktop-wails/frontend/src"` — wind-daq 项目专用，防止直接 naive-ui 导入
+- `powershell -File scripts/check-naive-imports.ps1 -ProjectDir "projects/windlabx4/apps/desktop-wails/frontend/src"` — windlabx4 项目专用，防止直接 naive-ui 导入
 
 涉及布局、视觉、响应式时，还需要人工或浏览器截图验证：
 

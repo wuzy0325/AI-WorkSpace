@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v3.json",
+  "name": "windlabx4",
+  "version": "0.15.5",
+  "outputfilename": "WindLabX4",
+  "frontend": {
+    "dir": "frontend",
+    "install": "npm install --no-audit --no-fund",
+    "build": "npm run build",
+    "dev": {
+      "watcher": "npm run dev",
+      "serverUrl": "http://127.0.0.1:9246"
+    }
+  },
+  "author": {
+    "name": "WindLabX4 Team",
+    "email": ""
+  }
+}

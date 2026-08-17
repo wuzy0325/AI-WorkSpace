@@ -21,7 +21,7 @@
 | 3 | `daq-p1604` | 复用 T1603 的 HTTP/Electron 模式和现有快照缓存 |
 | 4 | `1604Cal` | 复用现有 HTTP/SSE；先解决嵌套 Git 仓库所有权 |
 | 5 | `motion-controller` | 复用现有 HTTP API；重点验证 DLL、急停和限位 |
-| 6 | `wind-daq` | 复用完整 HTTP/SSE API；最后迁移并做硬件矩阵验收 |
+| 6 | `windlabx4` | 复用完整 HTTP/SSE API；最后迁移并做硬件矩阵验收 |
 
 ### Excluded
 
@@ -250,7 +250,7 @@ git cherry-pick --abort
 - 急停、限位、回零、状态轮询和错误恢复通过。
 - DLL 缺失或不兼容时可诊断，不崩溃。
 
-### Task 12: Migrate wind-daq
+### Task 12: Migrate windlabx4
 
 **Acceptance criteria:**
 - 复用已有 HTTP/SSE API。

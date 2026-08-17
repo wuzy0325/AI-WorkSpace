@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.25 testing、`-race`、`go cover`、Vitest + jsdom + @vue/test-utils、Playwright、PowerShell 校验脚本、golangci-lint、NSIS 安装包、Wails v3 (`-tags production`)。
 
-**适用范围:** `projects/wind-daq`、`projects/daq-t1603`、`projects/daq-p1604`、`projects/motion-controller`、`projects/five-hole-interpolator`、`projects/three-hole-interpolator`、`shared/`、`programs/`、`device-lab/`。
+**适用范围:** `projects/windlabx4`、`projects/daq-t1603`、`projects/daq-p1604`、`projects/motion-controller`、`projects/five-hole-interpolator`、`projects/three-hole-interpolator`、`shared/`、`programs/`、`device-lab/`。
 
 **参考基线:** `projects/daq-t1603/docs/TEST_PLAN.md`（已有分层与用例编号约定）、`projects/daq-t1603/docs/MANUAL_TEST.md`（黑盒用例模板）、`AGENTS.md`（架构零容忍约束）。
 
@@ -101,7 +101,7 @@
 
 | 项目 | 后端 Go 单元 | 前端单元 | 集成 | E2E | HIL | 现状说明 |
 |---|---|---|---|---|---|---|
-| `wind-daq` | 待补 | 待补 | 部分 | smoke 脚本已有 | 必须 | 主线集成项目，覆盖最广 |
+| `windlabx4` | 待补 | 待补 | 部分 | smoke 脚本已有 | 必须 | 主线集成项目，覆盖最广 |
 | `daq-t1603` | 部分实现 | 待创建 | 1/4 | 用例已备 | 必须 | 已有 TEST_PLAN.md |
 | `daq-p1604` | 待补 | 待补 | 待补 | 待补 | 必须 | 新项目，从零搭建 |
 | `motion-controller` | 待补 | 待补 | 待补 | 用例已备 | 必须 | 涉及位移机构安全 |
@@ -185,7 +185,7 @@
 
 #### TC-ARCH-04: programs 仅依赖 shared
 
-**Step 1:** 在 `programs/calibrator-cli/` 写一个 import `projects/wind-daq/internal/...` 的文件。
+**Step 1:** 在 `programs/calibrator-cli/` 写一个 import `projects/windlabx4/internal/...` 的文件。
 **Step 2:** 跑 `arch-guard -rule programs-shared-only`，期望 FAIL。
 **Step 3:** 实现：白名单 `shared/`、标准库、第三方；其余 `projects/*/internal/` 全部禁止。
 **Step 4:** 改回合法 import，期望 PASS。
@@ -215,7 +215,7 @@
 - `projects/daq-t1603/apps/desktop-wails/usecase/device_usecase_test.go`
 - `projects/daq-t1603/apps/desktop-wails/backend/app_test.go`
 - `projects/daq-t1603/apps/desktop-wails/adapters/hardware/t1603_adapter_test.go`
-- `projects/wind-daq/...`（同构）、`projects/daq-p1604/...`、`projects/motion-controller/...`
+- `projects/windlabx4/...`（同构）、`projects/daq-p1604/...`、`projects/motion-controller/...`
 
 #### TC-UC-06: 重复启动采集应报错
 
@@ -264,10 +264,10 @@ func TestDeviceUsecase_DoubleAcquisition(t *testing.T) {
 
 **Step 1-5:** 同模式。
 
-#### TC-UC-WIND-XX: wind-daq 专属用例
+#### TC-UC-WIND-XX: windlabx4 专属用例
 
-**Files:** `projects/wind-daq/...`
-**Step 1:** 复制 daq-t1603 的测试模式与 fake 辅助，按 wind-daq usecase 写对应用例。
+**Files:** `projects/windlabx4/...`
+**Step 1:** 复制 daq-t1603 的测试模式与 fake 辅助，按 windlabx4 usecase 写对应用例。
 **Step 2-5:** 同模式。
 
 ---
@@ -319,9 +319,9 @@ vi.mock('../../wailsjs/go/backend/App', () => ({
 **Step 4:** PASS。
 **Step 5:** 提交：`test(components): cover ChannelCard render and toggle`。
 
-#### TC-FRONT-WIND-XX: wind-daq 专属
+#### TC-FRONT-WIND-XX: windlabx4 专属
 
-**Step 1-5:** 复制同模式，覆盖 wind-daq 的 stores/bridge/components（注意 naive-ui 导入禁令，需通过 `check-naive-imports.ps1`）。
+**Step 1-5:** 复制同模式，覆盖 windlabx4 的 stores/bridge/components（注意 naive-ui 导入禁令，需通过 `check-naive-imports.ps1`）。
 
 ---
 
@@ -425,10 +425,10 @@ func TestIntegration_FullAcquisitionAndRecording(t *testing.T) {
 **Step 1:** 写测试：采集过程中关闭 fake device channel，断言收到 `daq:device-status` 事件、status="Connected"（非 Acquiring）。
 **Step 2-5:** 同模式。
 
-#### TC-INT-WIND-XX: wind-daq 集成
+#### TC-INT-WIND-XX: windlabx4 集成
 
-**Files:** `projects/wind-daq/tests/integration/`
-**Step 1-5:** 按 wind-daq usecase 编写同套集成用例。
+**Files:** `projects/windlabx4/tests/integration/`
+**Step 1-5:** 按 windlabx4 usecase 编写同套集成用例。
 
 ---
 
@@ -491,7 +491,7 @@ type Simulator interface {
 
 #### TC-HW-PRESS-01 ~ 03: 打压设备（SPC4000）
 
-**Files:** `projects/daq-p1604/.../adapters/hardware/press_*_test.go`（或 `projects/wind-daq/...`）
+**Files:** `projects/daq-p1604/.../adapters/hardware/press_*_test.go`（或 `projects/windlabx4/...`）
 **Step 1:** 模拟打压曲线（保压、泄压、异常超压）。
 **Step 2-5:** 同模式。
 
@@ -512,9 +512,9 @@ type Simulator interface {
 **目标：** 用 Playwright 跑通完整黑盒流程，替代/增强已有 `smoke-ui.py`、`smoke_test_echarts.py`。
 
 **Files:**
-- Create: `projects/wind-daq/e2e/playwright.config.ts`
-- Create: `projects/wind-daq/e2e/specs/full_flow.spec.ts`
-- Reference: `projects/wind-daq/docs/e2e-click-test-2026-06-25.md`、`e2e-issues-2026-06-26.md`、`projects/daq-t1603/docs/MANUAL_TEST.md`（用例模板）
+- Create: `projects/windlabx4/e2e/playwright.config.ts`
+- Create: `projects/windlabx4/e2e/specs/full_flow.spec.ts`
+- Reference: `projects/windlabx4/docs/e2e-click-test-2026-06-25.md`、`e2e-issues-2026-06-26.md`、`projects/daq-t1603/docs/MANUAL_TEST.md`（用例模板）
 
 #### TC-E2E-SETUP-01: Playwright 接入 Wails dev server
 
@@ -527,7 +527,7 @@ type Simulator interface {
 **Step 1:** 写 spec，用前端 mock 替换 Wails binding 指向本地模拟器（或后端启动时注入 fake adapter）。
 **Step 2:** `npx playwright test full_flow.spec.ts`，期望 FAIL（某步未通过）。
 **Step 3:** 修正对应 bug（参考 `e2e-issues-2026-06-26.md` 已知问题）。
-**Step 4:** PASS + 生成截图到 `projects/wind-daq/build/e2e/`。
+**Step 4:** PASS + 生成截图到 `projects/windlabx4/build/e2e/`。
 **Step 5:** 提交：`test(e2e): full device lifecycle flow`。
 
 #### TC-E2E-02: 空状态与错误提示
@@ -548,7 +548,7 @@ type Simulator interface {
 #### TC-E2E-05: smoke 脚本归并
 
 **Step 1:** 把 `scripts/smoke-ui.py`、`smoke_test_echarts.py` 中仍有效的断言迁入 Playwright spec，删除冗余 Python 脚本。
-**Step 2:** 确认 `projects/wind-daq/scripts/` 下仅保留构建/度量脚本。
+**Step 2:** 确认 `projects/windlabx4/scripts/` 下仅保留构建/度量脚本。
 **Step 3:** 提交：`refactor(e2e): consolidate smoke scripts into playwright`。
 
 ---
@@ -601,8 +601,8 @@ type Simulator interface {
 **目标：** 验证长时间运行内存稳定、高采样率不丢帧、UI 不卡顿。
 
 **Files:**
-- Create: `projects/wind-daq/tests/perf/long_run_test.go`
-- Reference: `projects/wind-daq/scripts/measure_web_vitals.py`、`docs/MANUAL_TEST.md` §十 TC-LONG-01/02
+- Create: `projects/windlabx4/tests/perf/long_run_test.go`
+- Reference: `projects/windlabx4/scripts/measure_web_vitals.py`、`docs/MANUAL_TEST.md` §十 TC-LONG-01/02
 
 #### TC-PERF-01: 30 分钟连续采集内存稳定
 
@@ -673,8 +673,8 @@ type Simulator interface {
 **目标：** 验证新日志系统（stderr + 每日文件 + SSE 推送）符合 project_memory 中的约束。
 
 **Files:**
-- Create: `projects/wind-daq/.../pkg/logging/logging_test.go`
-- Create: `projects/wind-daq/.../pkg/logging/sse_test.go`
+- Create: `projects/windlabx4/.../pkg/logging/logging_test.go`
+- Create: `projects/windlabx4/.../pkg/logging/sse_test.go`
 - Reference: project_memory（Go 1.25 标准库、WithComponent、WithContext、`data/logs/`、7 天轮转、SSE 端点）
 
 #### TC-OBS-01: 日志组件标签与上下文字段
@@ -687,7 +687,7 @@ type Simulator interface {
 
 #### TC-OBS-02: 每日轮转与 7 天保留
 
-**Step 1:** 写测试：注入 fake clock，跨日写日志，断言生成 `wind-daq-YYYYMMDD.log`；写入 8 天前的日志，断言被清理。
+**Step 1:** 写测试：注入 fake clock，跨日写日志，断言生成 `windlabx4-YYYYMMDD.log`；写入 8 天前的日志，断言被清理。
 **Step 2-5:** 同模式，提交：`test(logging): daily rotation and 7-day retention`。
 
 #### TC-OBS-03: 仅用 Go 1.25 标准库
@@ -718,8 +718,8 @@ type Simulator interface {
 
 **Files:**
 - Reference: `docs/runbooks/release-versioning.zh-CN.md`、`docs/decisions/ADR-004-wails-v3-production-build.md`
-- Create: `projects/wind-daq/scripts/verify-installer.ps1`
-- Create: `projects/wind-daq/scripts/verify-upgrade.ps1`
+- Create: `projects/windlabx4/scripts/verify-installer.ps1`
+- Create: `projects/windlabx4/scripts/verify-upgrade.ps1`
 
 #### TC-REL-01: 生产构建标签正确
 
@@ -921,7 +921,7 @@ Release:
 # === 静态验证 ===
 powershell -File .\scripts\validate-structure.ps1
 powershell -File .\scripts\validate-frontend-structure.ps1 -ProjectDir "projects/<name>/apps/desktop-wails/frontend/src"
-powershell -File .\scripts\check-naive-imports.ps1 -ProjectDir "projects/wind-daq/apps/desktop-wails/frontend/src"
+powershell -File .\scripts\check-naive-imports.ps1 -ProjectDir "projects/windlabx4/apps/desktop-wails/frontend/src"
 
 # === Go 测试 ===
 go test ./... -race -count=1                       # 单模块

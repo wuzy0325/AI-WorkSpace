@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WINDLABX4 · 混合视图改版原型</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --surface-2: #f8fafc;
+      --border: #e6ebf0;
+      --border-strong: #d5dde6;
+      --text: #15202b;
+      --text-2: #5b6b7c;
+      --text-3: #8a97a6;
+      --accent: #0f766e;
+      --accent-soft: #e6f5f3;
+      --danger: #c2410c;
+      --danger-soft: #fff1e8;
+      --ok: #15803d;
+      --ok-soft: #e8f7ee;
+      --sidebar: #fbfcfd;
+      --shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+      --mono: "Cascadia Mono", "SF Mono", Consolas, monospace;
+      --sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: var(--sans);
+      color: var(--text);
+      background: var(--bg);
+      overflow: hidden;
+    }
+
+    .prototype-banner {
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 12px;
+      z-index: 50;
+    }
+    .prototype-banner strong { color: #5eead4; font-weight: 600; }
+    .prototype-banner .tags { display: flex; gap: 8px; }
+    .prototype-banner .tag {
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(94, 234, 212, 0.12);
+      color: #99f6e4;
+      border: 1px solid rgba(94, 234, 212, 0.2);
+    }
+
+    .app {
+      height: calc(100% - 36px);
+      display: grid;
+      grid-template-columns: 56px 240px 1fr;
+      grid-template-rows: 56px 1fr 36px;
+    }
+
+    .topbar {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 240px 1fr auto;
+      align-items: center;
+      gap: 16px;
+      padding: 0 16px 0 12px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .brand-mark {
+      width: 32px; height: 32px; border-radius: 9px;
+      background: linear-gradient(145deg, #14b8a6, #0f766e);
+      display: grid; place-items: center; color: white; font-weight: 700; font-size: 16px;
+      box-shadow: 0 6px 16px rgba(15, 118, 110, 0.25);
+    }
+    .brand-text { line-height: 1.1; }
+    .brand-text .name { font-size: 15px; font-weight: 700; letter-spacing: -0.02em; }
+    .brand-text .sub { font-size: 10px; color: var(--text-3); letter-spacing: 0.08em; margin-top: 2px; }
+
+    .view-switch {
+      display: inline-flex; align-items: center; gap: 2px; padding: 3px;
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: 10px; justify-self: center;
+    }
+    .view-switch button {
+      border: 0; background: transparent; color: var(--text-2);
+      font: inherit; font-size: 13px; padding: 7px 14px; border-radius: 8px; cursor: pointer;
+    }
+    .view-switch button.active {
+      background: var(--surface); color: var(--text); box-shadow: var(--shadow); font-weight: 600;
+    }
+
+    .top-actions { display: flex; align-items: center; gap: 10px; justify-self: end; }
+    .scope-hint { font-size: 12px; color: var(--text-3); margin-right: 4px; }
+
+    .btn {
+      border: 1px solid transparent; border-radius: 9px; font: inherit;
+      font-size: 13px; font-weight: 600; padding: 8px 14px; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 6px; transition: 0.15s ease; white-space: nowrap;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-ghost { background: var(--surface); border-color: var(--border-strong); color: var(--text-2); }
+    .btn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover:not(:disabled) { filter: brightness(1.05); }
+    .btn-danger { background: var(--danger); color: white; }
+    .btn-danger:hover:not(:disabled) { filter: brightness(1.05); }
+    .btn-soft-danger { background: var(--danger-soft); color: var(--danger); border-color: #fdba8c; }
+    .btn-soft-danger:hover:not(:disabled) { background: #ffe4d1; }
+    .btn-soft { background: var(--surface-2); color: var(--text-2); border-color: var(--border); }
+    .btn-sm { padding: 6px 10px; font-size: 12px; border-radius: 8px; }
+
+    .disabled-wrap { position: relative; }
+    .disabled-wrap[data-tip]:hover::after {
+      content: attr(data-tip); position: absolute; right: 0; top: calc(100% + 8px);
+      background: #0f172a; color: #f8fafc; padding: 8px 10px; border-radius: 8px;
+      font-size: 12px; font-weight: 500; white-space: nowrap; z-index: 20;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.2);
+    }
+
+    .nav {
+      grid-row: 2; background: var(--sidebar); border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; align-items: center; padding: 12px 0; gap: 6px;
+    }
+    .nav-item {
+      width: 40px; height: 40px; border-radius: 10px; border: 0; background: transparent;
+      color: var(--text-3); cursor: pointer; display: grid; place-items: center;
+    }
+    .nav-item:hover { background: #eef2f6; color: var(--text-2); }
+    .nav-item.active { background: var(--accent-soft); color: var(--accent); }
+    .nav-item svg { width: 18px; height: 18px; }
+    .nav-spacer { flex: 1; }
+
+    .device-panel {
+      grid-row: 2; background: var(--surface); border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; min-width: 0;
+    }
+    .panel-head {
+      display: flex; align-items: center; justify-content: space-between; padding: 14px 14px 10px;
+    }
+    .panel-head h2 { font-size: 13px; font-weight: 700; }
+    .device-list { padding: 0 10px 12px; display: flex; flex-direction: column; gap: 8px; overflow: auto; }
+    .device-card {
+      border: 1px solid var(--border); border-radius: 12px; padding: 12px;
+      background: var(--surface); cursor: pointer; transition: 0.15s ease;
+    }
+    .device-card:hover { border-color: #c7d2de; background: #fbfcfd; }
+    .device-card.active {
+      border-color: #99d5cf;
+      background: linear-gradient(180deg, #f3fbfa 0%, #ffffff 100%);
+      box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.08);
+    }
+    .device-card .row1 { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+    .device-card .title { font-size: 13px; font-weight: 700; line-height: 1.2; }
+    .device-card .meta { margin-top: 4px; font-size: 11px; color: var(--text-3); }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--ok);
+      box-shadow: 0 0 0 3px rgba(21, 128, 61, 0.12); margin-top: 4px; flex-shrink: 0;
+    }
+    .device-card .badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .badge {
+      font-size: 11px; font-weight: 600; padding: 3px 7px; border-radius: 999px;
+      background: var(--ok-soft); color: var(--ok);
+    }
+    .badge.muted { background: #eef2f6; color: var(--text-2); }
+
+    .workspace {
+      grid-row: 2; min-width: 0; min-height: 0;
+      display: grid; grid-template-rows: auto 1fr; background: #f7f9fb;
+    }
+    .device-header {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; padding: 14px 18px 10px;
+    }
+    .device-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .device-title .icon {
+      width: 36px; height: 36px; border-radius: 10px; background: var(--accent-soft);
+      color: var(--accent); display: grid; place-items: center; flex-shrink: 0;
+    }
+    .device-title h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+    .device-title .subline {
+      margin-top: 4px; display: flex; align-items: center; gap: 8px;
+      flex-wrap: wrap; font-size: 12px; color: var(--text-2);
+    }
+    .pill {
+      display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px;
+      border-radius: 999px; background: var(--ok-soft); color: var(--ok);
+      font-weight: 600; font-size: 11px;
+    }
+    .pill::before {
+      content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+    }
+    .device-ops { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .ops-label { font-size: 11px; color: var(--text-3); margin-right: 2px; }
+
+    .main-scroll {
+      min-height: 0; overflow: auto; padding: 0 18px 14px;
+      display: grid; grid-template-rows: minmax(320px, 1.15fr) auto; gap: 12px;
+    }
+
+    .chart-panel {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+      box-shadow: var(--shadow); min-height: 0;
+      display: grid; grid-template-rows: auto 1fr auto auto; overflow: hidden;
+    }
+    .chart-toolbar {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border);
+    }
+    .chart-toolbar .left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .chart-toolbar h3 { font-size: 13px; font-weight: 700; }
+    .chart-toolbar .hint { font-size: 12px; color: var(--text-3); }
+    .chart-toolbar .right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
+    .chart-body {
+      position: relative; min-height: 260px;
+      display: grid; grid-template-columns: 44px 1fr; grid-template-rows: 1fr 28px;
+    }
+    .y-axis {
+      grid-row: 1; display: flex; flex-direction: column; justify-content: space-between;
+      align-items: flex-end; padding: 14px 6px 8px 8px;
+      font-family: var(--mono); font-size: 10px; color: var(--text-3);
+    }
+    .plot {
+      position: relative; margin: 12px 14px 0 0;
+      border-left: 1px solid #edf1f5; border-bottom: 1px solid #edf1f5;
+      background:
+        linear-gradient(to right, transparent 0, transparent calc(100% - 1px), #f1f5f9 100%),
+        linear-gradient(to bottom, transparent 0, transparent calc(100% - 1px), #f1f5f9 100%),
+        repeating-linear-gradient(to bottom, transparent, transparent 48px, #f5f8fb 48px, #f5f8fb 49px);
+      overflow: hidden;
+    }
+    .plot canvas { width: 100%; height: 100%; display: block; }
+    .x-axis {
+      grid-column: 2; display: flex; justify-content: space-between;
+      padding: 6px 14px 8px 0; font-family: var(--mono); font-size: 10px; color: var(--text-3);
+    }
+    .unit-tag {
+      position: absolute; left: 52px; top: 10px; font-size: 11px; color: var(--text-3);
+      background: rgba(255,255,255,0.9); padding: 2px 6px; border-radius: 4px;
+    }
+
+    .legend {
+      display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 12px;
+    }
+    .legend-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      border: 1px solid var(--border); background: var(--surface);
+      border-radius: 999px; padding: 4px 9px; font-size: 11px; color: var(--text-2);
+      cursor: pointer; transition: 0.12s ease; user-select: none;
+    }
+    .legend-chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .legend-chip.off { opacity: 0.38; text-decoration: line-through; }
+    .legend-chip:hover { border-color: #b7c5d3; background: #f8fafc; color: var(--text); }
+    .legend-chip.focused {
+      border-color: currentColor; background: #fff;
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.04); font-weight: 600;
+    }
+
+    .readout-bar {
+      display: grid; grid-template-columns: 140px 1fr; gap: 12px; align-items: center;
+      padding: 10px 14px; border-top: 1px solid var(--border); background: #fbfcfd; min-height: 54px;
+    }
+    .readout-time { font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+    .readout-values { display: flex; flex-wrap: wrap; gap: 8px 14px; min-width: 0; }
+    .readout-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+    .readout-item .swatch { width: 8px; height: 8px; border-radius: 50%; }
+    .readout-item .name { font-weight: 600; color: var(--text); }
+    .readout-item .val {
+      font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text);
+    }
+
+    .cards-section {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; box-shadow: var(--shadow); overflow: hidden;
+    }
+    .cards-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border);
+    }
+    .cards-head h3 { font-size: 13px; font-weight: 700; }
+    .cards-head .note { font-size: 12px; color: var(--text-3); }
+    .group { padding: 12px 14px 4px; }
+    .group + .group { border-top: 1px solid #f0f3f6; }
+    .group-head {
+      display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;
+    }
+    .group-title {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px; font-weight: 700; color: var(--text);
+    }
+    .group-title .count { font-weight: 600; color: var(--text-3); font-size: 11px; }
+    .group-meta { font-size: 11px; color: var(--text-3); }
+    .cards-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 8px; padding-bottom: 10px;
+    }
+    .ch-card {
+      border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+      padding: 10px 10px 9px; cursor: pointer; transition: 0.12s ease; min-width: 0;
+    }
+    .ch-card:hover { border-color: #c5d0dc; background: #fbfcfd; }
+    .ch-card.active {
+      border-color: #94c9c3;
+      box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.12);
+      background: #f7fcfb;
+    }
+    .ch-card.dim { opacity: 0.42; }
+    .ch-card .top {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px;
+    }
+    .ch-tag {
+      display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700;
+      padding: 2px 7px; border-radius: 6px; color: white;
+    }
+    .ch-card .spark { width: 42px; height: 16px; opacity: 0.85; }
+    .ch-card .value-row { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
+    .ch-card .value {
+      font-family: var(--mono); font-size: 18px; font-weight: 650; letter-spacing: -0.03em;
+      font-variant-numeric: tabular-nums; line-height: 1; color: var(--text);
+    }
+    .ch-card .unit { font-size: 11px; color: var(--text-3); font-weight: 600; }
+    .ch-card .foot {
+      margin-top: 6px; display: flex; justify-content: space-between;
+      gap: 8px; font-size: 10px; color: var(--text-3);
+    }
+
+    .statusbar {
+      grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; padding: 0 16px; background: var(--surface); border-top: 1px solid var(--border);
+      font-size: 12px; color: var(--text-2);
+    }
+    .statusbar .left, .statusbar .right { display: flex; align-items: center; gap: 14px; }
+    .stat { display: inline-flex; align-items: center; gap: 6px; }
+    .stat strong { color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; }
+    .live-dot {
+      width: 7px; height: 7px; border-radius: 50%; background: var(--ok);
+      box-shadow: 0 0 0 3px rgba(21, 128, 61, 0.14); animation: pulse 1.8s ease infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(0.9); opacity: 0.7; }
+    }
+
+    .compare-note {
+      position: fixed; right: 18px; bottom: 52px; width: 300px;
+      background: rgba(15, 23, 42, 0.94); color: #e2e8f0; border-radius: 14px;
+      padding: 14px 14px 12px; box-shadow: 0 18px 40px rgba(15, 23, 42, 0.28);
+      z-index: 40; backdrop-filter: blur(8px);
+    }
+    .compare-note h4 { font-size: 13px; margin-bottom: 8px; color: #5eead4; }
+    .compare-note ul {
+      list-style: none; display: grid; gap: 6px; font-size: 12px; line-height: 1.45; color: #cbd5e1;
+    }
+    .compare-note li::before { content: "✓ "; color: #5eead4; font-weight: 700; }
+    .compare-note .close {
+      position: absolute; top: 10px; right: 10px; border: 0; background: transparent;
+      color: #94a3b8; cursor: pointer; font-size: 16px; line-height: 1;
+    }
+
+    @media (max-width: 1280px) {
+      .app { grid-template-columns: 56px 210px 1fr; }
+      .topbar { grid-template-columns: 210px 1fr auto; }
+      .scope-hint { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="prototype-banner">
+    <div>WINDLABX4 混合视图 · <strong>改版原型</strong>（静态可交互演示，非生产代码）</div>
+    <div class="tags">
+      <span class="tag">默认显示 6 路</span>
+      <span class="tag">操作作用域清晰</span>
+      <span class="tag">通道分组</span>
+    </div>
+  </div>
+
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">W</div>
+        <div class="brand-text">
+          <div class="name">WINDLABX4</div>
+          <div class="sub">DATA ACQUISITION</div>
+        </div>
+      </div>
+
+      <div class="view-switch" role="tablist" aria-label="视图切换">
+        <button type="button">图表</button>
+        <button type="button">卡片</button>
+        <button type="button" class="active">混合</button>
+        <button type="button">总览</button>
+      </div>
+
+      <div class="top-actions">
+        <span class="scope-hint">全局</span>
+        <div class="disabled-wrap" data-tip="请先配置记录路径；采集中可启用">
+          <button class="btn btn-primary" id="btnRecord" disabled>● 开始记录</button>
+        </div>
+        <button class="btn btn-soft-danger" id="btnStopAll" title="停止全部设备采集">停止全部采集</button>
+      </div>
+    </header>
+
+    <nav class="nav" aria-label="主导航">
+      <button class="nav-item active" title="仪表盘">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+      </button>
+      <button class="nav-item" title="探针校准">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v18M5 8l7-3 7 3M5 16l7 3 7-3"/></svg>
+      </button>
+      <button class="nav-item" title="遍历测试">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V5M4 19h16M8 15l3-4 3 2 4-6"/></svg>
+      </button>
+      <button class="nav-item" title="运行日志">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 4h10a2 2 0 0 1 2 2v14l-3-2-3 2-3-2-3 2V6a2 2 0 0 1 2-2z"/></svg>
+      </button>
+      <div class="nav-spacer"></div>
+      <button class="nav-item" title="运动控制">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l2.2 4.5L19 9l-3.5 3.4L16.4 18 12 15.7 7.6 18l.9-5.6L5 9l4.8-1.5L12 3z"/></svg>
+      </button>
+      <button class="nav-item" title="设置">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+    </nav>
+
+    <aside class="device-panel">
+      <div class="panel-head">
+        <h2>设备列表</h2>
+        <button class="btn btn-ghost btn-sm">管理</button>
+      </div>
+      <div class="device-list">
+        <div class="device-card active">
+          <div class="row1">
+            <div>
+              <div class="title">模拟设备</div>
+              <div class="meta">SIM · 18 通道 · 5 Hz</div>
+            </div>
+            <span class="status-dot" title="在线"></span>
+          </div>
+          <div class="badges">
+            <span class="badge">采集中</span>
+            <span class="badge muted">未记录</span>
+          </div>
+        </div>
+        <div class="device-card">
+          <div class="row1">
+            <div>
+              <div class="title">1603</div>
+              <div class="meta">DAQ-T-1603 · USB · 10 Hz</div>
+            </div>
+            <span class="status-dot"></span>
+          </div>
+          <div class="badges">
+            <span class="badge">采集中</span>
+            <span class="badge muted">16 通道</span>
+          </div>
+        </div>
+        <div class="device-card">
+          <div class="row1">
+            <div>
+              <div class="title">Discovered DAQ-T-1603</div>
+              <div class="meta">新发现 · 待配置</div>
+            </div>
+            <span class="status-dot"></span>
+          </div>
+          <div class="badges">
+            <span class="badge">采集中</span>
+            <span class="badge muted">16 通道</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <div class="device-header">
+        <div class="device-title">
+          <div class="icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 18V6M8 18V10M12 18V8M16 18V12M20 18V4"/></svg>
+          </div>
+          <div>
+            <h1>模拟设备</h1>
+            <div class="subline">
+              <span class="pill">采集中</span>
+              <span>18 通道</span>
+              <span>·</span>
+              <span>缓冲 60 秒 · 300 点</span>
+              <span>·</span>
+              <span>当前作用域：本设备</span>
+            </div>
+          </div>
+        </div>
+        <div class="device-ops">
+          <span class="ops-label">本设备</span>
+          <button class="btn btn-soft btn-sm" disabled title="采集中不可校零">校零</button>
+          <button class="btn btn-danger btn-sm" id="btnStopDevice">停止采集</button>
+          <button class="btn btn-ghost btn-sm" id="btnDisconnect">断开</button>
+        </div>
+      </div>
+
+      <div class="main-scroll">
+        <section class="chart-panel">
+          <div class="chart-toolbar">
+            <div class="left">
+              <h3>实时趋势</h3>
+              <span class="hint" id="focusHint">默认显示 6 路 · 单击图例显隐 · 双击独显</span>
+            </div>
+            <div class="right">
+              <button class="btn btn-ghost btn-sm" id="btnShowAll">显示全部</button>
+              <button class="btn btn-ghost btn-sm" id="btnFreeze">冻结刷新</button>
+              <button class="btn btn-ghost btn-sm" id="btnResetView">复位窗口</button>
+            </div>
+          </div>
+
+          <div class="chart-body">
+            <div class="y-axis" id="yAxis">
+              <span>12</span><span>6</span><span>0</span><span>-6</span><span>-12</span>
+            </div>
+            <div class="plot">
+              <canvas id="chart"></canvas>
+              <div class="unit-tag">Pa（压力组）</div>
+            </div>
+            <div class="x-axis" id="xAxis">
+              <span>11:53:53</span>
+              <span>11:53:58</span>
+              <span>11:54:04</span>
+              <span>11:54:09</span>
+              <span>11:54:14</span>
+              <span>11:54:19</span>
+            </div>
+          </div>
+
+          <div class="legend" id="legend"></div>
+
+          <div class="readout-bar">
+            <div class="readout-time" id="readoutTime">光标 · 实时</div>
+            <div class="readout-values" id="readoutValues"></div>
+          </div>
+        </section>
+
+        <section class="cards-section">
+          <div class="cards-head">
+            <div><h3>通道现值</h3></div>
+            <div class="note">统一命名 CH01–CH18 · 按物理量分组 · 点击卡片可同步显隐曲线</div>
+          </div>
+
+          <div class="group">
+            <div class="group-head">
+              <div class="group-title">压力通道 <span class="count" id="pressureCount">16</span></div>
+              <div class="group-meta">量程参考 ±12 Pa</div>
+            </div>
+            <div class="cards-grid" id="pressureCards"></div>
+          </div>
+
+          <div class="group">
+            <div class="group-head">
+              <div class="group-title">环境量 <span class="count">2</span></div>
+              <div class="group-meta">与压力分开展示，避免量级混淆</div>
+            </div>
+            <div class="cards-grid" id="envCards"></div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="statusbar">
+      <div class="left">
+        <span class="stat"><span class="live-dot"></span><strong>采集中</strong></span>
+        <span class="stat">设备 <strong>3</strong></span>
+        <span class="stat">采样 <strong>5 Hz</strong></span>
+        <span class="stat">丢包 <strong>0</strong></span>
+        <span class="stat">记录 <strong>未开始</strong></span>
+      </div>
+      <div class="right">
+        <span class="stat">运行时间 <strong id="runTime">00:02:52</strong></span>
+        <span class="stat">系统时间 <strong id="sysTime">11:54:23</strong></span>
+      </div>
+    </footer>
+  </div>
+
+  <div class="compare-note" id="compareNote">
+    <button class="close" id="closeNote" aria-label="关闭">×</button>
+    <h4>关于波形说明</h4>
+    <ul>
+      <li>红色锯齿线是之前“异常演示”的假数据，已删除</li>
+      <li>现曲线全部为平滑正常差压波形</li>
+      <li>已去掉「聚焦 / 全部 / 异常」切换</li>
+      <li>仍可用图例单击显隐、双击独显</li>
+    </ul>
+  </div>
+
+  <script>
+    // 通道配色：仅作区分，不代表告警
+    const COLORS = [
+      "#2563eb", "#16a34a", "#9333ea", "#ca8a04", "#e11d48", "#0891b2",
+      "#ea580c", "#4f46e5", "#059669", "#db2777", "#0d9488", "#7c3aed",
+      "#b45309", "#0284c7", "#be123c", "#65a30d", "#334155", "#0f766e"
+    ];
+
+    const channels = Array.from({ length: 18 }, (_, i) => {
+      const id = i + 1;
+      const isEnv = id >= 17;
+      return {
+        id,
+        key: `CH${String(id).padStart(2, "0")}`,
+        color: COLORS[i],
+        group: isEnv ? "env" : "pressure",
+        unit: id === 18 ? "°C" : id === 17 ? "kPa" : "Pa",
+        // 各通道相位/幅值略有差异，模拟真实差压；全部平滑、无高频毛刺
+        base: isEnv
+          ? (id === 17 ? 101.13 : 22.6)
+          : (Math.sin(id * 0.9) * 2.2 + ((id % 5) - 2) * 0.6),
+        amp: isEnv
+          ? (id === 17 ? 0.04 : 0.15)
+          : (1.2 + (id % 4) * 0.35),
+        visible: id <= 6,
+        history: [],
+        value: 0
+      };
+    });
+
+    const state = {
+      frozen: false,
+      t0: performance.now(),
+      cursorRatio: 1,
+      runSeconds: 172,
+      soloId: null
+    };
+
+    const canvas = document.getElementById("chart");
+    const ctx = canvas.getContext("2d");
+    const legendEl = document.getElementById("legend");
+    const pressureCards = document.getElementById("pressureCards");
+    const envCards = document.getElementById("envCards");
+    const readoutValues = document.getElementById("readoutValues");
+    const readoutTime = document.getElementById("readoutTime");
+    const focusHint = document.getElementById("focusHint");
+
+    function formatValue(ch) {
+      return ch.id >= 17 ? ch.value.toFixed(2) : ch.value.toFixed(3);
+    }
+
+    function activeChannels() {
+      if (state.soloId != null) {
+        return channels.filter((c) => c.id === state.soloId);
+      }
+      return channels.filter((c) => c.group === "pressure" && c.visible);
+    }
+
+    function resizeCanvas() {
+      const plot = canvas.parentElement;
+      const dpr = window.devicePixelRatio || 1;
+      const rect = plot.getBoundingClientRect();
+      canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+      canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    // 生成平滑演示数据（无异常噪声）
+    function sample(now) {
+      const t = (now - state.t0) / 1000;
+      channels.forEach((ch) => {
+        let v;
+        if (ch.id === 17) {
+          v = 101.13 + Math.sin(t * 0.2) * 0.03;
+        } else if (ch.id === 18) {
+          v = 22.6 + Math.sin(t * 0.15 + 1) * 0.2;
+        } else {
+          v = ch.base
+            + Math.sin(t * (0.55 + ch.id * 0.03) + ch.id) * ch.amp
+            + Math.sin(t * 1.15 + ch.id * 0.35) * (ch.amp * 0.22);
+        }
+        ch.value = v;
+        ch.history.push(v);
+        if (ch.history.length > 300) ch.history.shift();
+      });
+    }
+
+    function drawChart() {
+      const plot = canvas.parentElement;
+      const w = plot.clientWidth;
+      const h = plot.clientHeight;
+      ctx.clearRect(0, 0, w, h);
+
+      const series = activeChannels();
+      if (!series.length) {
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "13px Segoe UI, sans-serif";
+        ctx.fillText("未选择可见通道", 20, 28);
+        return;
+      }
+
+      let min = Infinity;
+      let max = -Infinity;
+      series.forEach((ch) => {
+        ch.history.forEach((v) => {
+          min = Math.min(min, v);
+          max = Math.max(max, v);
+        });
+      });
+      if (!Number.isFinite(min) || !Number.isFinite(max)) return;
+      if (Math.abs(max - min) < 1e-6) {
+        min -= 1;
+        max += 1;
+      }
+      const pad = (max - min) * 0.12;
+      min -= pad;
+      max += pad;
+
+      const yAxis = document.getElementById("yAxis");
+      const ticks = [max, (max + min) * 0.75, (max + min) * 0.5, (max + min) * 0.25, min];
+      yAxis.innerHTML = ticks.map((v) => `<span>${v.toFixed(1)}</span>`).join("");
+
+      const n = Math.max(...series.map((s) => s.history.length), 2);
+      series.forEach((ch) => {
+        const focused = state.soloId == null || state.soloId === ch.id;
+        ctx.beginPath();
+        ctx.lineWidth = focused ? 2.2 : 1.2;
+        ctx.strokeStyle = ch.color;
+        ctx.globalAlpha = focused ? 0.95 : 0.18;
+        ch.history.forEach((v, i) => {
+          const x = (i / (n - 1)) * (w - 2) + 1;
+          const y = h - ((v - min) / (max - min)) * (h - 8) - 4;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      });
+
+      const cx = Math.min(w - 1, Math.max(1, state.cursorRatio * w));
+      ctx.beginPath();
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = "#94a3b8";
+      ctx.lineWidth = 1;
+      ctx.moveTo(cx, 0);
+      ctx.lineTo(cx, h);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    function renderLegend() {
+      const list = channels.filter((c) => c.group === "pressure");
+      legendEl.innerHTML = list.map((ch) => {
+        const focused = state.soloId === ch.id;
+        return `
+          <button class="legend-chip ${ch.visible ? "" : "off"} ${focused ? "focused" : ""}"
+            data-id="${ch.id}" style="color:${ch.color}" title="单击显隐 · 双击独显">
+            <span class="dot" style="background:${ch.color}"></span>
+            ${ch.key}
+          </button>`;
+      }).join("");
+    }
+
+    function cardHtml(ch) {
+      const active = ch.visible || state.soloId === ch.id;
+      const dim = ch.group === "pressure" && !ch.visible && state.soloId == null;
+      return `
+        <div class="ch-card ${active ? "active" : ""} ${dim ? "dim" : ""}" data-id="${ch.id}">
+          <div class="top">
+            <span class="ch-tag" style="background:${ch.color}">${ch.key}</span>
+            <canvas class="spark" width="42" height="16" data-spark="${ch.id}"></canvas>
+          </div>
+          <div class="value-row">
+            <span class="value">${formatValue(ch)}</span>
+            <span class="unit">${ch.unit}</span>
+          </div>
+          <div class="foot">
+            <span>${ch.group === "env" ? (ch.id === 17 ? "大气压" : "温度") : "差压"}</span>
+            <span>${ch.group === "pressure" ? (ch.visible ? "曲线显示中" : "已隐藏") : "正常"}</span>
+          </div>
+        </div>`;
+    }
+
+    function renderCards() {
+      const pressure = channels.filter((c) => c.group === "pressure").sort((a, b) => a.id - b.id);
+      const env = channels.filter((c) => c.group === "env");
+      pressureCards.innerHTML = pressure.map(cardHtml).join("");
+      envCards.innerHTML = env.map(cardHtml).join("");
+      document.getElementById("pressureCount").textContent = String(pressure.length);
+
+      pressure.concat(env).forEach((ch) => {
+        const el = document.querySelector(`canvas[data-spark="${ch.id}"]`);
+        if (!el) return;
+        const sctx = el.getContext("2d");
+        const w = el.width;
+        const h = el.height;
+        sctx.clearRect(0, 0, w, h);
+        const data = ch.history.slice(-40);
+        if (data.length < 2) return;
+        let min = Math.min(...data);
+        let max = Math.max(...data);
+        if (Math.abs(max - min) < 1e-9) { min -= 1; max += 1; }
+        sctx.beginPath();
+        sctx.strokeStyle = ch.color;
+        sctx.lineWidth = 1.4;
+        data.forEach((v, i) => {
+          const x = (i / (data.length - 1)) * (w - 1);
+          const y = h - ((v - min) / (max - min)) * (h - 2) - 1;
+          if (i === 0) sctx.moveTo(x, y);
+          else sctx.lineTo(x, y);
+        });
+        sctx.stroke();
+      });
+    }
+
+    function renderReadout() {
+      const series = activeChannels().slice(0, 8);
+      readoutValues.innerHTML = series.map((ch) => {
+        const idx = Math.min(
+          ch.history.length - 1,
+          Math.max(0, Math.round(state.cursorRatio * (ch.history.length - 1)))
+        );
+        const v = ch.history[idx] ?? ch.value;
+        const shown = ch.id >= 17 ? v.toFixed(2) : v.toFixed(3);
+        return `<span class="readout-item">
+          <span class="swatch" style="background:${ch.color}"></span>
+          <span class="name">${ch.key}</span>
+          <span class="val">${shown} ${ch.unit}</span>
+        </span>`;
+      }).join("");
+
+      readoutTime.textContent = state.cursorRatio >= 0.995
+        ? "光标 · 实时"
+        : `光标 · 回溯 ${Math.round((1 - state.cursorRatio) * 60)}s`;
+    }
+
+    function updateFocusHint() {
+      if (state.soloId != null) {
+        const ch = channels.find((c) => c.id === state.soloId);
+        focusHint.textContent = `独显 ${ch.key} · 再次双击图例或点“复位窗口”恢复`;
+        return;
+      }
+      const n = channels.filter((c) => c.group === "pressure" && c.visible).length;
+      focusHint.textContent = `当前显示 ${n} 路 · 单击图例显隐 · 双击独显`;
+    }
+
+    function tick(now) {
+      if (!state.frozen) sample(now);
+      drawChart();
+      renderCards();
+      renderReadout();
+      requestAnimationFrame(tick);
+    }
+
+    function bindEvents() {
+      legendEl.addEventListener("click", (e) => {
+        const btn = e.target.closest(".legend-chip");
+        if (!btn) return;
+        const id = Number(btn.dataset.id);
+        const ch = channels.find((c) => c.id === id);
+        if (!ch) return;
+        ch.visible = !ch.visible;
+        if (state.soloId === id && !ch.visible) state.soloId = null;
+        renderLegend();
+        updateFocusHint();
+      });
+
+      legendEl.addEventListener("dblclick", (e) => {
+        const btn = e.target.closest(".legend-chip");
+        if (!btn) return;
+        const id = Number(btn.dataset.id);
+        state.soloId = state.soloId === id ? null : id;
+        const ch = channels.find((c) => c.id === id);
+        if (ch) ch.visible = true;
+        renderLegend();
+        updateFocusHint();
+      });
+
+      document.getElementById("btnShowAll").addEventListener("click", () => {
+        state.soloId = null;
+        channels.forEach((c) => {
+          if (c.group === "pressure") c.visible = true;
+        });
+        renderLegend();
+        updateFocusHint();
+      });
+
+      document.getElementById("btnFreeze").addEventListener("click", (e) => {
+        state.frozen = !state.frozen;
+        e.currentTarget.textContent = state.frozen ? "继续刷新" : "冻结刷新";
+        e.currentTarget.classList.toggle("btn-soft-danger", state.frozen);
+      });
+
+      document.getElementById("btnResetView").addEventListener("click", () => {
+        state.soloId = null;
+        state.cursorRatio = 1;
+        channels.forEach((c) => {
+          if (c.group === "pressure") c.visible = c.id <= 6;
+        });
+        renderLegend();
+        updateFocusHint();
+      });
+
+      canvas.parentElement.addEventListener("mousemove", (e) => {
+        const rect = canvas.parentElement.getBoundingClientRect();
+        state.cursorRatio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+      });
+      canvas.parentElement.addEventListener("mouseleave", () => {
+        state.cursorRatio = 1;
+      });
+
+      function onCardClick(e) {
+        const card = e.target.closest(".ch-card");
+        if (!card) return;
+        const id = Number(card.dataset.id);
+        const ch = channels.find((c) => c.id === id);
+        if (!ch || ch.group !== "pressure") return;
+        ch.visible = !ch.visible;
+        if (!ch.visible && state.soloId === id) state.soloId = null;
+        renderLegend();
+        updateFocusHint();
+      }
+      pressureCards.addEventListener("click", onCardClick);
+      envCards.addEventListener("click", onCardClick);
+
+      document.getElementById("btnStopDevice").addEventListener("click", () => {
+        window.alert("演示：停止【本设备】采集（设备级操作）");
+      });
+      document.getElementById("btnStopAll").addEventListener("click", () => {
+        window.alert("演示：停止【全部设备】采集（全局操作）");
+      });
+      document.getElementById("btnDisconnect").addEventListener("click", () => {
+        if (window.confirm("断开将中断本设备连接，确认继续？")) {
+          window.alert("演示：已请求断开连接");
+        }
+      });
+      document.getElementById("closeNote").addEventListener("click", () => {
+        document.getElementById("compareNote").style.display = "none";
+      });
+
+      setInterval(() => {
+        state.runSeconds += 1;
+        const h = String(Math.floor(state.runSeconds / 3600)).padStart(2, "0");
+        const m = String(Math.floor((state.runSeconds % 3600) / 60)).padStart(2, "0");
+        const s = String(state.runSeconds % 60).padStart(2, "0");
+        document.getElementById("runTime").textContent = `${h}:${m}:${s}`;
+        const now = new Date();
+        document.getElementById("sysTime").textContent = now.toTimeString().slice(0, 8);
+        const labels = document.getElementById("xAxis");
+        const base = now.getTime() - 60000;
+        labels.innerHTML = [0, 0.2, 0.4, 0.6, 0.8, 1].map((r) => {
+          const d = new Date(base + r * 60000);
+          return `<span>${d.toTimeString().slice(0, 8)}</span>`;
+        }).join("");
+      }, 1000);
+
+      window.addEventListener("resize", () => {
+        resizeCanvas();
+        drawChart();
+      });
+    }
+
+    for (let i = 0; i < 180; i++) {
+      sample(state.t0 + i * 200);
+    }
+    resizeCanvas();
+    renderLegend();
+    updateFocusHint();
+    bindEvents();
+    requestAnimationFrame(tick);
+  </script>
+</body>
+</html>

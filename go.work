@@ -1,19 +1,16 @@
 go 1.26.1
 
 use (
-	./projects/daq-t1603/apps/desktop-wails
+	./projects/wista/apps/desktop-wails
 	./projects/probe-interpolator/apps/desktop-wails
 	programs/p1604-unit-diag
-	projects/daq-p1604/apps/desktop-wails
-	// 试点期间临时摘除 daq-t1603, 避免 v3 alpha 与其他 v2 项目的间接依赖冲突;
-	// 验证通过后再合并回 use 列表。
-	// projects/daq-t1603/apps/desktop-wails
+	projects/wispa/apps/desktop-wails
 	projects/five-hole-interpolator/apps/desktop-wails
 	projects/motion-controller/apps/desktop-wails
 	projects/motion-controller/services/api-go
 	projects/three-hole-interpolator/apps/desktop-wails
-	projects/wind-daq/apps/desktop-wails
-	projects/wind-daq/services/api-go
+	projects/windlabx4/apps/desktop-wails
+	projects/windlabx4/services/api-go
 	shared/algorithms/go/fivehole
 	shared/algorithms/go/sevenhole
 	shared/device-sdk/go

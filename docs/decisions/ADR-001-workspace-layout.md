@@ -24,6 +24,6 @@ Enforced via `workspace.structure.json` + `scripts/validate-structure.ps1`.
 ## Consequences
 
 - Business logic in `core` stays testable without hardware
-- New projects clone the wind-daq skeleton via `scripts/new-project.ps1`
+- New projects clone the windlabx4 skeleton via `scripts/new-project.ps1`
 - Structural changes require updating structure.json and documenting in docs/decisions/
 - Programs in programs/ must not depend on project internal packages

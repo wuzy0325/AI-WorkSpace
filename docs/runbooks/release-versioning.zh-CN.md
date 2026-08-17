@@ -94,7 +94,7 @@ AI agent 在打包前必须执行以下流程：
     "BOM: $($b[0])-$($b[1])"
     ```
     - **UTF-8/ASCII 编码**（daq-t1603 / motion-controller / five-hole-interpolator / three-hole-interpolator 实测如此）：Edit 工具可直接改，无编码风险。
-    - **UTF-16 LE with BOM 编码**（daq-p1604 / wind-daq 实测如此）：Edit 类工具会破坏编码导致 makensis 报 "Bad text encoding"，必须用 PowerShell 保留编码替换：
+    - **UTF-16 LE with BOM 编码**（wispa / windlabx4 实测如此）：Edit 类工具会破坏编码导致 makensis 报 "Bad text encoding"，必须用 PowerShell 保留编码替换：
       ```powershell
       $path = 'apps/desktop-wails/build/windows/installer/project.nsi'
       $content = Get-Content -Path $path -Encoding Unicode -Raw
@@ -323,7 +323,7 @@ daq-t1603-0.1.2-amd64-installer.exe
 
 ### 归档命令
 
-**有 Taskfile 的项目**（daq-p1604 / daq-t1603 / wind-daq / motion-controller / five-hole-interpolator）：
+**有 Taskfile 的项目**（wispa / daq-t1603 / windlabx4 / motion-controller / five-hole-interpolator）：
 
 ```powershell
 cd projects/<project>/apps/desktop-wails
@@ -341,7 +341,7 @@ task archive-release
 > - 必须从 `build/windows/installer/` 目录调用，二进制路径用反斜杠相对路径 `..\..\bin\<project>.exe`。
 > - 整个 `-D` 参数用**单引号**包裹，避免 PowerShell 把 `=` 后的内容拆分；不引号包裹时 makensis 会把 `-D...` 中的 `.exe` 当作脚本文件报 `Can't open script ".exe"`（实测踩坑）。
 > - 从父目录调用且用正斜杠路径会报 "no files found"。绝对路径可用但必须用引号包裹整个 `-D` 参数（实测可行）。
-> - wind-daq 可用一键脚本替代上述 1+2 步：`cd projects/wind-daq; powershell -ExecutionPolicy Bypass -File scripts/build-release.ps1 -WithInstaller`（自动处理 wails build + DLL 复制 + NSIS 打包 + 编码转换）。
+> - windlabx4 可用一键脚本替代上述 1+2 步：`cd projects/windlabx4; powershell -ExecutionPolicy Bypass -File scripts/build-release.ps1 -WithInstaller`（自动处理 wails build + DLL 复制 + NSIS 打包 + 编码转换）。
 
 **无 Taskfile 的项目**（three-hole-interpolator）：
 

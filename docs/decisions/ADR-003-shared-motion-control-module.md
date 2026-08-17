@@ -6,7 +6,7 @@ Implemented
 
 ## Context
 
-`motion-controller` and `wind-daq` both need motion-control capability.
+`motion-controller` and `windlabx4` both need motion-control capability.
 
 Today they already share low-level hardware protocol code through
 `shared/device-sdk/go`, but they still duplicate the application-level motion
@@ -24,7 +24,7 @@ This duplication is not ideal because fixes to motion command behavior,
 validation, profile handling, or route semantics must be repeated in multiple
 projects.
 
-At the same time, `wind-daq` must not import `motion-controller` project code.
+At the same time, `windlabx4` must not import `motion-controller` project code.
 `motion-controller` is a product, not a library. Cross-project reusable logic
 must live under `shared/`.
 
@@ -65,7 +65,7 @@ projects/motion-controller/*
   -> shared/motion-control/go
   -> shared/device-sdk/go
 
-projects/wind-daq/*
+projects/windlabx4/*
   -> shared/motion-control/go
   -> shared/device-sdk/go
   -> shared/algorithms/go/fivehole
@@ -105,7 +105,7 @@ Compliance matrix:
 | Rule | Plan compliance |
 |---|---|
 | Cross-project reusable code goes under `shared/` | Yes. The shared motion layer is placed under `shared/motion-control/go`. |
-| Projects must not import another project's `internal/*` | Yes. `wind-daq` will import `shared/motion-control/go`, not `motion-controller/services/api-go/internal/*`. |
+| Projects must not import another project's `internal/*` | Yes. `windlabx4` will import `shared/motion-control/go`, not `motion-controller/services/api-go/internal/*`. |
 | `shared/device-sdk/go` remains low-level device SDK | Yes. Application-level manager and routes are not added to `device-sdk`. |
 | Wails backend remains thin | Yes. Wails methods stay as parameter conversion and calls into the shared manager. |
 | Structural changes are documented | Yes. This ADR documents the new shared module. |
@@ -185,10 +185,10 @@ Current implementation status: the shared module scaffold and core packages exis
    go build -buildvcs=false ./...
    ```
 
-6. Replace `wind-daq` duplicated motion implementation with the same shared
+6. Replace `windlabx4` duplicated motion implementation with the same shared
    module.
 
-   Wind-DAQ keeps its DAQ, calibration, traversal, report, storage, and
+   WindLabX4 keeps its DAQ, calibration, traversal, report, storage, and
    five-hole interpolation logic inside its own project modules.
 
    Validation:
@@ -210,7 +210,7 @@ Current implementation status: the shared module scaffold and core packages exis
 
 ## Non-Goals
 
-- Do not make `wind-daq` depend on `motion-controller`.
+- Do not make `windlabx4` depend on `motion-controller`.
 - Do not move DAQ, calibration, traversal, report, or storage logic into the
   shared motion module.
 - Do not move Wails app lifecycle code into the shared module in the first
@@ -222,7 +222,7 @@ Current implementation status: the shared module scaffold and core packages exis
 ## Consequences
 
 - Motion behavior fixes benefit both products.
-- `wind-daq` can keep integrated motion traversal without copying the motion
+- `windlabx4` can keep integrated motion traversal without copying the motion
   stack.
 - `motion-controller` remains the dedicated motion-control product, but not the
   owner of reusable shared motion code.

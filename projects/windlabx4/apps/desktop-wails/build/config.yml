@@ -1,0 +1,33 @@
+version: '3'
+
+info:
+  companyName: "WindLabX4 Team"
+  productName: "WindLabX4"
+  productIdentifier: "com.windlabx4.app"
+  description: "WindLabX4 wind tunnel data acquisition desktop app"
+  copyright: "(c) 2025, WindLabX4 Team"
+  version: "0.15.5"
+
+dev_mode:
+  root_path: .
+  log_level: warn
+  debounce: 1000
+  ignore:
+    dir:
+      - .git
+      - node_modules
+      - bin
+    file:
+      - .DS_Store
+      - .gitignore
+      - .gitkeep
+    watched_extension:
+      - "*.go"
+    git_ignore: true
+  executes:
+    - cmd: wails3 task build-frontend
+      type: blocking
+    - cmd: wails3 task build-go
+      type: blocking
+    - cmd: wails3 task run-dev
+      type: primary
