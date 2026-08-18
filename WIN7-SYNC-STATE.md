@@ -43,7 +43,7 @@
 |---|---|---|---|---|---|
 | 2026-07-23 | wista | `a8de1c2` | Go 1.20 tests/vet/build, frontend typecheck/build, Electron/NSIS smoke | Windows 7 SP1 x64 原始安装包安装与启动通过；重建包待下次真机复核 | `3C74C055237D3585942D707A14A0CEA549EB22308D14F0356A64E9A28E8BED7E` |
 | 2026-07-23 | WindLabX4 | (pending commit) | Go 1.20 tests/vet/build, frontend typecheck/test (45 tests)/build, Electron/NSIS smoke | 本机 smoke 通过：/api/health 200，motion-only 8901 /api/health + /api/motion/status 200；Win7 真机验证待执行 | `64866A1D583B4467AE28C37FBE26CCDF039FEE38CA5A8B24881381EB4D2C94C7` |
-| 2026-08-18 | WindLabX4 | `c0d615d` | Go 1.20.14 build 通过；前端 typecheck/build 通过；Electron/NSIS 打包通过 | 本机 smoke 通过：/api/health 200；端口占用时 backend 退出码 2（防止前端连旧实例）；Win7 真机验证待执行 | `BBDB1A9202AF1181A80F6502A4FD62D41CC786D5243CAC3B8B70CA3EA5870E34` |
+| 2026-08-18 | WindLabX4 | `39baa0a` | Go 1.20.14 build 通过；前端 typecheck/build 通过；Electron/NSIS 打包通过；安装目录 `%LOCALAPPDATA%\Programs\WindLabX4-win7` 验证通过 | 本机 smoke 通过：/api/health 200；端口占用时 backend 退出码 2（防止前端连旧实例）；全新安装定位到 WindLabX4-win7 目录；Win7 真机验证待执行 | `29308C7176565F2D04A0D0A3F0B4B0CF77B83F19E66F993FA3D0159272FE0B62` |
 
 ## Sync Rules
 
