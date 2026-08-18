@@ -51,7 +51,7 @@ if [ $status -ne 0 ]; then
   echo "============================================================"
   echo "  NSIS 脚本编码校验失败，提交已阻止。"
   echo "  请将 project.nsi 转为 UTF-8 并补 BOM（EF BB BF）后重试。"
-  echo "  规则依据见 projects/wind-daq/AGENTS.md 的 NSIS Hard Rules。"
+  echo "  规则依据见 projects/windlabx4/AGENTS.md 的 NSIS Hard Rules。"
   echo "============================================================"
   exit 1
 fi

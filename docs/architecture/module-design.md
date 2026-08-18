@@ -2,7 +2,7 @@
 
 ## 1. Go Backend Module Structure
 
-The tree below is the preferred split-service layout for larger products such as `wind-daq` and `motion-controller`. Small standalone Wails apps may use the same packages directly under `apps/desktop-wails`; see `project-variants.md`.
+The tree below is the preferred split-service layout for larger products such as `windlabx4` and `motion-controller`. Small standalone Wails apps may use the same packages directly under `apps/desktop-wails`; see `project-variants.md`.
 
 Organize by responsibility domain. Each module is an independent Go package.
 

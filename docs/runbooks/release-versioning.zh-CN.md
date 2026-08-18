@@ -341,7 +341,7 @@ task archive-release
 > - 必须从 `build/windows/installer/` 目录调用，二进制路径用反斜杠相对路径 `..\..\bin\<project>.exe`。
 > - 整个 `-D` 参数用**单引号**包裹，避免 PowerShell 把 `=` 后的内容拆分；不引号包裹时 makensis 会把 `-D...` 中的 `.exe` 当作脚本文件报 `Can't open script ".exe"`（实测踩坑）。
 > - 从父目录调用且用正斜杠路径会报 "no files found"。绝对路径可用但必须用引号包裹整个 `-D` 参数（实测可行）。
-> - wind-daq 可用一键脚本替代上述 1+2 步：`cd projects/wind-daq; powershell -ExecutionPolicy Bypass -File scripts/build-release.ps1 -WithInstaller`（自动处理 wails build + DLL 复制 + NSIS 打包 + 编码转换）。
+> - windlabx4 可用一键脚本替代上述 1+2 步：`cd projects/windlabx4; powershell -ExecutionPolicy Bypass -File scripts/build-release.ps1 -WithInstaller`（自动处理 wails build + DLL 复制 + NSIS 打包 + 编码转换）。
 
 **无 Taskfile 的项目**（three-hole-interpolator）：
 

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    # Project name(s): wind-daq / daq-p1604 / daq-t1603 / motion-controller / five-hole-interpolator / three-hole-interpolator. Required.
+    # Project name(s): WindLabX4 / wispa / wista / motion-controller / five-hole-interpolator / three-hole-interpolator. Required.
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
     [string[]]$Project,

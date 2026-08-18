@@ -1,0 +1,51 @@
+{
+  "name": "wista-win7",
+  "version": "0.5.1-win7.1",
+  "private": true,
+  "description": "WISTA Windows 7 compatible desktop application",
+  "main": "main.cjs",
+  "scripts": {
+    "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
+    "dist:win7": "npm run build:backend && electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "22.3.27",
+    "electron-builder": "24.13.3"
+  },
+  "build": {
+    "appId": "com.wtn.wista.win7",
+    "productName": "WISTA",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/wista-backend.exe",
+        "to": "backend/wista-backend.exe"
+      }
+    ],
+    "win": {
+      "icon": "../desktop-wails/appicon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "artifactName": "WISTA-Win7-Setup-${version}-${arch}.${ext}"
+    }
+  }
+}

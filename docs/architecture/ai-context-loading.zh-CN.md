@@ -432,7 +432,7 @@ AI 收到任务后先扫描关键词，命中即精读对应章节，跳过未�
 | wails binding / wails 绑定 | frontend-ai-rules-deploy §32.1 | code-standards §五 |
 | pinia / store / 状态管理 | frontend-ai-rules-state §11-§14 | workspace-engineering-rules §2 |
 | 硬件协议 / SCPI / 串口 / TCP | CLAUDE.md Hard Constraints | daq-pressure-devices skill |
-| CSV 录制 / recorder / sink | project_memory §6 | daq-p1604 CLAUDE.md |
+| CSV 录制 / recorder / sink | project_memory §6 | wispa CLAUDE.md |
 | 设备时间戳 / 硬件时间戳 | project_memory §9.6-§9.10 | frontend-ai-rules-state §17 |
 | 六边形 / hexagonal / 边界 | CLAUDE.md Hard Constraints | workspace-engineering-rules §2 |
 | 命名规范 / naming | code-standards §二 | frontend-ai-rules-quality §19 |

@@ -171,5 +171,5 @@ def generate_ico(output_path: str) -> None:
 
 
 if __name__ == "__main__":
-    output_file = Path(__file__).resolve().parent / "projects" / "daq-t1603" / "apps" / "desktop-wails" / "build" / "appicon.ico"
+    output_file = Path(__file__).resolve().parent / "projects" / "wista" / "apps" / "desktop-wails" / "build" / "appicon.ico"
     generate_ico(str(output_file))

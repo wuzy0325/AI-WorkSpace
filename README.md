@@ -16,8 +16,8 @@ This workspace hosts industrial DAQ, motion-control, and probe-interpolation des
 
 | Project | Purpose | Main docs |
 |---|---|---|
-| `projects/wind-daq` | Wind tunnel DAQ desktop application with device management, calibration, traversal, storage, reports, and integrated motion control. | `projects/wind-daq/README.md`, `projects/wind-daq/docs/STRUCTURE.md` |
-| `projects/daq-t1603` | Standalone DAQ-T-1603 desktop app using a single Wails Go module. | `projects/daq-t1603/README.md`, `projects/daq-t1603/CLAUDE.md` |
+| `projects/windlabx4` | Wind tunnel DAQ desktop application with device management, calibration, traversal, storage, reports, and integrated motion control. | `projects/windlabx4/README.md`, `projects/windlabx4/docs/STRUCTURE.md` |
+| `projects/wista` | Standalone DAQ-T-1603 desktop app using a single Wails Go module. | `projects/wista/README.md`, `projects/wista/CLAUDE.md` |
 | `projects/motion-controller` | Standalone motion-controller desktop app. | `projects/motion-controller/README.md`, `projects/motion-controller/SPEC.md` |
 | `projects/five-hole-interpolator` | Standalone five-hole probe interpolation tool. | `projects/five-hole-interpolator/README.md`, `projects/five-hole-interpolator/SPEC.md` |
 | `projects/three-hole-interpolator` | Standalone three-hole probe interpolation and Win7 delivery tooling. | `projects/three-hole-interpolator/README.md`, `projects/three-hole-interpolator/SPEC.md` |

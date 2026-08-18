@@ -77,7 +77,7 @@ function Get-GoImports {
 }
 
 # 2a. usecase must not import internal/adapters
-$usecaseFiles = Get-ChildItem -Path (Join-Path $workspaceRoot "projects/wind-daq/services/api-go/internal/usecase") -Filter "*.go" -Recurse -ErrorAction SilentlyContinue
+$usecaseFiles = Get-ChildItem -Path (Join-Path $workspaceRoot "projects/windlabx4/services/api-go/internal/usecase") -Filter "*.go" -Recurse -ErrorAction SilentlyContinue
 foreach ($f in $usecaseFiles) {
     $content = Get-Content -Path $f.FullName -Raw -ErrorAction SilentlyContinue
     if (-not $content) { continue }
@@ -91,7 +91,7 @@ foreach ($f in $usecaseFiles) {
 }
 
 # 2b. core must not import hardware, file I/O, network, or framework packages
-$coreFiles = Get-ChildItem -Path (Join-Path $workspaceRoot "projects/wind-daq/services/api-go/internal/core") -Filter "*.go" -Recurse -ErrorAction SilentlyContinue
+$coreFiles = Get-ChildItem -Path (Join-Path $workspaceRoot "projects/windlabx4/services/api-go/internal/core") -Filter "*.go" -Recurse -ErrorAction SilentlyContinue
 $forbiddenCorePatterns = @(
     'adapters/',
     'os\.',
@@ -117,7 +117,7 @@ foreach ($f in $coreFiles) {
 }
 
 # 2c. ports must not contain struct method definitions
-$portsFiles = Get-ChildItem -Path (Join-Path $workspaceRoot "projects/wind-daq/services/api-go/internal/ports") -Filter "*.go" -Recurse -ErrorAction SilentlyContinue
+$portsFiles = Get-ChildItem -Path (Join-Path $workspaceRoot "projects/windlabx4/services/api-go/internal/ports") -Filter "*.go" -Recurse -ErrorAction SilentlyContinue
 foreach ($f in $portsFiles) {
     $content = Get-Content -Path $f.FullName -Raw -ErrorAction SilentlyContinue
     if (-not $content) { continue }
@@ -188,7 +188,7 @@ foreach ($f in $goFiles) {
 #
 # 设计要点：
 #   - staticcheck 未安装时仅 warn 不 fail，避免阻塞未安装该工具的环境
-#   - GOWORK=off：daq-t1603 / threehole / 1604Cal / p1604-ts-diag 不在 go.work use 列表，
+#   - GOWORK=off：wista / threehole / 1604Cal / p1604-ts-diag 不在 go.work use 列表，
 #     统一用 GOWORK=off 扫描所有模块，保证行为一致
 #   - 豁免清单 scripts/staticcheck-u1000-waivers.txt 管理预存 dead code，
 #     新增 dead code 不得加入豁免清单，必须直接删除源码
@@ -217,8 +217,8 @@ if (-not $staticcheckCmd) {
     # 待扫描的 Go 模块列表（所有含 go.mod 的活跃模块，排除 .worktrees/build）
     # 维护说明：新增模块时在此追加；废弃模块时移除对应行
     $goModules = @(
-        "projects/wind-daq/services/api-go",
-        "projects/wind-daq/apps/desktop-wails",
+        "projects/windlabx4/services/api-go",
+        "projects/windlabx4/apps/desktop-wails",
         "shared/device-sdk/go",
         "shared/motion-control/go",
         "shared/algorithms/go/fivehole",
@@ -229,8 +229,8 @@ if (-not $staticcheckCmd) {
         "projects/five-hole-interpolator/apps/desktop-wails",
         "projects/three-hole-interpolator/apps/desktop-wails",
         "projects/probe-interpolator/apps/desktop-wails",
-        "projects/daq-t1603/apps/desktop-wails",
-        "projects/daq-p1604/apps/desktop-wails",
+        "projects/wista/apps/desktop-wails",
+        "projects/wispa/apps/desktop-wails",
         "projects/1604Cal",
         "programs/p1604-unit-diag",
         "programs/p1604-ts-diag"
@@ -247,7 +247,7 @@ if (-not $staticcheckCmd) {
         # 用 Push-Location 切到模块目录，保证 staticcheck 在正确上下文运行
         Push-Location $moduleAbs
         try {
-            # GOWORK=off 统一处理 daq-t1603 等不在 go.work use 列表的模块
+            # GOWORK=off 统一处理 wista 等不在 go.work use 列表的模块
             # PowerShell 原生 $env: 方式设置环境变量，输出用数组捕获
             $prevGowork = $env:GOWORK
             $env:GOWORK = "off"

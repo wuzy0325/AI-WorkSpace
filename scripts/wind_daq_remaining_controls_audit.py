@@ -12,7 +12,7 @@ from playwright.sync_api import Page, Route, TimeoutError, sync_playwright
 
 APP_URL = "http://127.0.0.1:9245"
 LOCAL_API = "http://127.0.0.1:8900"
-REPORT_JSON = "wind-daq-remaining-controls-audit.json"
+REPORT_JSON = "WindLabX4-remaining-controls-audit.json"
 
 reconfigure_stdout = getattr(sys.stdout, "reconfigure", None)
 if reconfigure_stdout:

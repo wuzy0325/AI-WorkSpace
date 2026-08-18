@@ -5,7 +5,7 @@ param(
 
 if (-not $ProjectDir) {
   Write-Host "Usage: validate-frontend-structure.ps1 -ProjectDir <frontend/src> [-CheckFileSize]"
-  Write-Host "Example: validate-frontend-structure.ps1 -ProjectDir projects/wind-daq/apps/desktop-wails/frontend/src -CheckFileSize"
+  Write-Host "Example: validate-frontend-structure.ps1 -ProjectDir projects/windlabx4/apps/desktop-wails/frontend/src -CheckFileSize"
   exit 1
 }
 

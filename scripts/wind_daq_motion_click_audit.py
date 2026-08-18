@@ -12,7 +12,7 @@ from playwright.sync_api import Error, Page, TimeoutError, sync_playwright
 
 
 APP_URL = os.environ.get("WIND_DAQ_E2E_URL", "http://127.0.0.1:9245/#/motion")
-REPORT_JSON = os.environ.get("WIND_DAQ_MOTION_E2E_JSON", "wind-daq-motion-click-audit.json")
+REPORT_JSON = os.environ.get("WIND_DAQ_MOTION_E2E_JSON", "WindLabX4-motion-click-audit.json")
 
 reconfigure_stdout = getattr(sys.stdout, "reconfigure", None)
 if reconfigure_stdout:

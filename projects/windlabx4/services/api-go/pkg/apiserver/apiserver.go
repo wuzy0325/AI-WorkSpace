@@ -1,0 +1,276 @@
+package apiserver
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"sync"
+	"time"
+
+	"shared.local/device-sdk/go/motion/adapters/hardware"
+	"shared.local/device-sdk/go/motion/core"
+	"shared.local/device-sdk/go/motion/ports"
+	motionprofile "shared.local/motion-control/go/profile"
+
+	"windlabx4/services/api-go/api"
+	calstore "windlabx4/services/api-go/internal/adapters/calstore"
+	configadapter "windlabx4/services/api-go/internal/adapters/config"
+	windaqhardware "windlabx4/services/api-go/internal/adapters/hardware"
+	interpadapter "windlabx4/services/api-go/internal/adapters/interpolation"
+	reportadapter "windlabx4/services/api-go/internal/adapters/report"
+	"windlabx4/services/api-go/internal/adapters/scan"
+	storageadapter "windlabx4/services/api-go/internal/adapters/storage"
+	"windlabx4/services/api-go/internal/core/calibration"
+	"windlabx4/services/api-go/internal/core/device"
+	windaqports "windlabx4/services/api-go/internal/ports"
+	"windlabx4/services/api-go/internal/usecase"
+	"windlabx4/services/api-go/pkg/appcontext"
+	"windlabx4/services/api-go/pkg/debugserver"
+	"windlabx4/services/api-go/pkg/logging"
+	"windlabx4/services/api-go/pkg/wiring"
+)
+
+type Server struct {
+	*http.Server
+	done chan struct{}
+	mu   sync.Mutex
+	err  error
+}
+
+type registryShutter interface {
+	Shutdown(context.Context) error
+}
+
+type calibrationShutter interface {
+	Shutdown() error
+}
+
+type httpCloser interface {
+	Close() error
+}
+
+// Done closes when context-owned shutdown succeeds or fails.
+func (s *Server) Done() <-chan struct{} { return s.done }
+
+// ShutdownErr returns the context-owned shutdown result after Done closes.
+func (s *Server) ShutdownErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
+}
+
+func (s *Server) finish(err error) {
+	s.mu.Lock()
+	s.err = err
+	s.mu.Unlock()
+	close(s.done)
+}
+
+func Start(ctx context.Context, addr string) (*Server, error) {
+	if addr == "" {
+		addr = ":8080"
+	}
+
+	// 初始化统一日志系统：与 Wails 桌面端保持一致，输出到 stderr + 文件 + 内存 ring buffer。
+	// 必须在其他服务之前初始化，确保后续 slog 输出全部被捕获，且日志 SSE / recent 端点有数据。
+	logDir := "data/logs"
+	logOpts := logging.Default(logDir)
+	logOpts.AddSource = false
+	logMgr, err := logging.Init(logOpts)
+	logRing := logging.NewRingBuffer(logOpts.RingCapacity)
+	if err != nil {
+		// 日志初始化失败不阻塞服务启动，但输出到 stderr 兜底
+		fmt.Fprintf(os.Stderr, "logging init failed: %v\n", err)
+	} else {
+		logRing = logMgr.Ring()
+	}
+
+	store := configadapter.NewFileProfileStore("config/device-profiles.json")
+	if err := ensureDefaultProfiles(store); err != nil {
+		return nil, err
+	}
+
+	hub := usecase.NewAcquisitionHub(noopPublisher{}, 20)
+	appConfigStore := configadapter.NewFileAppConfigStore("config/app")
+	recorder, err := appcontext.NewStorageRecorderFromConfigStore(appConfigStore)
+	if err != nil {
+		return nil, err
+	}
+	reportMgr := usecase.NewReportManager(reportadapter.NewCSVReportWriter())
+
+	motionProfileStore := motionprofile.NewFileMotionProfileStore("config/motion-profiles.json")
+	motionMgr := wiring.NewMotionManager(motionProfileStore, func(profile core.MotionControllerProfile) (ports.MotionController, error) {
+		factory := hardware.NewDefaultMotionControllerFactory()
+		return factory.Create(profile)
+	})
+
+	calMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calstore.NewMemoryResultStore())
+	// csvWriter 实例同时实现 CalibrationCsvWriter（单 writer 场景）与
+	// CalibrationWriterFactory（七孔多 writer 场景）接口，故复用同一实例注入两端口。
+	csvWriterInstance := storageadapter.NewCalibrationCsvWriter(calibration.Config{})
+	calMgr.SetCsvWriter(csvWriterInstance)
+	calMgr.SetCsvWriterFactory(func(config calibration.Config) windaqports.CalibrationCsvWriter {
+		return storageadapter.NewCalibrationCsvWriterOverwrite(config)
+	})
+	calMgr.SetSevenHoleWriterFactory(csvWriterInstance)
+	travMgr := usecase.NewTraversalManager(hub, motionMgr, nil, calstore.NewTraversalResultStore(), storageadapter.NewFileCheckpointStore(), appConfigStore)
+	// 注入插值器加载端口并异步恢复（通过 ports.InterpolatorLoader 解耦适配器依赖）
+	travMgr.SetInterpolatorLoader(interpadapter.NewLoader())
+	travMgr.RestoreInterpolatorFromPersistedConfig()
+	// 先创建 manager（dataSink 暂传 nil），再统一装配 v2 校零组件 + dataSink。
+	// 之前此处 NewDataSink(hub, recorder, nil, nil) 把 calApplier/channels 都置 nil，
+	// 导致独立 API 服务器路径校零热路径整段跳过（Critical BUG #1）。
+	// 现统一调用 AssembleDataSinkWithCalibration，与 bootstrap/appcontext 走同一条装配路径。
+	manager, err := usecase.NewDeviceManagerWithNormalizer(store, deviceFactory{}, nil, configadapter.NewProfileNormalizer())
+	if err != nil {
+		return nil, err
+	}
+	manager.SetScanner(scan.NewNetworkScanner())
+	usecase.AssembleDataSinkWithCalibration(hub, recorder, manager, 5*time.Second)
+	// 注入通道单位提供端口：BuildRawPressure 归一化时按 (deviceID, channelIndex)
+	// 查询通道 Unit。manager 在此处已初始化完成，可安全注入。
+	// 与 SetInterpolatorLoader 同模式：装配阶段一次性注入，运行期不切换。
+	travMgr.SetUnitProvider(manager)
+	// 注入设备采集控制端口：遍历启动前真实校验目标设备已连接/正在采集，
+	// 并在 ParseAndStartTraversal 启动 loop 之前主动拉起采集，避免"假绿 → no data"。
+	travMgr.SetAcquisitionController(manager)
+	calMgr.SetAcquisitionController(manager)
+
+	// 双探针 registry（Task 14 统一装配），与 legacy travMgr 并存。
+	checkpointStore := storageadapter.NewFileCheckpointStore()
+	registryBundle, err := appcontext.NewTraversalRegistry(appcontext.TraversalRegistryDeps{
+		Hub:             hub,
+		Motion:          motionMgr,
+		DeviceManager:   manager,
+		ConfigStore:     appConfigStore,
+		CheckpointStore: checkpointStore,
+		DataDir:         "config",
+		InterpLoader:    interpadapter.NewLoader(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	handler := api.NewRouter(api.Deps{
+		DeviceManager:      manager,
+		AcquisitionHub:     hub,
+		ReportManager:      reportMgr,
+		MotionManager:      motionMgr,
+		CalibrationManager: calMgr,
+		TraversalManager:   travMgr,
+		TraversalRegistry:  registryBundle.Registry,
+		StorageRecorder:    recorder,
+		ConfigManager: usecase.NewConfigManager(
+			appConfigStore,
+		),
+		LogRing: logRing,
+	})
+
+	srv := &http.Server{Addr: addr, Handler: handler}
+	server := &Server{Server: srv, done: make(chan struct{})}
+	go func() {
+		<-ctx.Done()
+		// context-owned 关停顺序（spec FR9）：
+		//  1. 双探针 registry Shutdown（双 deadline + 有界 EmergencyStop）；
+		//     失败时记录 fatal 并跳过全部共享服务 Close（仍可能被 traversal
+		//     goroutine 使用），进程结果由调用方按非零语义处理。
+		//  2. 停止校准任务并有界等待其 session 退出；
+		//  3. 关闭 HTTP 监听。
+		server.finish(shutdownOwnedServer(registryBundle.Registry, calMgr, srv))
+	}()
+	go func() {
+		srv.ListenAndServe()
+	}()
+
+	// 按需启动 pprof debug server（受 WINDDAQ_PPROF_ADDR 环境变量控制）。
+	// 共享主 ctx，主服务关闭时 pprof 端点同步关闭。
+	if _, err := debugserver.Start(ctx); err != nil {
+		// 仅警告，不阻塞主服务启动
+		fmt.Fprintf(os.Stderr, "debug server start failed: %v\n", err)
+	}
+
+	return server, nil
+}
+
+func shutdownOwnedServer(registry registryShutter, calibration calibrationShutter, httpServer httpCloser) error {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := registry.Shutdown(shutdownCtx); err != nil {
+		fmt.Fprintf(os.Stderr, "fatal: traversal registry shutdown failed, skipping shared service close: %v\n", err)
+		return fmt.Errorf("traversal registry shutdown: %w", err)
+	}
+	if err := calibration.Shutdown(); err != nil {
+		fmt.Fprintf(os.Stderr, "calibration shutdown wait timed out: %v\n", err)
+	}
+	if err := httpServer.Close(); err != nil {
+		return fmt.Errorf("close HTTP server: %w", err)
+	}
+	return nil
+}
+
+type deviceFactory struct{}
+
+func (deviceFactory) Create(profile device.Profile) (windaqports.Device, error) {
+	switch profile.Type {
+	case device.DeviceDAQP1604:
+		return windaqhardware.NewDAQP1604(profile), nil
+	case device.DeviceDAQP1603:
+		// DAQ-P-1603：16 通道通用 AI 采集，走 shared SDK + DLL FFI 路径。
+		// 必须显式匹配此 case，否则落入 default 创建 SimulatedDevice，
+		// 后续 ApplyDAQP1603Config 类型断言会失败。与 appcontext.deviceFactory 对齐。
+		return windaqhardware.NewDAQP1603Adapter(profile), nil
+	case device.DeviceDAQP1604Pre:
+		return windaqhardware.NewDAQP1064Pre(profile), nil
+	case device.DeviceDaqT1603:
+		return windaqhardware.NewT1603Adapter(profile), nil
+	case device.DeviceDaqT1602:
+		return windaqhardware.NewT1602Adapter(profile), nil
+	case device.DeviceWTNPXI:
+		return windaqhardware.NewWTNPXI(profile), nil
+	case device.DeviceDSA3217:
+		return windaqhardware.NewDSA3217(profile), nil
+	default:
+		return windaqhardware.NewSimulatedDevice(profile), nil
+	}
+}
+
+type noopPublisher struct{}
+
+func (noopPublisher) Publish(string, any) {}
+
+func ensureDefaultProfiles(store windaqports.ProfileStore) error {
+	profiles, err := store.LoadProfiles()
+	if err != nil {
+		return err
+	}
+	if len(profiles) > 0 {
+		return nil
+	}
+	return store.SaveProfiles([]device.Profile{
+		configadapter.NewDefaultProfile("sim-1", device.DeviceSimulated),
+	})
+}
+
+func FindAvailablePort(preferred int) int {
+	ports := []int{preferred, 8081, 8082, 9090, 9091}
+	for _, port := range ports {
+		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+		if err == nil {
+			ln.Close()
+			return port
+		}
+	}
+	return 0
+}
+
+func EnvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil {
+			return n
+		}
+	}
+	return fallback
+}

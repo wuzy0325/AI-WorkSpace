@@ -91,16 +91,14 @@
 每个项目可在 `projects/<name>/AGENTS.md` 中覆盖或补充规则。
 
 当前项目：
-- `projects/wind-daq/AGENTS.md` — Wind-DAQ 构建命令 + 提交前检查
-- `projects/wind-daq/docs/STRUCTURE.md` — Wind-DAQ 目录结构详解
-- `projects/wind-daq/README.md` — Wind-DAQ 运行、构建、迁移入口
-- `projects/daq-t1603/AGENTS.md` — DAQ-T-1603 项目级 AI 入口与渐进加载导航
-- `projects/daq-t1603/README.md` — DAQ-T-1603 独立桌面应用入口
-- `projects/daq-t1603/CLAUDE.md` — DAQ-T-1603 单 Go module 架构约束
-- `decisions/ADR-007-daq-t1603-win7-lts.md` — DAQ-T1603 Win7 已验证技术基线和真机证据
-- `decisions/ADR-008-workspace-win7-lts-worktree.md` — 独立 Win7 LTS worktree、产品范围和 AI 选择性同步策略
-- `projects/daq-p1604/AGENTS.md` — DAQ-P-1604 项目级 AI 入口
-- `projects/daq-p1604/README.md` — DAQ-P-1604 独立桌面应用入口
+- `projects/windlabx4/AGENTS.md` — WindLabX4 构建命令 + 提交前检查
+- `projects/windlabx4/docs/STRUCTURE.md` — WindLabX4 目录结构详解
+- `projects/windlabx4/README.md` — WindLabX4 运行、构建、迁移入口
+- `projects/wista/AGENTS.md` — WISTA 项目级 AI 入口与渐进加载导航
+- `projects/wista/README.md` — WISTA 独立桌面应用入口
+- `projects/wista/CLAUDE.md` — WISTA 单 Go module 架构约束
+- `projects/wispa/AGENTS.md` — WISPA 项目级 AI 入口
+- `projects/wispa/README.md` — WISPA 独立桌面应用入口
 - `projects/motion-controller/AGENTS.md` — Motion Controller 项目级 AI 入口与渐进加载导航
 - `projects/motion-controller/README.md` — Motion Controller 独立桌面应用入口
 - `projects/motion-controller/SPEC.md` — Motion Controller 产品规范
@@ -119,8 +117,8 @@
 |------|------|---------|
 | `scripts/validate-structure.ps1` | 后端/整体结构合规检查 | `powershell -File .\scripts\validate-structure.ps1` |
 | `scripts/validate-frontend-structure.ps1` | 前端目录结构合规检查（含 `-CheckFileSize` 量化检查） | `powershell -File scripts/validate-frontend-structure.ps1 -ProjectDir <path> [-CheckFileSize]` |
-| `scripts/check-wails-bindings.ps1` | Wails binding 同步检查（方法名 diff + 时间戳） | `powershell -File scripts/check-wails-bindings.ps1 [-Projects wind-daq,daq-t1603] [-StaleMinutes 30]` |
-| `scripts/check-naive-imports.ps1` | wind-daq naive-ui 直接导入检查 | `powershell -File scripts/check-naive-imports.ps1 -ProjectDir "projects/wind-daq/apps/desktop-wails/frontend/src"` |
+| `scripts/check-wails-bindings.ps1` | Wails binding 同步检查（方法名 diff + 时间戳） | `powershell -File scripts/check-wails-bindings.ps1 [-Projects windlabx4,wista] [-StaleMinutes 30]` |
+| `scripts/check-naive-imports.ps1` | windlabx4 naive-ui 直接导入检查 | `powershell -File scripts/check-naive-imports.ps1 -ProjectDir "projects/windlabx4/apps/desktop-wails/frontend/src"` |
 | `scripts/validate-import-direction.ps1` | hexagonal 边界 import 方向检查 | `powershell -File scripts/validate-import-direction.ps1` |
 | `scripts/lint-go.ps1` | Go 代码检查（gofmt + build） | `powershell -File scripts/lint-go.ps1` |
 | `scripts/new-project.ps1` | 创建新项目骨架 | `powershell -File scripts/new-project.ps1 -Name foo` |

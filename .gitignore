@@ -7,7 +7,7 @@ dist/
 dist2/
 build/
 # Wails 工具链约定的入版本控制配置（NSIS 安装脚本 + 构建配置），其他 build/ 产物不入库
-# 通配符规则：wind-daq / daq-p1604 / daq-t1603 等所有项目共用
+# 通配符规则：WindLabX4 / wispa / wista 等所有项目共用
 !projects/*/apps/desktop-wails/build/
 projects/*/apps/desktop-wails/build/*
 !projects/*/apps/desktop-wails/build/config.yml
@@ -56,12 +56,12 @@ tools/wuzy-skills/npm-cache/
 *.docx~
 
 # E2E audit artifacts
-wind-daq-*.json
+WindLabX4-*.json
 
-# wind-daq 运行时录制产物（由 StorageRecorder 的 csv_sink 自动生成，
+# WindLabX4 运行时录制产物（由 StorageRecorder 的 csv_sink 自动生成，
 # OutputDir 运行时通过 MkdirAll 创建，无需入库）
-projects/wind-daq/apps/desktop-wails/data/recordings/
-projects/wind-daq/apps/desktop-wails/data/logs/
+projects/windlabx4/apps/desktop-wails/data/recordings/
+projects/windlabx4/apps/desktop-wails/data/logs/
 # services/api-go 运行时录制与日志（同上，运行时产物不入库）
 projects/*/services/api-go/data/recordings/
 projects/*/services/api-go/data/logs/
@@ -140,22 +140,22 @@ tasks/
 tmp/
 
 # UI 原型工作区（设计稿导出产物，仅本地参考，不入库）
-wind-daq-trae-work-prototype/
-projects/wind-daq/docs/ui-views-prototype-v4*.png
-projects/wind-daq/docs/ui-views-prototype-v4*.html
+windlabx4-trae-work-prototype/
+projects/windlabx4/docs/ui-views-prototype-v4*.png
+projects/windlabx4/docs/ui-views-prototype-v4*.html
 
 # PDF QA 产物（PDF 转 PNG 截图，QA 工具本地输出）
 pdf-qa/
 
 # 七孔校准实验数据（CSV 原始数据，按项目编号归档，不入库）
-projects/wind-daq/docs/W532.*.P.*-*/
+projects/windlabx4/docs/W532.*.P.*-*/
 # 七孔校准实测 CSV（按日期归档的原始采集数据，不入库）
-projects/wind-daq/docs/7-hole-cal-data/*.csv
+projects/windlabx4/docs/7-hole-cal-data/*.csv
 
 # 软件介绍材料（HTML/PDF 产物 + 配图，本地生成不入库）
-wind-daq-software-introduction.html
-wind-daq-software-introduction.pdf
-wind-daq-intro-images/
+windlabx4-software-introduction.html
+windlabx4-software-introduction.pdf
+windlabx4-intro-images/
 
 # 七孔夹具生成脚本的临时转码产物（可由 gen_traversal_fixtures.py 重新生成）
 device-lab/skills/seven-hole-probe/tools/_transcoded/
@@ -179,7 +179,7 @@ projects/probe-interpolator/apps/desktop-wails/appicon.png
 /calib5.csv
 
 # 七孔校准数据目录下的 Python 调试脚本（__diag_*.py / __find_*.py / __probe.py 等，临时排查工具）
-projects/wind-daq/docs/7-hole-cal-data/__*.py
+projects/windlabx4/docs/7-hole-cal-data/__*.py
 
 # Developer-specific WeChat DevTools settings
 **/project.private.config.json

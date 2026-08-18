@@ -8,15 +8,15 @@
 - Current Win7 base: `a8de1c2`
 - Current branch: `lts/win7`
 - Last reviewed: 2026-07-23
-- Review note: DAQ-T1603、`shared/device-sdk` Go 1.20 兼容层和 Electron 壳已固化为基线提交 `a8de1c2`。
+- Review note: wista、`shared/device-sdk` Go 1.20 兼容层和 Electron 壳已固化为基线提交 `a8de1c2`。
 
 ## Ported Commits
 
 | Master SHA | Win7 SHA | Project | Method | Verification |
 |---|---|---|---|---|
 | `481c053` | `48a3ac5` | workspace docs | `cherry-pick -x` | `git diff --check` |
-| `9142150` | `f571832` | wind-daq | `cherry-pick -x` | 前端 typecheck 通过、vitest 361 tests 全绿 |
-| `2e4429e` | `a3ad1da` | wind-daq | `cherry-pick -x`（排除 bindings 产物） | 前端 typecheck 通过、vitest 361 tests 全绿 |
+| `9142150` | `f571832` | WindLabX4 | `cherry-pick -x` | 前端 typecheck 通过、vitest 361 tests 全绿 |
+| `2e4429e` | `a3ad1da` | WindLabX4 | `cherry-pick -x`（排除 bindings 产物） | 前端 typecheck 通过、vitest 361 tests 全绿 |
 
 ## Manually Ported Commits
 
@@ -40,8 +40,8 @@
 
 | Date | Project | Win7 SHA | Automated verification | Win7 hardware/manual result | Artifact SHA256 |
 |---|---|---|---|---|---|
-| 2026-07-23 | daq-t1603 | `a8de1c2` | Go 1.20 tests/vet/build, frontend typecheck/build, Electron/NSIS smoke | Windows 7 SP1 x64 原始安装包安装与启动通过；重建包待下次真机复核 | `3C74C055237D3585942D707A14A0CEA549EB22308D14F0356A64E9A28E8BED7E` |
-| 2026-07-23 | wind-daq | (pending commit) | Go 1.20 tests/vet/build, frontend typecheck/test (45 tests)/build, Electron/NSIS smoke | 本机 smoke 通过：/api/health 200，motion-only 8901 /api/health + /api/motion/status 200；Win7 真机验证待执行 | `64866A1D583B4467AE28C37FBE26CCDF039FEE38CA5A8B24881381EB4D2C94C7` |
+| 2026-07-23 | wista | `a8de1c2` | Go 1.20 tests/vet/build, frontend typecheck/build, Electron/NSIS smoke | Windows 7 SP1 x64 原始安装包安装与启动通过；重建包待下次真机复核 | `3C74C055237D3585942D707A14A0CEA549EB22308D14F0356A64E9A28E8BED7E` |
+| 2026-07-23 | WindLabX4 | (pending commit) | Go 1.20 tests/vet/build, frontend typecheck/test (45 tests)/build, Electron/NSIS smoke | 本机 smoke 通过：/api/health 200，motion-only 8901 /api/health + /api/motion/status 200；Win7 真机验证待执行 | `64866A1D583B4467AE28C37FBE26CCDF039FEE38CA5A8B24881381EB4D2C94C7` |
 
 ## Sync Rules
 

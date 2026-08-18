@@ -10,8 +10,8 @@
 
 | 类型 | 特征 | 示例 | 迁移策略 |
 |---|---|---|---|
-| A — 单模块 Wails | `core/ports/usecase/adapters/backend` 都在一个 Go module | `daq-t1603`、`daq-p1604` | 拆分业务模块，新增 HTTP adapter + Electron 壳 |
-| B — 已有 HTTP API | 已有 `services/api-go` 通过 HTTP 提供业务能力 | `wind-daq`、`motion-controller`、`1604Cal` | 复用 HTTP API，替换 Wails 壳为 Electron |
+| A — 单模块 Wails | `core/ports/usecase/adapters/backend` 都在一个 Go module | `wista`、`wispa` | 拆分业务模块，新增 HTTP adapter + Electron 壳 |
+| B — 已有 HTTP API | 已有 `services/api-go` 通过 HTTP 提供业务能力 | `windlabx4`、`motion-controller`、`1604Cal` | 复用 HTTP API，替换 Wails 壳为 Electron |
 | C — 纯计算/文件 | 无硬件依赖，仅算法 + 文件 I/O | `probe-interpolator` | 新增 HTTP service + Electron 壳 |
 | D — 嵌套 Git | 项目自身是独立 Git 仓库 | `1604Cal` | 先确定提交所有权，再分层改造 |
 
@@ -22,7 +22,7 @@
 ### 2.1 Electron 壳模板
 
 ```
-projects/daq-t1603/apps/desktop-electron/
+projects/wista/apps/desktop-electron/
 ├── main.cjs              # Electron 主进程：启动 backend、health 轮询、创建窗口、dialog IPC
 ├── preload.cjs           # contextBridge 暴露 electronAPI
 ├── package.json          # electron 22.3.27 + electron-builder NSIS 配置
@@ -53,7 +53,7 @@ import "shared.local/device-sdk/go/pkg/slog"
 ### 2.3 HTTP 服务模式
 
 ```
-projects/daq-t1603/apps/desktop-wails/httpserver/
+projects/wista/apps/desktop-wails/httpserver/
 ├── register.go           # Server struct + RegisterHandlers 入口
 ├── helpers.go            # 统一响应信封 {ok, data, error}
 ├── ws_hub.go             # WebSocket hub + EventBus 实现
@@ -65,7 +65,7 @@ projects/daq-t1603/apps/desktop-wails/httpserver/
 ### 2.4 前端 Transport
 
 ```
-projects/daq-t1603/apps/desktop-wails/frontend/src/bridge/
+projects/wista/apps/desktop-wails/frontend/src/bridge/
 ├── httpClient.ts         # fetch 封装，统一响应信封解包
 ├── wsClient.ts           # WebSocket 单例，自动重连 + 事件分发
 ```

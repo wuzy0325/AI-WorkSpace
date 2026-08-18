@@ -316,41 +316,41 @@
 
 ## 4. 项目快速映射
 
-### 4.1 Wind-DAQ
+### 4.1 WindLabX4
 
 项目入口：
 
-- `projects/wind-daq/AGENTS.md`
+- `projects/windlabx4/AGENTS.md`
 
 常用任务文档：
 
-- `projects/wind-daq/README.md`
-- `projects/wind-daq/CLAUDE.md`
-- `projects/wind-daq/DESIGN.md`
-- `projects/wind-daq/docs/migration/README.md`
-- `projects/wind-daq/docs/STRUCTURE.md`
+- `projects/windlabx4/README.md`
+- `projects/windlabx4/CLAUDE.md`
+- `projects/windlabx4/DESIGN.md`
+- `projects/windlabx4/docs/migration/README.md`
+- `projects/windlabx4/docs/STRUCTURE.md`
 
-### 4.2 DAQ-T-1603
+### 4.2 WISTA
 
 项目入口：
 
-- `projects/daq-t1603/AGENTS.md`
+- `projects/wista/AGENTS.md`
 
 常用任务文档：
 
-- `projects/daq-t1603/README.md`
-- `projects/daq-t1603/CLAUDE.md`
+- `projects/wista/README.md`
+- `projects/wista/CLAUDE.md`
 
-### 4.3 DAQ-P-1604
+### 4.3 WISPA
 
 项目入口：
 
-- `projects/daq-p1604/AGENTS.md`
+- `projects/wispa/AGENTS.md`
 
 常用任务文档：
 
-- `projects/daq-p1604/README.md`
-- `projects/daq-p1604/CLAUDE.md`
+- `projects/wispa/README.md`
+- `projects/wispa/CLAUDE.md`
 
 ### 4.4 Motion Controller
 

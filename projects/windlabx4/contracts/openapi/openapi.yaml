@@ -1,0 +1,661 @@
+openapi: "3.0.3"
+info:
+  title: WindLabX4 API
+  version: "0.1.0-rebuild"
+  description: |
+    MVP API for the rebuilt WindLabX4 backend.
+    This contract intentionally documents only endpoints currently implemented
+    by projects/WindLabX4/services/api-go/api/server.go.
+servers:
+  - url: http://localhost:8080
+    description: Local development API server
+paths:
+  /api/device/profiles:
+    get:
+      summary: List configured device profiles
+      operationId: listDeviceProfiles
+      tags:
+        - Device
+      responses:
+        "200":
+          description: Device profiles loaded by the DeviceManager
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DeviceProfile"
+    put:
+      summary: Create or update a device profile
+      operationId: upsertDeviceProfile
+      tags:
+        - Device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceProfile"
+      responses:
+        "200":
+          description: Profile saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Invalid JSON or invalid profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/device/scan:
+    get:
+      summary: Scan for discoverable devices
+      description: Returns discovered devices. MVP wiring always includes a simulated scanner so no-hardware mode remains testable.
+      operationId: scanDevices
+      tags:
+        - Device
+      responses:
+        "200":
+          description: Scan results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DeviceScanResult"
+        "400":
+          description: Scan failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/device/{deviceId}/connect:
+    post:
+      summary: Connect a configured device profile
+      operationId: connectDevice
+      tags:
+        - Device
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Device connected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Device could not be connected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/device/{deviceId}/disconnect:
+    post:
+      summary: Disconnect a connected device
+      operationId: disconnectDevice
+      tags:
+        - Device
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Device disconnected, or was already disconnected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Device could not be disconnected cleanly
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/device/profiles/{deviceId}:
+    delete:
+      summary: Delete a device profile
+      description: Deletes the saved profile and disconnects any active device instance with the same ID.
+      operationId: deleteDeviceProfile
+      tags:
+        - Device
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Profile deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Profile could not be deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/device/{deviceId}/startAcquisition:
+    post:
+      summary: Start device acquisition
+      operationId: startDeviceAcquisition
+      tags:
+        - Device
+        - DAQ
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Acquisition started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Acquisition could not be started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/device/{deviceId}/stopAcquisition:
+    post:
+      summary: Stop device acquisition
+      operationId: stopDeviceAcquisition
+      tags:
+        - Device
+        - DAQ
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Acquisition stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Acquisition could not be stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/device/{deviceId}/status:
+    get:
+      summary: Get connected device status
+      operationId: getDeviceStatus
+      tags:
+        - Device
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Device status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceStatus"
+        "404":
+          description: Device is not connected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/devices/{deviceId}/calibrate:
+    put:
+      summary: Calibrate pressure-channel zero from five seconds of raw acquisition data
+      description: Temperature and other non-pressure channels never participate in zero calibration.
+      operationId: calibrateDeviceZero
+      tags: [Device, DAQ]
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - name: channelIndex
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Calibration offsets persisted in base units
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/CalibrationResult" }
+        "400":
+          description: Device is not acquiring, target is not a pressure channel, calibration is already running, or sampling failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /api/v1/devices/{deviceId}/calibration:
+    get:
+      summary: Get one channel calibration record
+      operationId: getDeviceCalibration
+      tags: [Device, DAQ]
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - name: channelIndex
+          in: query
+          required: true
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Calibration record
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalibrationRecord" }
+  /api/v1/devices/{deviceId}/clearCalibration:
+    post:
+      summary: Clear one channel calibration record
+      operationId: clearDeviceCalibration
+      tags: [Device, DAQ]
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - name: channelIndex
+          in: query
+          required: true
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Calibration cleared
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+  /api/v1/devices/{deviceId}/calibrationProgress:
+    get:
+      summary: Get live zero-calibration sample progress
+      operationId: getDeviceCalibrationProgress
+      tags: [Device, DAQ]
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Current progress
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalibrationProgress" }
+  /api/v1/devices/{deviceId}/calibrationEnabled:
+    get:
+      summary: Get channel calibration application switch
+      operationId: getCalibrationEnabled
+      tags: [Device, DAQ]
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - name: channelIndex
+          in: query
+          required: true
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Switch state
+    put:
+      summary: Set DAQ-P-1603 channel calibration application switch
+      operationId: setCalibrationEnabled
+      tags: [Device, DAQ]
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channelIndex, enabled]
+              properties:
+                channelIndex: { type: integer, minimum: 0 }
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: Switch persisted
+  /api/device/{deviceId}/unit:
+    put:
+      summary: Update the display/engineering unit for all profile channels
+      operationId: setDeviceUnit
+      tags:
+        - Device
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - unit
+              properties:
+                unit:
+                  type: string
+                  example: kPa
+      responses:
+        "200":
+          description: Unit saved to the device profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Unit could not be saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/device/{deviceId}/daqT1603Config:
+    get:
+      summary: Get DAQ-T-1603 hardware configuration
+      operationId: getDaqT1603Config
+      tags:
+        - Device
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Saved or active DAQ-T-1603 hardware configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DaqT1603HardwareConfig"
+        "400":
+          description: Configuration could not be read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      summary: Save DAQ-T-1603 hardware configuration
+      operationId: applyDaqT1603Config
+      tags:
+        - Device
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DaqT1603HardwareConfig"
+      responses:
+        "200":
+          description: Configuration saved and applied when supported by the active device adapter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Configuration could not be saved or applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/daq/latest/{deviceId}:
+    get:
+      summary: Get the latest acquisition payload for a device
+      operationId: getLatestDaqPayload
+      tags:
+        - DAQ
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: Latest payload, or an empty payload with only deviceId when no data is available yet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataPayload"
+  /api/daq/stream/{deviceId}:
+    get:
+      summary: Stream acquisition payloads for a device with Server-Sent Events
+      operationId: streamDaqPayloads
+      tags:
+        - DAQ
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "200":
+          description: SSE stream. Each event is named `payload` and contains a DataPayload JSON object.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+components:
+  parameters:
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: sim-1
+  schemas:
+    DeviceType:
+      type: string
+      enum:
+        - SIMULATED
+        - DAQ_T_1603
+    ConnectionState:
+      type: string
+      enum:
+        - Disconnected
+        - Connected
+        - Acquiring
+        - Error
+    ChannelConfig:
+      type: object
+      required:
+        - index
+        - name
+        - enabled
+        - unit
+        - precision
+      properties:
+        index:
+          type: integer
+          example: 0
+        name:
+          type: string
+          example: CH1
+        enabled:
+          type: boolean
+          example: true
+        unit:
+          type: string
+          example: V
+        precision:
+          type: integer
+          example: 3
+        rangeMin:
+          type: number
+          format: double
+          example: -10
+        rangeMax:
+          type: number
+          format: double
+          example: 10
+        calibrationOffset:
+          type: number
+          format: double
+          description: Persisted base-unit zero offset
+        calibrationUnit:
+          type: string
+          description: Unit used when the offset was sampled
+        calibrationAt:
+          type: integer
+          format: int64
+        calibrationEnabled:
+          type: boolean
+          description: Applies only to DAQ-P-1603 pressure channels; temperature channels never support zero calibration.
+    DeviceProfile:
+      type: object
+      required:
+        - id
+        - name
+        - type
+        - samplingRate
+        - channels
+      properties:
+        version:
+          type: integer
+          example: 2
+        id:
+          type: string
+          example: sim-1
+        name:
+          type: string
+          example: Simulator 1
+        type:
+          $ref: "#/components/schemas/DeviceType"
+        samplingRate:
+          type: integer
+          minimum: 1
+          example: 20
+        channels:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChannelConfig"
+        daqT1603Config:
+          $ref: "#/components/schemas/DaqT1603HardwareConfig"
+    DaqT1603HardwareConfig:
+      type: object
+      required:
+        - thermocoupleType
+        - coldJunction
+        - filterHz
+      properties:
+        thermocoupleType:
+          type: string
+          example: K
+        coldJunction:
+          type: string
+          example: internal
+        filterHz:
+          type: integer
+          minimum: 1
+          example: 50
+    DeviceStatus:
+      type: object
+      required:
+        - id
+        - name
+        - type
+        - connection
+        - acquiring
+      properties:
+        id:
+          type: string
+          example: sim-1
+        name:
+          type: string
+          example: Simulator 1
+        type:
+          $ref: "#/components/schemas/DeviceType"
+        connection:
+          $ref: "#/components/schemas/ConnectionState"
+        acquiring:
+          type: boolean
+          example: true
+        lastError:
+          type: string
+          example: device not connected
+    DeviceScanResult:
+      type: object
+      required:
+        - id
+        - name
+        - type
+        - available
+      properties:
+        id:
+          type: string
+          example: sim-1
+        name:
+          type: string
+          example: Simulator 1
+        type:
+          $ref: "#/components/schemas/DeviceType"
+        available:
+          type: boolean
+          example: true
+        address:
+          type: string
+          example: simulated://sim-1
+    DataPayload:
+      type: object
+      required:
+        - deviceId
+        - timestamp
+        - channels
+        - channelIndices
+      properties:
+        deviceId:
+          type: string
+          example: sim-1
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds
+          example: 1716200000000
+        channels:
+          type: array
+          items:
+            type: number
+            format: double
+          example:
+            - 1.234
+            - 2.345
+        channelIndices:
+          type: array
+          items:
+            type: integer
+          example:
+            - 0
+            - 1
+    SuccessResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+          example: true
+    CalibrationResult:
+      type: object
+      required: [channelIndex, offset, unit, at, sampleCount]
+      properties:
+        channelIndex: { type: integer }
+        offset: { type: number, format: double }
+        unit: { type: string }
+        at: { type: integer, format: int64 }
+        sampleCount: { type: integer }
+    CalibrationRecord:
+      type: object
+      required: [channelIndex, offset, unit, at, enabled]
+      properties:
+        channelIndex: { type: integer }
+        offset: { type: number, format: double }
+        unit: { type: string }
+        at: { type: integer, format: int64 }
+        enabled: { type: boolean }
+    CalibrationProgress:
+      type: object
+      required: [running, elapsedMs, sampleCount]
+      properties:
+        running: { type: boolean }
+        channelIndex: { type: integer }
+        elapsedMs: { type: integer, format: int64 }
+        sampleCount: { type: integer }
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - error
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          example: not found

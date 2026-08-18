@@ -2,8 +2,8 @@
 
 > **当前分支**：`lts/win7`
 > **工作目录**：`c:\Users\wuzhy\Documents\D\SVN\SoftWare\trunk\AI-Workspace-win7`
-> **最后更新**：2026-07-23（wind-daq 迁移完成）
-> **状态**：DAQ-T1603 Win7 源码基线已提交为 `a8de1c2`；原始安装包通过 Windows 7 SP1 x64 真机验证，重建安装包已通过本机 smoke test；wind-daq Win7 迁移完成，本机 smoke test 通过，真机验证待执行
+> **最后更新**：2026-07-23（WindLabX4 迁移完成）
+> **状态**：wista Win7 源码基线已提交为 `a8de1c2`；原始安装包通过 Windows 7 SP1 x64 真机验证，重建安装包已通过本机 smoke test；WindLabX4 Win7 迁移完成，本机 smoke test 通过，真机验证待执行
 
 ---
 
@@ -11,14 +11,14 @@
 
 在不改动主工作空间 `AI-Workspace` 产品代码的前提下，为以下维护产品制作 Windows 7 SP1 x64 版本：
 
-- `daq-t1603`（已验证）
+- `wista`（已验证）
 - `probe-interpolator`
-- `daq-p1604`
+- `wispa`
 - `1604Cal`
 - `motion-controller`
-- `wind-daq`
+- `WindLabX4`
 
-DAQ-T1603 是首个技术基线。全部产品统一在本 worktree 的长期 `lts/win7` 分支维护，主线修复由 AI 定期选择性同步，不整体合并 `master`。
+wista 是首个技术基线。全部产品统一在本 worktree 的长期 `lts/win7` 分支维护，主线修复由 AI 定期选择性同步，不整体合并 `master`。
 
 初始要求：
 
@@ -66,7 +66,7 @@ DAQ-T1603 是首个技术基线。全部产品统一在本 worktree 的长期 `l
 
 ## 3. 分支与隔离方案
 
-- **Git 策略**：同一 Git 仓库的长期 worktree；DAQ-T1603 基线提交后将分支统一为 `lts/win7`
+- **Git 策略**：同一 Git 仓库的长期 worktree；wista 基线提交后将分支统一为 `lts/win7`
 - **工作目录**：`c:\Users\wuzhy\Documents\D\SVN\SoftWare\trunk\AI-Workspace-win7`（与 trunk 主工作目录平级）
 - **SVN 策略**：SVN 不建分支，仅 Git worktree 隔离（用户明确选择"SVN 不建分支"）
 - **零侵入保障**：worktree 内的修改不会回流 trunk，trunk 代码完全不变
@@ -108,10 +108,10 @@ shared/device-sdk/go 下 7 个文件：
 - [daq/hardware/daq_t1603.go](shared/device-sdk/go/daq/hardware/daq_t1603.go)
 - [motion/adapters/hardware/wtnmc4a_motion.go](shared/device-sdk/go/motion/adapters/hardware/wtnmc4a_motion.go)
 
-daq-t1603 业务层 3 个文件：
-- [backend/log_service.go](projects/daq-t1603/apps/desktop-wails/backend/log_service.go)
-- [usecase/device_usecase.go](projects/daq-t1603/apps/desktop-wails/usecase/device_usecase.go)
-- [adapters/config/json_config.go](projects/daq-t1603/apps/desktop-wails/adapters/config/json_config.go)
+wista 业务层 3 个文件：
+- [backend/log_service.go](projects/wista/apps/desktop-wails/backend/log_service.go)
+- [usecase/device_usecase.go](projects/wista/apps/desktop-wails/usecase/device_usecase.go)
+- [adapters/config/json_config.go](projects/wista/apps/desktop-wails/adapters/config/json_config.go)
 
 #### 4.2.2 math/rand/v2 → math/rand（1 个文件）
 
@@ -132,7 +132,7 @@ daq-t1603 业务层 3 个文件：
 - require golang.org/x/exp v0.0.0-... (自动删除)
 ```
 
-**daq-t1603 go.mod**：[projects/daq-t1603/apps/desktop-wails/go.mod](projects/daq-t1603/apps/desktop-wails/go.mod)
+**wista go.mod**：[projects/wista/apps/desktop-wails/go.mod](projects/wista/apps/desktop-wails/go.mod)
 
 ```diff
 - go 1.25.0
@@ -144,7 +144,7 @@ daq-t1603 业务层 3 个文件：
 
 最终 go.mod：
 ```
-module daq-t1603
+module wista
 go 1.20
 require shared.local/device-sdk/go v0.0.0-00010101000000-000000000000
 require (
@@ -162,7 +162,7 @@ replace shared.local/device-sdk/go => ../../../../shared/device-sdk/go
 
 **解决方案**：在 core 层引入 `EventBus` 接口，backend 依赖抽象而非具体传输。
 
-**新建文件**：[core/eventbus.go](projects/daq-t1603/apps/desktop-wails/core/eventbus.go)
+**新建文件**：[core/eventbus.go](projects/wista/apps/desktop-wails/core/eventbus.go)
 
 ```go
 type EventBus interface {
@@ -178,7 +178,7 @@ const (
 )
 ```
 
-**修改文件**：[core/hub.go](projects/daq-t1603/apps/desktop-wails/core/hub.go)
+**修改文件**：[core/hub.go](projects/wista/apps/desktop-wails/core/hub.go)
 
 - Hub 结构体新增 `bus EventBus` 字段
 - 新增 `SetEventBus(bus EventBus)` 方法（注入 WSHub）
@@ -188,14 +188,14 @@ const (
 
 | 文件 | 改动 |
 |---|---|
-| [backend/device_service.go](projects/daq-t1603/apps/desktop-wails/backend/device_service.go) | 移除 `*application.App` 字段，`ServiceStartup(ctx)` 签名简化（无 options），`emitPayload` 改走 `hub.EmitEvent` |
-| [backend/log_service.go](projects/daq-t1603/apps/desktop-wails/backend/log_service.go) | `EmitLog` 走 `hub.EmitEvent(core.EventLog, ...)`，`PickDirectory` 返回 `ErrDialogNotSupported` |
-| [backend/recording_service.go](projects/daq-t1603/apps/desktop-wails/backend/recording_service.go) | `EmitStatus` / `handleBackpressure` / `handleFatal` 全走 `hub.EmitEvent` |
-| [backend/dialog.go](projects/daq-t1603/apps/desktop-wails/backend/dialog.go) | 重写为只定义 `ErrDialogNotSupported`，目录选择改由 Electron 主进程处理 |
+| [backend/device_service.go](projects/wista/apps/desktop-wails/backend/device_service.go) | 移除 `*application.App` 字段，`ServiceStartup(ctx)` 签名简化（无 options），`emitPayload` 改走 `hub.EmitEvent` |
+| [backend/log_service.go](projects/wista/apps/desktop-wails/backend/log_service.go) | `EmitLog` 走 `hub.EmitEvent(core.EventLog, ...)`，`PickDirectory` 返回 `ErrDialogNotSupported` |
+| [backend/recording_service.go](projects/wista/apps/desktop-wails/backend/recording_service.go) | `EmitStatus` / `handleBackpressure` / `handleFatal` 全走 `hub.EmitEvent` |
+| [backend/dialog.go](projects/wista/apps/desktop-wails/backend/dialog.go) | 重写为只定义 `ErrDialogNotSupported`，目录选择改由 Electron 主进程处理 |
 
 #### 4.3.3 main.go 重写
 
-**文件**：[projects/daq-t1603/apps/desktop-wails/main.go](projects/daq-t1603/apps/desktop-wails/main.go)
+**文件**：[projects/wista/apps/desktop-wails/main.go](projects/wista/apps/desktop-wails/main.go)
 
 关键改动：
 - 移除 `github.com/wailsapp/wails/v3/pkg/application` import
@@ -212,13 +212,13 @@ httpserver 包共 7 个文件，覆盖 17 个 HTTP endpoint + 1 个 WebSocket en
 
 | 文件 | 内容 |
 |---|---|
-| [httpserver/register.go](projects/daq-t1603/apps/desktop-wails/httpserver/register.go) | Server struct + RegisterHandlers 入口 + /api/health |
-| [httpserver/helpers.go](projects/daq-t1603/apps/desktop-wails/httpserver/helpers.go) | 统一响应信封 `{ok,data,error}` + JSON 解析 + ID 解析工具 |
-| [httpserver/ws_hub.go](projects/daq-t1603/apps/desktop-wails/httpserver/ws_hub.go) | WebSocket hub，实现 `core.EventBus` 接口，`/ws` endpoint |
-| [httpserver/device_handler.go](projects/daq-t1603/apps/desktop-wails/httpserver/device_handler.go) | DeviceService 的 10 个 endpoint |
-| [httpserver/recording_handler.go](projects/daq-t1603/apps/desktop-wails/httpserver/recording_handler.go) | RecordingService 的 3 个 endpoint |
-| [httpserver/log_handler.go](projects/daq-t1603/apps/desktop-wails/httpserver/log_handler.go) | LogService 的 3 个 endpoint |
-| [httpserver/ws_hub_test.go](projects/daq-t1603/apps/desktop-wails/httpserver/ws_hub_test.go) | WebSocket hub 集成测试（4 个用例，全过） |
+| [httpserver/register.go](projects/wista/apps/desktop-wails/httpserver/register.go) | Server struct + RegisterHandlers 入口 + /api/health |
+| [httpserver/helpers.go](projects/wista/apps/desktop-wails/httpserver/helpers.go) | 统一响应信封 `{ok,data,error}` + JSON 解析 + ID 解析工具 |
+| [httpserver/ws_hub.go](projects/wista/apps/desktop-wails/httpserver/ws_hub.go) | WebSocket hub，实现 `core.EventBus` 接口，`/ws` endpoint |
+| [httpserver/device_handler.go](projects/wista/apps/desktop-wails/httpserver/device_handler.go) | DeviceService 的 10 个 endpoint |
+| [httpserver/recording_handler.go](projects/wista/apps/desktop-wails/httpserver/recording_handler.go) | RecordingService 的 3 个 endpoint |
+| [httpserver/log_handler.go](projects/wista/apps/desktop-wails/httpserver/log_handler.go) | LogService 的 3 个 endpoint |
+| [httpserver/ws_hub_test.go](projects/wista/apps/desktop-wails/httpserver/ws_hub_test.go) | WebSocket hub 集成测试（4 个用例，全过） |
 
 **HTTP endpoint 完整列表**：
 
@@ -278,7 +278,7 @@ httpserver 包共 7 个文件，覆盖 17 个 HTTP endpoint + 1 个 WebSocket en
 
 #### 4.3.5 main.go 装配
 
-**修改文件**：[main.go](projects/daq-t1603/apps/desktop-wails/main.go)
+**修改文件**：[main.go](projects/wista/apps/desktop-wails/main.go)
 
 关键改动：
 - 第 80-85 行：在 ServiceStartup 之前创建 `wsHub` 并调用 `hub.SetEventBus(wsHub)`
@@ -301,7 +301,7 @@ $env:GOROOT = "C:\go-versions\go1.20.14"
 $env:PATH = "$env:GOROOT\bin;$env:PATH"
 $env:GOWORK = "off"
 $env:GOPROXY = "https://goproxy.cn,direct"
-cd "c:\Users\wuzhy\Documents\D\SVN\SoftWare\trunk\AI-Workspace-win7\projects\daq-t1603\apps\desktop-wails"
+cd "c:\Users\wuzhy\Documents\D\SVN\SoftWare\trunk\AI-Workspace-win7\projects\wista\apps\desktop-wails"
 go build ./...
 go vet ./...
 go test ./...
@@ -378,7 +378,7 @@ ws.onmessage = (e) => {
 
 ### 7.2 前端 bridge 改写 ✅ 已完成
 
-**目录**：`projects/daq-t1603/apps/desktop-wails/frontend/src/bridge/`
+**目录**：`projects/wista/apps/desktop-wails/frontend/src/bridge/`
 
 | 文件 | 改动 |
 |---|---|
@@ -418,7 +418,7 @@ ws.onmessage = (e) => {
 
 ### 7.3 Electron 主进程 ✅ 已完成
 
-**目录**：`projects/daq-t1603/apps/desktop-electron/`（新建）
+**目录**：`projects/wista/apps/desktop-electron/`（新建）
 
 | 文件 | 内容 |
 |---|---|
@@ -445,7 +445,7 @@ ws.onmessage = (e) => {
 3. `electron-builder` 生成 NSIS x64 安装包：通过
 4. Windows 7 SP1 x64 真机安装与启动验证：通过
 
-验证安装包：`projects/daq-t1603/apps/desktop-electron/dist/DAQ-T-1603-Win7-Setup-0.3.3-x64.exe`
+验证安装包：`projects/wista/apps/desktop-electron/dist/DAQ-T-1603-Win7-Setup-0.3.3-x64.exe`
 
 技术基线：Go 1.20.14、Electron 22.3.27、Chromium 108。Electron 23 及以上不支持 Windows 7。
 
@@ -455,39 +455,39 @@ ws.onmessage = (e) => {
 
 | 文件 | 用途 |
 |---|---|
-| [main.go](projects/daq-t1603/apps/desktop-wails/main.go) | Go 后端入口（net/http server） |
-| [go.mod](projects/daq-t1603/apps/desktop-wails/go.mod) | daq-t1603 模块定义 |
+| [main.go](projects/wista/apps/desktop-wails/main.go) | Go 后端入口（net/http server） |
+| [go.mod](projects/wista/apps/desktop-wails/go.mod) | wista 模块定义 |
 | [shared/device-sdk/go/go.mod](shared/device-sdk/go/go.mod) | device-sdk 模块定义 |
 
 ### 8.2 核心抽象
 
 | 文件 | 用途 |
 |---|---|
-| [core/eventbus.go](projects/daq-t1603/apps/desktop-wails/core/eventbus.go) | EventBus 接口 + 事件名常量 |
-| [core/hub.go](projects/daq-t1603/apps/desktop-wails/core/hub.go) | Hub（含 SetEventBus/EmitEvent 方法） |
+| [core/eventbus.go](projects/wista/apps/desktop-wails/core/eventbus.go) | EventBus 接口 + 事件名常量 |
+| [core/hub.go](projects/wista/apps/desktop-wails/core/hub.go) | Hub（含 SetEventBus/EmitEvent 方法） |
 | [shared/device-sdk/go/pkg/slog/slog.go](shared/device-sdk/go/pkg/slog/slog.go) | slog shim 包 |
 
 ### 8.3 backend Service
 
 | 文件 | 用途 |
 |---|---|
-| [backend/device_service.go](projects/daq-t1603/apps/desktop-wails/backend/device_service.go) | 设备 Service |
-| [backend/log_service.go](projects/daq-t1603/apps/desktop-wails/backend/log_service.go) | 日志 Service |
-| [backend/recording_service.go](projects/daq-t1603/apps/desktop-wails/backend/recording_service.go) | 录制 Service |
-| [backend/dialog.go](projects/daq-t1603/apps/desktop-wails/backend/dialog.go) | ErrDialogNotSupported 定义 |
-| [backend/errors.go](projects/daq-t1603/apps/desktop-wails/backend/errors.go) | ErrDeviceNotFound 定义 |
+| [backend/device_service.go](projects/wista/apps/desktop-wails/backend/device_service.go) | 设备 Service |
+| [backend/log_service.go](projects/wista/apps/desktop-wails/backend/log_service.go) | 日志 Service |
+| [backend/recording_service.go](projects/wista/apps/desktop-wails/backend/recording_service.go) | 录制 Service |
+| [backend/dialog.go](projects/wista/apps/desktop-wails/backend/dialog.go) | ErrDialogNotSupported 定义 |
+| [backend/errors.go](projects/wista/apps/desktop-wails/backend/errors.go) | ErrDeviceNotFound 定义 |
 
 ### 8.4 httpserver
 
 | 文件 | 用途 |
 |---|---|
-| [httpserver/register.go](projects/daq-t1603/apps/desktop-wails/httpserver/register.go) | Server struct + RegisterHandlers 入口 + /api/health |
-| [httpserver/helpers.go](projects/daq-t1603/apps/desktop-wails/httpserver/helpers.go) | 统一响应信封 + JSON 解析工具 |
-| [httpserver/ws_hub.go](projects/daq-t1603/apps/desktop-wails/httpserver/ws_hub.go) | WebSocket hub，实现 core.EventBus 接口 |
-| [httpserver/device_handler.go](projects/daq-t1603/apps/desktop-wails/httpserver/device_handler.go) | DeviceService 的 10 个 endpoint |
-| [httpserver/recording_handler.go](projects/daq-t1603/apps/desktop-wails/httpserver/recording_handler.go) | RecordingService 的 3 个 endpoint |
-| [httpserver/log_handler.go](projects/daq-t1603/apps/desktop-wails/httpserver/log_handler.go) | LogService 的 3 个 endpoint |
-| [httpserver/ws_hub_test.go](projects/daq-t1603/apps/desktop-wails/httpserver/ws_hub_test.go) | WebSocket hub 集成测试 |
+| [httpserver/register.go](projects/wista/apps/desktop-wails/httpserver/register.go) | Server struct + RegisterHandlers 入口 + /api/health |
+| [httpserver/helpers.go](projects/wista/apps/desktop-wails/httpserver/helpers.go) | 统一响应信封 + JSON 解析工具 |
+| [httpserver/ws_hub.go](projects/wista/apps/desktop-wails/httpserver/ws_hub.go) | WebSocket hub，实现 core.EventBus 接口 |
+| [httpserver/device_handler.go](projects/wista/apps/desktop-wails/httpserver/device_handler.go) | DeviceService 的 10 个 endpoint |
+| [httpserver/recording_handler.go](projects/wista/apps/desktop-wails/httpserver/recording_handler.go) | RecordingService 的 3 个 endpoint |
+| [httpserver/log_handler.go](projects/wista/apps/desktop-wails/httpserver/log_handler.go) | LogService 的 3 个 endpoint |
+| [httpserver/ws_hub_test.go](projects/wista/apps/desktop-wails/httpserver/ws_hub_test.go) | WebSocket hub 集成测试 |
 
 ## 9. 踩坑记录
 
@@ -545,11 +545,11 @@ ws.onmessage = (e) => {
 
 按优先级：
 
-1. ~~固化 DAQ-T1603 已验证源码~~：已提交为 `a8de1c2`。
+1. ~~固化 wista 已验证源码~~：已提交为 `a8de1c2`。
 2. ~~将分支统一为 `lts/win7`~~：已完成。
 3. 以 `WIN7-SYNC-STATE.md` 为事实来源，建立 AI 选择性同步流程。
-4. 从 DAQ-T1603 提取仅存在于 Win7 分支的 Electron/HTTP/NSIS 平台模板。
-5. 按 `probe-interpolator` → `daq-p1604` → `1604Cal` → `motion-controller` → `wind-daq` 顺序迁移。
+4. 从 wista 提取仅存在于 Win7 分支的 Electron/HTTP/NSIS 平台模板。
+5. 按 `probe-interpolator` → `wispa` → `1604Cal` → `motion-controller` → `WindLabX4` 顺序迁移。
 6. 每完成一个产品，生成 NSIS 并进行 Windows 7 SP1 x64 真机验收。
 
 详细实施计划保存在主工作空间：`docs/plans/2026-07-23-workspace-win7-lts-worktree.md`。
@@ -557,7 +557,7 @@ ws.onmessage = (e) => {
 技术基线保持不变：Go 1.20.14、Electron 22.3.27、Chromium 108。主工作空间继续使用当前 Go/Wails 技术栈，不承受 Win7 兼容约束。
 
 
-## 11. wind-daq 迁移完成（2026-07-23）
+## 11. WindLabX4 迁移完成（2026-07-23）
 
 ### 11.1 迁移类型
 
@@ -579,7 +579,7 @@ ws.onmessage = (e) => {
 | 命令 | 结果 |
 |---|---|
 | `go mod tidy` | 通过（自动添加 indirect 依赖，go 1.20 保持不变） |
-| `go build` | 通过（生成 8.68MB `wind-daq-backend.exe`） |
+| `go build` | 通过（生成 8.68MB `WindLabX4-backend.exe`） |
 | `go vet ./...` | 通过 |
 | `go test ./...` | 通过（6 tests passed） |
 | `npm install` | 通过（312 packages） |
@@ -594,18 +594,18 @@ ws.onmessage = (e) => {
 
 1. **AppHandler 接口隔离**：api 包通过接口依赖 backend.App，避免反向依赖 desktop-wails/backend 包
 2. **OnAcquisitionStarted 回调注入**：将 Wails 时代的 `DeviceStartAcquisition` + `tryAutoStartRecording` 业务策略通过回调函数注入到 api.Deps，在 HTTP 路由层异步触发
-3. **HTTP server 生命周期分离**：app.go 只负责业务初始化（Start/Stop + NewDeps），HTTP server 由 main.go 创建和控制，参考 daq-t1603 模板
+3. **HTTP server 生命周期分离**：app.go 只负责业务初始化（Start/Stop + NewDeps），HTTP server 由 main.go 创建和控制，参考 wista 模板
 4. **motion-only 子进程端口隔离**：主进程 8900，motion-only 子进程 8901，避免端口冲突
 5. **isWailsAvailable 语义变更**：从检测 Wails runtime 改为检测 `window.electronAPI`（Electron preload 注入），保持导出名不变以避免大量调用点改名
 6. **wailsApi 适配器重写策略**：保留 `wailsApi` 导出名和类型签名（GenericResponse 含大写 Success/Error 兼容字段），内部全部改为 HTTP fetch 调用，`normalizeGenericResponse` 统一大小写
 7. **Electron IPC 通道**：仅 `dialog:pick-directory` 和 `app:open-motion-window` 走 IPC，其他全部通过 HTTP API
-8. **motion-only 子进程 Electron 管理**：主进程 spawn `wind-daq-backend.exe --motion-only --parent-pid=<PID>`，等待 8901 健康检查，创建独立 BrowserWindow 加载 `http://127.0.0.1:8901`
+8. **motion-only 子进程 Electron 管理**：主进程 spawn `WindLabX4-backend.exe --motion-only --parent-pid=<PID>`，等待 8901 健康检查，创建独立 BrowserWindow 加载 `http://127.0.0.1:8901`
 
 ### 11.5 产物
 
-- 安装包：`projects/wind-daq/apps/desktop-electron/dist/Wind-DAQ-Win7-Setup-0.3.5-x64.exe`（68.18MB）
+- 安装包：`projects/windlabx4/apps/desktop-electron/dist/WindLabX4-Win7-Setup-0.3.5-x64.exe`（68.18MB）
 - 安装包 SHA256：`64866A1D583B4467AE28C37FBE26CCDF039FEE38CA5A8B24881381EB4D2C94C7`
-- 后端可执行文件：`projects/wind-daq/apps/desktop-electron/backend/wind-daq-backend.exe`（8.68MB）
+- 后端可执行文件：`projects/windlabx4/apps/desktop-electron/backend/WindLabX4-backend.exe`（8.68MB）
 - 后端 SHA256：`88D2D11D5B3211EAF744A5687EAE7E5786C61A89B15DE55E28B1AC9FFB7B3469`
 
 ### 11.6 待办

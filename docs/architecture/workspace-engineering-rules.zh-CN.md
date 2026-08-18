@@ -13,7 +13,7 @@
 
 本工作空间采用 Go 后端（六边形架构）+ Vue 3 前端 + Wails 桌面壳 + 多项目组织方式。
 
-典型结构：`projects/<name>/apps/desktop-wails/{frontend,backend}` 或 `projects/<name>/services/api-go/internal/{core,usecase,ports,adapters}`。小型独立工具（如 `daq-t1603`）允许单模块变体，但必须保留 `core/usecase/ports/adapters` 逻辑边界。
+典型结构：`projects/<name>/apps/desktop-wails/{frontend,backend}` 或 `projects/<name>/services/api-go/internal/{core,usecase,ports,adapters}`。小型独立工具（如 `wista`）允许单模块变体，但必须保留 `core/usecase/ports/adapters` 逻辑边界。
 
 一句话概括：**前端负责显示与交互，后端负责业务与控制，六边形架构负责隔离变化。**
 
