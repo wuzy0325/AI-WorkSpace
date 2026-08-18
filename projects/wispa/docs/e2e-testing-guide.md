@@ -1,6 +1,6 @@
 # E2E 测试指南：Wails v3 + WebView2 + Playwright CDP
 
-> **适用范围**：所有使用 Wails v3 + WebView2 渲染的桌面应用（daq-p1604 / daq-t1603 / wind-daq / motion-controller 等）。本文以 `daq-p1604` 为具体示例，方法论与代码模板可直接复用。
+> **适用范围**：所有使用 Wails v3 + WebView2 渲染的桌面应用（daq-p1604 / daq-t1603 / WindLabX4 / motion-controller 等）。本文以 `daq-p1604` 为具体示例，方法论与代码模板可直接复用。
 >
 > **目标读者**：AI Agent（首选）与人类测试人员。文档假设读者已熟悉 Go / Vue 3 / Wails 基本概念。
 
@@ -67,7 +67,7 @@ wailsApp := application.New(appOpts)
 |---|---|---|
 | daq-p1604 | `DAQ_P1604_CDP_PORT` | 9222 |
 | daq-t1603 | `DAQ_T1603_CDP_PORT` | 9223 |
-| wind-daq | `WIND_DAQ_CDP_PORT` | 9224 |
+| WindLabX4 | `WIND_DAQ_CDP_PORT` | 9224 |
 | motion-controller | `MOTION_CDP_PORT` | 9225 |
 
 ### 2.5 生产安全性

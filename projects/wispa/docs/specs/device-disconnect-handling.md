@@ -2,7 +2,7 @@
 
 > **状态**：Phase 1 - 待用户 review
 > **创建时间**：2026-07-03
-> **范围**：仅 daq-p1604 项目（wind-daq 同类问题另立 spec）
+> **范围**：仅 daq-p1604 项目（WindLabX4 同类问题另立 spec）
 
 ## Objective
 
@@ -189,7 +189,7 @@ func (a *P1604Adapter) handleConnectionLost(id string, driver *p1604Driver, caus
 - 状态变更通过 `emitState`/`emitLog` 通知前端
 
 **Ask first**：
-- 修改 `sharedproto` 共享代码（影响 wind-daq）
+- 修改 `sharedproto` 共享代码（影响 WindLabX4）
 - 改变 CSV 文件格式
 - 新增外部依赖
 - 修改 Wails binding 方法签名（需重新生成 binding）
