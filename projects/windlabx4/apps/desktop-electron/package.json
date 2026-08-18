@@ -46,7 +46,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "artifactName": "WindLabX4-${version}-Win7-${arch}.${ext}"
+      "artifactName": "WindLabX4-${version}-${arch}.${ext}"
     }
   }
 }

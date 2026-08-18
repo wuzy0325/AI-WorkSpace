@@ -45,7 +45,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "artifactName": "WISPA-Win7-Setup-${version}-${arch}.${ext}"
+      "artifactName": "WISPA-Setup-${version}-${arch}.${ext}"
     }
   }
 }

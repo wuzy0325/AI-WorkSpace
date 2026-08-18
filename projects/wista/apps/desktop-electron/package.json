@@ -45,7 +45,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "artifactName": "WISTA-Win7-Setup-${version}-${arch}.${ext}"
+      "artifactName": "WISTA-Setup-${version}-${arch}.${ext}"
     }
   }
 }
