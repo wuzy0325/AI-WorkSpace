@@ -18,7 +18,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -103,7 +102,7 @@ func (c *Conn) WriteSingleRegister(unitID uint8, address uint16, value uint16) e
 	if err := checkException(resp, FuncWriteSingleRegister); err != nil {
 		return err
 	}
-	if !slices.Equal(resp, pdu) {
+	if !bytesEqual(resp, pdu) {
 		c.poison()
 		return fmt.Errorf("modbus: FC6 echo mismatch: got % X, want % X: %w", resp, pdu, ErrConnBroken)
 	}
@@ -243,4 +242,17 @@ func checkException(resp []byte, fc uint8) error {
 		return &ExceptionError{Function: fc, Code: resp[1]}
 	}
 	return nil
+}
+
+// bytesEqual 比较两个 []byte 是否相等（Go 1.20 替代 slices.Equal）。
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

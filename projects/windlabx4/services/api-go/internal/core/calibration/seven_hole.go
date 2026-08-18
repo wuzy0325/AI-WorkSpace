@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -791,13 +790,21 @@ func generateSevenHoleFullOuterRow(theta float64, config SevenHoleConfig, phiCou
 		}
 	}
 	if reverse {
-		slices.Reverse(points)
+		reverseSlice(points)
 	}
 	return points
 }
 
 func normalizeAngleFrom(start, angle float64) float64 {
 	return math.Mod(math.Mod(angle-start, 360.0)+360.0, 360.0)
+}
+
+// reverseSlice 原地反转切片。
+// Go 1.20 标准库无 slices.Reverse（Go 1.21+），此处手写实现以兼容 Win7 的 Go 1.20 工具链。
+func reverseSlice[T any](s []T) {
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
+	}
 }
 
 // generateSevenHoleDatasetOuterPoints 数据集模式外区点位生成（spec §6.2）

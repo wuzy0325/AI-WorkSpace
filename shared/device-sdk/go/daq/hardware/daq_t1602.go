@@ -3,7 +3,6 @@ package hardware
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"net"
 	"runtime/debug"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"shared.local/device-sdk/go/daq/core"
+	"shared.local/device-sdk/go/pkg/slog"
 	"shared.local/device-sdk/go/protocol"
 	"shared.local/device-sdk/go/protocol/modbus"
 )

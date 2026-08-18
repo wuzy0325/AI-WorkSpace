@@ -6,7 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
-	"slices"
+	
 	"sync"
 	"testing"
 	"time"
@@ -53,7 +53,7 @@ func TestReadHoldingRegistersRequestAndParse(t *testing.T) {
 	var gotPDU []byte
 	client, server := newPipePair(func(unitID uint8, pdu []byte) []byte {
 		gotUnit = unitID
-		gotPDU = slices.Clone(pdu)
+		gotPDU = clone(pdu)
 		resp := []byte{FuncReadHoldingRegisters, 16}
 		for i := 0; i < 8; i++ {
 			resp = binary.BigEndian.AppendUint16(resp, uint16(100+i))
@@ -71,7 +71,7 @@ func TestReadHoldingRegistersRequestAndParse(t *testing.T) {
 		t.Fatalf("unit id = %d, want 1", gotUnit)
 	}
 	wantPDU := []byte{0x03, 0x00, 0xC8, 0x00, 0x08}
-	if !slices.Equal(gotPDU, wantPDU) {
+	if !bytesEqual(gotPDU, wantPDU) {
 		t.Fatalf("request PDU = % X, want % X", gotPDU, wantPDU)
 	}
 	for i, v := range values {
@@ -106,7 +106,7 @@ func TestReadInputRegistersBigEndianParse(t *testing.T) {
 func TestWriteSingleRegisterEcho(t *testing.T) {
 	var gotPDU []byte
 	client, server := newPipePair(func(unitID uint8, pdu []byte) []byte {
-		gotPDU = slices.Clone(pdu)
+		gotPDU = clone(pdu)
 		return pdu // FC6 正常响应原样回显请求 PDU
 	})
 	defer server.Close()
@@ -116,14 +116,14 @@ func TestWriteSingleRegisterEcho(t *testing.T) {
 		t.Fatalf("WriteSingleRegister returned error: %v", err)
 	}
 	wantPDU := []byte{0x06, 0x00, 0xCB, 0x00, 0x05}
-	if !slices.Equal(gotPDU, wantPDU) {
+	if !bytesEqual(gotPDU, wantPDU) {
 		t.Fatalf("request PDU = % X, want % X", gotPDU, wantPDU)
 	}
 }
 
 func TestWriteSingleRegisterEchoMismatchPoisonsConn(t *testing.T) {
 	client, server := newPipePair(func(unitID uint8, pdu []byte) []byte {
-		resp := slices.Clone(pdu)
+		resp := clone(pdu)
 		resp[4] ^= 0xFF // 篡改回显值
 		return resp
 	})
@@ -268,7 +268,7 @@ func TestFragmentedResponseParsed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadInputRegisters returned error: %v", err)
 	}
-	if !slices.Equal(values, []uint16{1, 2}) {
+	if !bytesEqual(values, []uint16{1, 2}) {
 		t.Fatalf("values = %v, want [1 2]", values)
 	}
 }
@@ -303,7 +303,7 @@ func TestTransactionIDIncrements(t *testing.T) {
 			t.Fatalf("request %d returned error: %v", i, err)
 		}
 	}
-	if !slices.Equal(txIDs, []uint16{1, 2, 3}) {
+	if !bytesEqual(txIDs, []uint16{1, 2, 3}) {
 		t.Fatalf("transaction ids = %v, want [1 2 3]", txIDs)
 	}
 }
@@ -396,3 +396,6 @@ func TestWatchdogCloseReleasesBlockedRead(t *testing.T) {
 		t.Fatal("watchdog should have closed the conn")
 	}
 }
+
+// clone 返回 []byte 的副本（Go 1.20 替代 slices.Clone）。
+func clone(b []byte) []byte { r := make([]byte, len(b)); copy(r, b); return r }
