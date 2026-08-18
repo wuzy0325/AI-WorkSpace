@@ -46,7 +46,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "WISPA",
-      "artifactName": "WISPA-Setup-${version}-${arch}.${ext}"
+      "artifactName": "wispa-Setup-${version}-${arch}.${ext}"
     }
   }
 }

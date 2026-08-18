@@ -46,7 +46,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "WISTA",
-      "artifactName": "WISTA-Setup-${version}-${arch}.${ext}"
+      "artifactName": "wista-Setup-${version}-${arch}.${ext}"
     }
   }
 }
