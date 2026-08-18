@@ -48,31 +48,46 @@ if ($WithInstaller) {
     Write-Host ">>> Copying $DLLName to $TargetInstallerDir ..." -ForegroundColor Cyan
     Copy-Item -LiteralPath $DLLSource -Destination (Join-Path $TargetInstallerDir $DLLName) -Force
 
-    # Copy custom NSIS files into the installer build dir
-    Write-Host ">>> Copying custom NSIS files (with language selection) ..." -ForegroundColor Cyan
-    Copy-Item -LiteralPath (Join-Path $InstallerDir 'project.nsi') -Destination (Join-Path $TargetInstallerDir 'project.nsi') -Force
+    # 复制随附的 NSIS include 文件（wails_tools.nsh 未被 git 跟踪，可直接覆盖）。
+    # 注意：不再用 installer/project.nsi 覆盖 build/windows/installer/project.nsi——
+    # 该文件被 git 跟踪、且文档规定其为权威版本源（UTF-8 无 BOM）。
+    # 一旦用 backup 副本覆盖再转 GBK，会把它持久污染为 GBK，产生 dirty 工作区。
+    Write-Host ">>> Copying wails_tools.nsh ..." -ForegroundColor Cyan
     Copy-Item -LiteralPath (Join-Path $InstallerDir 'wails_tools.nsh') -Destination (Join-Path $TargetInstallerDir 'wails_tools.nsh') -Force
 
     # Generate NSIS installer
-    # Note: NSIS reads script files as ACP (GBK on Chinese systems).
-    # Convert UTF-8 to GBK before compilation to avoid "Bad text encoding" error.
-    Write-Host ">>> Converting project.nsi to ANSI (GBK) for NSIS ..." -ForegroundColor Cyan
-    $content = Get-Content -Raw (Join-Path $TargetInstallerDir 'project.nsi') -Encoding UTF8
-    [System.IO.File]::WriteAllText(
-        (Join-Path $TargetInstallerDir 'project.nsi'),
-        $content,
-        [System.Text.Encoding]::GetEncoding(936)
-    )
-
-    Write-Host ">>> Running makensis ..." -ForegroundColor Cyan
-    Push-Location $TargetInstallerDir
+    # Note1: NSIS reads script files as ACP (GBK on Chinese systems)。
+    #        UTF-8 源在编译前必须先转成 GBK，否则报 "Bad text encoding"。
+    # Note2: 转换只作用于临时文件，用完即删，绝不写回被 git 跟踪的
+    #        build/windows/installer/project.nsi，保证每次打包后该源文件保持
+    #        UTF-8 无 BOM、git 基线不变（消除"打包即 dirty"副作用）。
+    $trackedNsi = Join-Path $TargetInstallerDir 'project.nsi'
+    $gbkTmpNsi = Join-Path $TargetInstallerDir 'project.nsi.gbk'
     try {
-        & 'makensis' "-DARG_WAILS_AMD64_BINARY=..\..\bin\windlabx4.exe" 'project.nsi'
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning "makensis returned exit code $LASTEXITCODE; installer may be incomplete."
+        Write-Host ">>> Converting project.nsi to ANSI (GBK) for NSIS (temp only) ..." -ForegroundColor Cyan
+        # 以权威源（被跟踪的 build/.../project.nsi）为唯一内容来源
+        $content = Get-Content -Raw -LiteralPath $trackedNsi -Encoding UTF8
+        [System.IO.File]::WriteAllText(
+            $gbkTmpNsi,
+            $content,
+            [System.Text.Encoding]::GetEncoding(936)
+        )
+
+        Write-Host ">>> Running makensis ..." -ForegroundColor Cyan
+        Push-Location $TargetInstallerDir
+        try {
+            & 'makensis' "-DARG_WAILS_AMD64_BINARY=..\..\bin\windlabx4.exe" 'project.nsi.gbk'
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "makensis returned exit code $LASTEXITCODE; installer may be incomplete."
+            }
+        } finally {
+            Pop-Location
         }
     } finally {
-        Pop-Location
+        # 无论成功与否都清理临时 GBK 副本，避免残留
+        if (Test-Path -LiteralPath $gbkTmpNsi) {
+            Remove-Item -LiteralPath $gbkTmpNsi -Force
+        }
     }
 }
 
