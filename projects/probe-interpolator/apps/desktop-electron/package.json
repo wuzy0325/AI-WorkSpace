@@ -14,7 +14,7 @@
   },
   "build": {
     "appId": "com.wtn.probe-interpolator.win7",
-    "productName": "Probe Interpolator",
+    "productName": "Probe Interpolator-win7",
     "asar": true,
     "directories": {
       "output": "dist"
@@ -45,6 +45,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
+      "shortcutName": "Probe Interpolator",
       "artifactName": "Probe-Interpolator-Win7-Setup-${version}-${arch}.${ext}"
     }
   }

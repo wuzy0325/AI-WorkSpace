@@ -14,7 +14,7 @@
   },
   "build": {
     "appId": "com.wtn.wista.win7",
-    "productName": "WISTA",
+    "productName": "WISTA-win7",
     "asar": true,
     "directories": {
       "output": "dist"
@@ -45,6 +45,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
+      "shortcutName": "WISTA",
       "artifactName": "WISTA-Setup-${version}-${arch}.${ext}"
     }
   }

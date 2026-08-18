@@ -14,7 +14,7 @@
   },
   "build": {
     "appId": "com.wtn.motion-controller.win7",
-    "productName": "Motion Controller",
+    "productName": "Motion Controller-win7",
     "asar": true,
     "directories": {
       "output": "dist"
@@ -45,6 +45,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
+      "shortcutName": "Motion Controller",
       "artifactName": "Motion-Controller-Win7-Setup-${version}-${arch}.${ext}"
     }
   }

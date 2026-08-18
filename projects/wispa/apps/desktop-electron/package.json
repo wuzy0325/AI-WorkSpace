@@ -14,7 +14,7 @@
   },
   "build": {
     "appId": "com.wtn.wispa.win7",
-    "productName": "WISPA",
+    "productName": "WISPA-win7",
     "asar": true,
     "directories": {
       "output": "dist"
@@ -45,6 +45,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
+      "shortcutName": "WISPA",
       "artifactName": "WISPA-Setup-${version}-${arch}.${ext}"
     }
   }
