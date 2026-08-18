@@ -15,7 +15,7 @@
   },
   "build": {
     "appId": "com.wtn.windlabx4.win7",
-    "productName": "WindLabX4",
+    "productName": "WindLabX4-win7",
     "asar": true,
     "directories": {
       "output": "dist"
@@ -46,6 +46,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
+      "shortcutName": "WindLabX4",
       "artifactName": "WindLabX4-${version}-${arch}.${ext}"
     }
   }
