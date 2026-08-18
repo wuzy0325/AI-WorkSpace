@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -104,6 +105,15 @@ func main() {
 	}
 	mux.Handle("/", http.FileServer(http.FS(frontendFS)))
 
+	// 端口被占用时终止启动（对齐 master 9eb77d0 修复意图）：
+	// 旧版实例占用 127.0.0.1:8900 时，本进程 ListenAndServe 会失败退出，
+	// 但 Electron 健康检查可能连到旧实例 API，形成前后端版本错配。
+	// 启动前显式探测，被占则立即报错退出（非零退出码触发 Electron 弹窗）。
+	if err := probeLocalPort(listenAddr); err != nil {
+		slog.Error("本地 API 端口被占用，服务未启动", "component", "main", "addr", listenAddr, "error", err)
+		os.Exit(2)
+	}
+
 	srv := &http.Server{
 		Addr:              listenAddr,
 		Handler:           mux,
@@ -138,6 +148,19 @@ func main() {
 		slog.Error("HTTP server shutdown error", "component", "main", "error", err)
 	}
 	_ = app.Stop()
+}
+
+// probeLocalPort 探测本地 TCP 端口是否已被占用。
+// 成功返回 nil（端口可用）；被占用或探测失败返回错误。
+// 探测失败（连接被拒绝）视为端口可用——本机无监听时 connect 会立即拒绝。
+// 对齐 master 9eb77d0 的同名实现。
+func probeLocalPort(addr string) error {
+	conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
+	if err != nil {
+		return nil
+	}
+	_ = conn.Close()
+	return fmt.Errorf("port %s already in use", addr)
 }
 
 // writeCrashLog 将启动期 panic 或致命错误写入 crash log 文件。
