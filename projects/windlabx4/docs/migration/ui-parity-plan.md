@@ -250,7 +250,7 @@ Reference expectations:
 
 - Height: 56px.
 - Translucent dark background with blur.
-- Brand block: green logo, `WindDAQ`, subtitle `DATA ACQUISITION`.
+- Brand block: green logo, `WINDLABX4`, subtitle `DATA ACQUISITION`.
 - Dashboard mode segmented buttons: chart, table, both, overview.
 - Non-dashboard active page label shown in the same nav area.
 - Status pill: acquiring or idle.

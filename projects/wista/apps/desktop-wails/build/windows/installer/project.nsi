@@ -1,5 +1,12 @@
-Unicode true
+﻿Unicode true
 
+; 项目显示名与公司名：从改名的 daq-t1603 统一为 wista。
+; 这些常量在 include wails_tools.nsh 之前定义，利用其 !ifndef 语义覆盖
+; wails build 自动生成头文件里的旧项目名，保证安装包文件名、安装目录、
+; 快捷方式和卸载显示名都与当前项目名一致。
+!define INFO_PROJECTNAME    "wista"
+!define INFO_COMPANYNAME    "WindTuner Team"
+!define INFO_PRODUCTNAME    "WISTA"
 ; Project version. Keep in sync with projects/<project>/VERSION.
 !define INFO_PRODUCTVERSION "0.6.10"
 

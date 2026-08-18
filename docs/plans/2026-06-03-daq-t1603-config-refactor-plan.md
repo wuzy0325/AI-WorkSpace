@@ -2,12 +2,12 @@
 
 ## Overview
 
-Remove "平均次数" and "序号" from both daq-t1603 and wind-daq UIs. Add per-channel thermocouple type selection. Go struct field `ThermocoupleType` renamed to `ThermocoupleTypes` (16-char string). Shared SDK unchanged.
+Remove "平均次数" and "序号" from both daq-t1603 and windlabx4 UIs. Add per-channel thermocouple type selection. Go struct field `ThermocoupleType` renamed to `ThermocoupleTypes` (16-char string). Shared SDK unchanged.
 
 ## Architecture Decisions
 
 - **Per-channel TC type storage**: `T1603Config.ThermocoupleTypes` (16-char string, matches hardware protocol). `ChannelConfig.ThermocoupleType` (per-channel char) for UI convenience. Save aggregates all channel types into the 16-char string.
-- **wind-daq approach**: `DaqT1603Config.vue` keeps only global HW params (removes avg/seq/global TC type). Per-channel TC type column added directly in `DeviceManagementDrawer.vue`'s channel table.
+- **windlabx4 approach**: `DaqT1603Config.vue` keeps only global HW params (removes avg/seq/global TC type). Per-channel TC type column added directly in `DeviceManagementDrawer.vue`'s channel table.
 - **Backward compat**: Go struct fields `AverageCount`/`ShowSequence` remain in Go code for JSON compat; `thermocoupleType`(old name) → `thermocoupleTypes`(new name) is a breaking rename requiring `wails generate module`.
 
 ## Task List
@@ -112,9 +112,9 @@ Remove "平均次数" and "序号" from both daq-t1603 and wind-daq UIs. Add per
 
 ---
 
-### Phase 3: wind-daq Frontend
+### Phase 3: windlabx4 Frontend
 
-#### Task 5: wind-daq types + DaqT1603Config.vue
+#### Task 5: windlabx4 types + DaqT1603Config.vue
 
 **Description:**
 1. `api/types.ts`: Add optional `thermocoupleType?: string` to `ChannelConfig`
@@ -124,7 +124,7 @@ Remove "平均次数" and "序号" from both daq-t1603 and wind-daq UIs. Add per
 
 **Acceptance criteria:**
 - [ ] `ChannelConfig` has optional `thermocoupleType`
-- [ ] wind-daq `DaqT1603Config.vue` has no avg/seq TC type controls
+- [ ] windlabx4 `DaqT1603Config.vue` has no avg/seq TC type controls
 - [ ] Props/emits corresponding to removed fields are removed or kept for pass-through
 
 **Verification:**
@@ -134,14 +134,14 @@ Remove "平均次数" and "序号" from both daq-t1603 and wind-daq UIs. Add per
 **Dependencies:** None (can be done in parallel with Phase 2)
 
 **Files touched:**
-- `projects/wind-daq/apps/desktop-wails/frontend/src/api/types.ts`
-- `projects/wind-daq/apps/desktop-wails/frontend/src/components/device/DaqT1603Config.vue`
+- `projects/windlabx4/apps/desktop-wails/frontend/src/api/types.ts`
+- `projects/windlabx4/apps/desktop-wails/frontend/src/components/device/DaqT1603Config.vue`
 
 **Scope:** Medium (2 files)
 
 ---
 
-#### Task 6: wind-daq DeviceManagementDrawer.vue
+#### Task 6: windlabx4 DeviceManagementDrawer.vue
 
 **Description:**
 1. In the DAQ-T-1603 channel table section (`v-if="draft.type === 'DAQ-T-1603'"`), add a new table column for thermocouple type (after 通道名称)
@@ -164,7 +164,7 @@ Remove "平均次数" and "序号" from both daq-t1603 and wind-daq UIs. Add per
 **Dependencies:** Task 5
 
 **Files touched:**
-- `projects/wind-daq/apps/desktop-wails/frontend/src/components/device/DeviceManagementDrawer.vue`
+- `projects/windlabx4/apps/desktop-wails/frontend/src/components/device/DeviceManagementDrawer.vue`
 
 **Scope:** Medium (1 file, significant edits)
 
@@ -178,9 +178,9 @@ Remove "平均次数" and "序号" from both daq-t1603 and wind-daq UIs. Add per
 
 **Acceptance criteria:**
 - [ ] `go vet ./...` and `go test ./...` in `projects/daq-t1603/apps/desktop-wails` pass
-- [ ] `go vet ./...` and `go test ./...` in `projects/wind-daq/services/api-go` pass (if Go changes)
+- [ ] `go vet ./...` and `go test ./...` in `projects/windlabx4/services/api-go` pass (if Go changes)
 - [ ] `npm run typecheck` in `projects/daq-t1603/apps/desktop-wails/frontend` passes
-- [ ] `npm run typecheck` in `projects/wind-daq/apps/desktop-wails/frontend` passes
+- [ ] `npm run typecheck` in `projects/windlabx4/apps/desktop-wails/frontend` passes
 
 **Dependencies:** Tasks 1-6
 
@@ -193,11 +193,11 @@ Remove "平均次数" and "序号" from both daq-t1603 and wind-daq UIs. Add per
 ```
 Task 1 (Go) ──→ Task 2 (Wails) ──→ Task 3 (TS/Store) ──→ Task 4 (Vue UI)
                                                              │
-Task 5 (wind-daq TS/UI) ─────────────────────────────────────┘
+Task 5 (windlabx4 TS/UI) ─────────────────────────────────────┘
                                                              │
                                                     Task 7 (Verify)
                                                     ↑
-Task 6 (wind-daq drawer) ───────────────────────────┘
+Task 6 (windlabx4 drawer) ───────────────────────────┘
 ```
 
 Tasks 5+6 can be parallelized with Tasks 2-4 (separate project).
@@ -208,4 +208,4 @@ Tasks 5+6 can be parallelized with Tasks 2-4 (separate project).
 |------|--------|------------|
 | `wails generate module` output differs from expected | Med | Inspect generated models.ts, manually adjust bridge types |
 | Existing profiles with `thermocoupleType` (old field name) break | Med | JSON unmarshal will silently miss the field; add fallback in adapter or loading code |
-| wind-daq `DaqT1603Config.vue` prop/emit refactoring cascades | Low | Verify with `npm run typecheck` after each edit |
+| windlabx4 `DaqT1603Config.vue` prop/emit refactoring cascades | Low | Verify with `npm run typecheck` after each edit |

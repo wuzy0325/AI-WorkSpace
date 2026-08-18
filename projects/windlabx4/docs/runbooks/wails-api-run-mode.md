@@ -57,7 +57,7 @@ wails build -skipbindings
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `WIND_DAQ_PORT` | `8080` | 首选 API 端口（应用内嵌模式） |
-| `WIND_DAQ_ADDR` | `:8080` | API 监听地址（独立运行模式） |
-| `WIND_DAQ_PROFILE_PATH` | `config/device-profiles.json` | 设备配置文件路径 |
+| `WINDLABX4_PORT` | `8080` | 首选 API 端口（应用内嵌模式） |
+| `WINDLABX4_ADDR` | `:8080` | API 监听地址（独立运行模式） |
+| `WINDLABX4_PROFILE_PATH` | `config/device-profiles.json` | 设备配置文件路径 |
 | `VITE_API_BASE` | `""` (dev proxy) | 前端 API 基础 URL |

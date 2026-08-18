@@ -50,13 +50,13 @@
 | R0-2 | T1603 多条命令路径在 watchdog 前等待 `writeMu` 或仅靠 write deadline | **第三批已完成** | P0 |
 | R0-3 | T1603 可选 ACK / drain 误杀健康连接 | **第一批已完成** | P0 |
 | R0-4 | T1603 watchdog Close 后状态未统一失效 | **第三批已完成** | P0 |
-| R0-5 | Wind-DAQ P1604 `DrainConnection` 误杀健康连接 | **第一批已完成** | P0 |
+| R0-5 | WindLabX4 P1604 `DrainConnection` 误杀健康连接 | **第一批已完成** | P0 |
 | R0-6 | DAQP1064Pre 同一 TCP 流存在双 reader | **第一批已完成** | P0 |
 | R0-7 | DSA3217 / DAQP1064Pre / WTN-PXI / B140 Dial 外层边界 | **第四批已完成** | P0 |
-| R0-8 | P1604、Wind-DAQ Windows UDP Recvfrom 无 raw-handle watchdog | **第一批已完成** | P0 |
+| R0-8 | P1604、WindLabX4 Windows UDP Recvfrom 无 raw-handle watchdog | **第一批已完成** | P0 |
 | R0-9 | 三套 UDP discovery Send 无独立 Close owner | **第一批已完成** | P0 |
 | R0-10 | T1603、两套 P1604、DAQP1064Pre、WTN-PXI 采集 read loop 仅靠 deadline 自检无数据 | **第二批已完成** | P0 |
-| R0-11 | T1603、Wind-DAQ P1604 异常 read 退出后保留失效 conn/reader | **第二批已完成** | P0 |
+| R0-11 | T1603、WindLabX4 P1604 异常 read 退出后保留失效 conn/reader | **第二批已完成** | P0 |
 | R0-12 | 命令响应 soft timeout 后未统一毒化协议连接 | **第三批已完成** | P0 |
 | R1-1 | P1604 unit helper / drain Close 后状态传播 | **第三批已完成** | P1 |
 | R1-2 | 独立 P1604 `operationMu` 位于多条 I/O 硬边界之外 | **第三批已完成** | P1 |
@@ -134,9 +134,9 @@ ok      shared.local/device-sdk/go/daq/hardware 11.370s
 $ go vet + go build + gofmt：全部空输出
 
 $ 跨项目回归验证：
-$ go test -race -count=1 ./projects/wind-daq/services/api-go/internal/adapters/hardware/...
-ok      wind-daq/services/api-go/internal/adapters/hardware     23.141s
-ok      wind-daq/services/api-go/internal/adapters/hardware/sim 8.076s
+$ go test -race -count=1 ./projects/windlabx4/services/api-go/internal/adapters/hardware/...
+ok      windlabx4/services/api-go/internal/adapters/hardware     23.141s
+ok      windlabx4/services/api-go/internal/adapters/hardware/sim 8.076s
 
 $ GOWORK=off; cd projects/daq-t1603/apps/desktop-wails/adapters/hardware; go test -race -count=1 ./...
 ok      daq-t1603/adapters/hardware     3.232s
@@ -334,19 +334,19 @@ ok      shared.local/device-sdk/go/daq/hardware 19.862s
 
 **遗留：** 无。所有 `ErrWatchdogTriggered` 路径统一调用 `invalidateConnection` 或等价内联毒化，expected conn 比较防止误清并发新连接。
 
-### R0-5：Wind-DAQ P1604 使用破坏性 `DrainConnection`
+### R0-5：WindLabX4 P1604 使用破坏性 `DrainConnection`
 
 位置：
 
 - `shared/device-sdk/go/protocol/conn_helpers.go`：`DrainConnection`
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go`：`StartAcquisition`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604.go`：`StartAcquisition`
 - 同文件：`SetUnit`
 
 现状：空缓冲是正常状态，但 `DrainConnection` 必须执行 Read 才能确认；deadline 失效时 watchdog 会关闭健康连接。现有测试明确期待该关闭行为，属于错误验收。
 
 整改：
 
-- Wind-DAQ 对齐独立 P1604，移除 Start 和 SetUnit 前的阻塞 drain。
+- WindLabX4 对齐独立 P1604，移除 Start 和 SetUnit 前的阻塞 drain。
 - 依靠单 reader join、frameReader Reset、停止命令 ACK 和有界残留帧跳过完成边界恢复。
 - 重新评估共享 `DrainConnection` 是否仍有合法生产调用；若无则删除或降为诊断用途，禁止用于可复用长连接。
 - 删除“空缓冲 + deadline 无效 => 应 Close 健康连接”的错误测试，替换为不误杀测试。
@@ -355,7 +355,7 @@ ok      shared.local/device-sdk/go/daq/hardware 19.862s
 
 **修改文件与符号：**
 
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go`：
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604.go`：
   - `StartAcquisition`：移除 `sharedproto.DrainConnection` 调用，改为 `d.frameReader.Reset()` 清空应用层缓冲区。
   - `SetUnit`：移除 `sharedproto.DrainConnection` 调用，改为 `fr.Reset()`。
   - 注释说明残留字节由后续 `sendCommandACK` 调用的 `P1604ReadCommandACK` 跳帧逻辑安全跳过（`maxResidualFrameSkips=20`）。
@@ -373,15 +373,15 @@ ok      shared.local/device-sdk/go/daq/hardware 19.862s
 
 **如何证明不会误杀健康连接：**
 
-- `TestDAQP1604StartAcquisition_DoesNotCloseHealthyConnWhenNoData`（`projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604_test.go:480`）：使用 `deadlineIgnoringConn` 模拟 deadline 失效，对端正常响应命令但缓冲区无残留数据；`StartAcquisition` 返回 nil，`d.conn` 仍非 nil，`status.Connection == ConnectionAcquiring`。
-- `TestDAQP1604SetUnit_DoesNotCloseHealthyConnWhenNoData`（`projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604_test.go:584`）：`SetUnit` 在空缓冲场景下不误杀连接。
+- `TestDAQP1604StartAcquisition_DoesNotCloseHealthyConnWhenNoData`（`projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604_test.go:480`）：使用 `deadlineIgnoringConn` 模拟 deadline 失效，对端正常响应命令但缓冲区无残留数据；`StartAcquisition` 返回 nil，`d.conn` 仍非 nil，`status.Connection == ConnectionAcquiring`。
+- `TestDAQP1604SetUnit_DoesNotCloseHealthyConnWhenNoData`（`projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604_test.go:584`）：`SetUnit` 在空缓冲场景下不误杀连接。
 
 **对应测试和实际验证结果：**
 
 ```
-$ go test -race -count=1 ./projects/wind-daq/services/api-go/internal/adapters/hardware/...
-ok      wind-daq/services/api-go/internal/adapters/hardware     17.500s
-ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.421s
+$ go test -race -count=1 ./projects/windlabx4/services/api-go/internal/adapters/hardware/...
+ok      windlabx4/services/api-go/internal/adapters/hardware     17.500s
+ok      windlabx4/services/api-go/internal/adapters/hardware/sim 2.421s
 ```
 
 **遗留：** 共享 `sharedproto.DrainConnection` 函数仍保留在 `conn_helpers.go` 中（其他项目可能引用），第三批整改时统一评估是否删除或降为诊断用途。
@@ -390,7 +390,7 @@ ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.421s
 
 位置：
 
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：`readLoop`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：`readLoop`
 - 同文件：`sendCommand` / `readResponseFrame`
 
 现状：采集 read loop 与命令响应读取可同时从同一 TCP 字节流 Read，缺少唯一 reader 所有权。
@@ -403,14 +403,14 @@ ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.421s
 
 **修改文件与符号：**
 
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：
   - 新增 `ioMu sync.Mutex` 字段：串行化 `readLoop` 的 `Read` 与 `sendCommand` 的 `Write+Read`，确保同一 TCP 字节流任意时刻只有一个 reader。
   - `readLoop`：在 `ioMu.Lock` 之前启动 `WatchdogClose`，覆盖"等 ioMu + ReadString"全区间；watchdog 触发后 `Close` conn 解除 `ReadString` 阻塞并释放 `ioMu`，避免 `sendCommand` 永久拿不到 `ioMu` 死锁。
   - `sendCommand`：在 `ioMu.Lock` 之前启动 `WatchdogClose`，覆盖"等 ioMu + Write + Read"全流程；watchdog 触发时调用 `invalidateConnection` 清空 `d.conn`、置 `status=Error`、调 `onError`。
   - `sendStartAcquisitionLocked`：在 `Write` 之前启动 `WatchdogClose`，返回 `invalidateNeeded` 标志由 `StartAcquisition` 在释放锁后调 `invalidateConnection`（避免 `*Locked` 方法持锁调 `invalidateConnection` 自死锁）。
   - 新增 `effectiveReadLoopWatchdog` 方法，暴露 `readLoopWatchdog` 字段供测试覆盖（生产 10s，测试可缩短到 100ms）。
   - `readResponseFrame`：新增响应 cmd 一致性校验，cmd 不匹配时返回 `ErrResponseCmdMismatch` 并毒化连接（R0-12 附带验收）。
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1064pre_test.go`（新增文件）：包含 `deadlineIgnoringConn` 测试替身和 8 个针对性测试。
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1064pre_test.go`（新增文件）：包含 `deadlineIgnoringConn` 测试替身和 8 个针对性测试。
 
 **根因：** 原实现 `readLoop` 和 `sendCommand` 可同时 `conn.Read`，TCP 字节随机分配到两个 reader，导致命令响应被 `readLoop` 抢走（`sendCommand` 超时关闭健康连接）或采集帧被 `sendCommand` 吞掉（数据错位）。
 
@@ -449,9 +449,9 @@ ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.421s
 **对应测试和实际验证结果：**
 
 ```
-$ go test -race -count=1 ./projects/wind-daq/services/api-go/internal/adapters/hardware/...
-ok      wind-daq/services/api-go/internal/adapters/hardware     17.500s
-ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.421s
+$ go test -race -count=1 ./projects/windlabx4/services/api-go/internal/adapters/hardware/...
+ok      windlabx4/services/api-go/internal/adapters/hardware     17.500s
+ok      windlabx4/services/api-go/internal/adapters/hardware/sim 2.421s
 ```
 
 **遗留：** 无。本项整改完整覆盖单 reader 模型、watchdog 覆盖锁等待/Write/Read、状态失效和 join 超时处理。
@@ -460,9 +460,9 @@ ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.421s
 
 位置：
 
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/dsa3217.go`：`Connect`
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：`Connect`
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/wtn_pxi.go`：`Connect`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/dsa3217.go`：`Connect`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：`Connect`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/wtn_pxi.go`：`Connect`
 - `shared/device-sdk/go/motion/adapters/hardware/b140_motion.go`：`Connect`
 
 现状：前三者使用 `net.DialTimeout`，B140 使用直接 `DialContext`。Dial 尚未返回时外层没有 conn 可 Close，且部分路径持有主 mutex。
@@ -473,12 +473,12 @@ ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.421s
 
 **修改文件与符号：**
 
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/dsa3217.go`：`Connect`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/dsa3217.go`：`Connect`
   - `net.DialTimeout("tcp", ..., DSA3217_TIMEOUT)` 改为 `sharedproto.DialTCP(..., "", DSA3217_TIMEOUT)`。
   - 复用 R1-4 整改后的 `DialTCP`（无缓冲 channel + abandoned 信号），主线程在 timeout 后立即返回错误，晚到 conn 被 Close 不泄漏。
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：`Connect`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：`Connect`
   - 同样改为 `sharedproto.DialTCP(..., "", DAQ_P_1064PRE_TIMEOUT)`。
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/wtn_pxi.go`：`Connect`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/wtn_pxi.go`：`Connect`
   - 同样改为 `sharedproto.DialTCP(..., "", WTN_PXI_TIMEOUT)`。
 - `shared/device-sdk/go/motion/adapters/hardware/b140_motion.go`：`Connect`
   - 保留 `DialContext`（B140 接收 ctx，保留 ctx 取消能力更自然），但用 `context.WithTimeout(ctx, b140CommandTimeout)` 包装。
@@ -513,24 +513,24 @@ ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.421s
 - B140 用 `context.WithTimeout` + `DialContext`，机制由 Go 标准库保证，依赖代码审查 + `TestB140ConnectSendsServoOnAndDirectionConfig` 回归。
 
 ```
-$ go test -race -count=1 ./shared/device-sdk/go/protocol/... ./shared/device-sdk/go/daq/hardware/... ./shared/device-sdk/go/motion/adapters/hardware/... ./projects/wind-daq/services/api-go/internal/adapters/hardware/...
+$ go test -race -count=1 ./shared/device-sdk/go/protocol/... ./shared/device-sdk/go/daq/hardware/... ./shared/device-sdk/go/motion/adapters/hardware/... ./projects/windlabx4/services/api-go/internal/adapters/hardware/...
 ok      shared.local/device-sdk/go/protocol     11.282s
 ok      shared.local/device-sdk/go/daq/hardware 25.453s
 ok      shared.local/device-sdk/go/motion/adapters/hardware     15.682s
-ok      wind-daq/services/api-go/internal/adapters/hardware     32.312s
-ok      wind-daq/services/api-go/internal/adapters/hardware/sim 14.286s
+ok      windlabx4/services/api-go/internal/adapters/hardware     32.312s
+ok      windlabx4/services/api-go/internal/adapters/hardware/sim 14.286s
 
 $ go vet：全部空输出
 ```
 
 **遗留：** 无。DSA3217/DAQP1064Pre/WTN-PXI 三套 Connect 改用 `sharedproto.DialTCP`，B140 用 `context.WithTimeout` 包装 `DialContext`，四套 Dial 路径都有调用方硬边界，晚到 conn 必被 Close。
 
-### R0-8：P1604 与 Wind-DAQ Windows UDP Receive 可永久阻塞
+### R0-8：P1604 与 WindLabX4 Windows UDP Receive 可永久阻塞
 
 位置：
 
 - `projects/daq-p1604/apps/desktop-wails/adapters/hardware/discovery_socket_windows.go`
-- `projects/wind-daq/services/api-go/internal/adapters/scan/discovery_socket_windows.go`
+- `projects/windlabx4/services/api-go/internal/adapters/scan/discovery_socket_windows.go`
 
 现状：只设置 `SO_RCVTIMEO` 后调用同步 `windows.Recvfrom`。调用方 defer Close 与阻塞调用在同一 goroutine，无法兜底。
 
@@ -540,7 +540,7 @@ $ go vet：全部空输出
 
 **修改文件与符号：**
 
-- `projects/wind-daq/services/api-go/internal/adapters/scan/discovery_socket_windows.go`：`winsockDiscoverySocket.Receive`
+- `projects/windlabx4/services/api-go/internal/adapters/scan/discovery_socket_windows.go`：`winsockDiscoverySocket.Receive`
   - 在 `Recvfrom` 前启动独立 `time.AfterFunc(timeout, windows.Closesocket)`，watchdog 触发时直接 `Closesocket` 解除阻塞的 `Recvfrom`。
   - `Recvfrom` 返回后立即 `watchdog.Stop()`，避免 timer 泄漏。
   - 对齐 T1603 Windows 实现（`projects/daq-t1603/apps/desktop-wails/adapters/hardware/discovery_socket_windows.go`）。
@@ -560,8 +560,8 @@ $ go vet：全部空输出
 
 **如何证明不会误杀健康连接：**
 
-- `TestDiscoverySocketReceiveReturnsAtTimeout`（`projects/wind-daq/services/api-go/internal/adapters/scan/discovery_socket_windows_test.go:13`）：`SO_RCVTIMEO` 兑现时 20ms 内返回错误，不触发 watchdog。
-- `TestPacketDiscoverySocketLoopbackKeepsSocketAlive`（`projects/wind-daq/services/api-go/internal/adapters/scan/discovery_socket_test.go:119`）：真实 loopback 收发正常完成时 watchdog 不误杀 socket，第二轮收发仍成功。
+- `TestDiscoverySocketReceiveReturnsAtTimeout`（`projects/windlabx4/services/api-go/internal/adapters/scan/discovery_socket_windows_test.go:13`）：`SO_RCVTIMEO` 兑现时 20ms 内返回错误，不触发 watchdog。
+- `TestPacketDiscoverySocketLoopbackKeepsSocketAlive`（`projects/windlabx4/services/api-go/internal/adapters/scan/discovery_socket_test.go:119`）：真实 loopback 收发正常完成时 watchdog 不误杀 socket，第二轮收发仍成功。
 - `TestPacketDiscoverySocketReceiveWatchdogClosesConn`（`discovery_socket_test.go:59`）：`fullyBlockingPacketConn`（忽略 deadline，只在 Close 后返回）模拟 deadline 失效，watchdog 50ms 触发 `Close` conn，`Receive` 在 3s 预算内返回错误。
 
 **Windows raw Winsock 测试：**
@@ -571,8 +571,8 @@ $ go vet：全部空输出
 **对应测试和实际验证结果：**
 
 ```
-$ go test -race -count=1 ./projects/wind-daq/services/api-go/internal/adapters/scan/...
-ok      wind-daq/services/api-go/internal/adapters/scan 4.047s
+$ go test -race -count=1 ./projects/windlabx4/services/api-go/internal/adapters/scan/...
+ok      windlabx4/services/api-go/internal/adapters/scan 4.047s
 
 $ GOWORK=off; cd projects/daq-p1604/apps/desktop-wails/adapters/hardware; go test -race -count=1 ./...
 ok      daq-p1604/adapters/hardware     24.520s
@@ -595,10 +595,10 @@ ok      daq-t1603/adapters/hardware     3.242s
 
 **修改文件与符号：**
 
-- `projects/wind-daq/services/api-go/internal/adapters/scan/discovery_socket.go`：`packetDiscoverySocket.Send`
+- `projects/windlabx4/services/api-go/internal/adapters/scan/discovery_socket.go`：`packetDiscoverySocket.Send`
   - 在 `WriteTo` 前启动独立 `time.AfterFunc(discoverySendTimeout, conn.Close)`，覆盖 Send 阶段。
   - `WriteTo` 返回后立即 `watchdog.Stop()`，避免 timer 泄漏。
-- `projects/wind-daq/services/api-go/internal/adapters/scan/discovery_socket_windows.go`：`winsockDiscoverySocket.Send`
+- `projects/windlabx4/services/api-go/internal/adapters/scan/discovery_socket_windows.go`：`winsockDiscoverySocket.Send`
   - 新增 `soSNDTIMEO = 0x1005` 常量（Winsock2 `SO_SNDTIMEO` 原始值，`golang.org/x/sys/windows` 未导出）。
   - 在 `Sendto` 前设置 `SO_SNDTIMEO` 软超时 + 启动独立 `time.AfterFunc(discoverySendTimeout, windows.Closesocket)` watchdog。
   - `Sendto` 返回后立即 `watchdog.Stop()`。
@@ -621,15 +621,15 @@ ok      daq-t1603/adapters/hardware     3.242s
 
 **如何证明不会误杀健康连接：**
 
-- `TestPacketDiscoverySocketSendWatchdogClosesConn`（`projects/wind-daq/services/api-go/internal/adapters/scan/discovery_socket_test.go:88`）：`fullyBlockingPacketConn`（`WriteTo` 只在 Close 后返回）模拟 Send 永久阻塞，watchdog 在 `discoverySendTimeout` 预算内 `Close` conn，`Send` 返回错误。
+- `TestPacketDiscoverySocketSendWatchdogClosesConn`（`projects/windlabx4/services/api-go/internal/adapters/scan/discovery_socket_test.go:88`）：`fullyBlockingPacketConn`（`WriteTo` 只在 Close 后返回）模拟 Send 永久阻塞，watchdog 在 `discoverySendTimeout` 预算内 `Close` conn，`Send` 返回错误。
 - `TestDiscoverySocketSendReturnsAtTimeout`（`discovery_socket_windows_test.go:72`）：向 `192.0.2.1`（TEST-NET-1，无路由）发送，`Send` 在 3s 预算内返回（`SO_SNDTIMEO` + watchdog 均未阻塞）。
 - `TestPacketDiscoverySocketLoopbackKeepsSocketAlive`（同 R0-8）：真实 loopback 收发正常完成时 watchdog 不误杀 socket。
 
 **对应测试和实际验证结果：**
 
 ```
-$ go test -race -count=1 ./projects/wind-daq/services/api-go/internal/adapters/scan/...
-ok      wind-daq/services/api-go/internal/adapters/scan 4.047s
+$ go test -race -count=1 ./projects/windlabx4/services/api-go/internal/adapters/scan/...
+ok      windlabx4/services/api-go/internal/adapters/scan 4.047s
 
 $ GOWORK=off; cd projects/daq-p1604/apps/desktop-wails/adapters/hardware; go test -race -count=1 ./...
 ok      daq-p1604/adapters/hardware     24.520s
@@ -645,10 +645,10 @@ ok      daq-t1603/adapters/hardware     3.242s
 位置：
 
 - `shared/device-sdk/go/daq/hardware/daq_t1603.go`：`readLoop`
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go`：`readLoop`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604.go`：`readLoop`
 - `projects/daq-p1604/apps/desktop-wails/adapters/hardware/p1604_adapter.go`：`readLoop`
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：`readLoop`
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/wtn_pxi.go`：`readLoop`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：`readLoop`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/wtn_pxi.go`：`readLoop`
 
 现状：这些循环通过短 `SetReadDeadline` 让阻塞 Read 周期返回，再在循环体累计 timeout 或检查 no-data 总时长。问题机忽略 deadline 时，循环体无法重新获得控制权，无数据检测逻辑不可达。Stop/Disconnect 被用户调用后通常能 Close 解阻塞，但无人操作的半开连接无法自行收敛。
 
@@ -663,15 +663,15 @@ ok      daq-t1603/adapters/hardware     3.242s
   - readLoop 入口启动独立 `time.AfterFunc(noDataTimeout, ...)` timer，回调内 `acquiring` + `expectedConn` 双重检查后毒化连接（清 `d.conn=nil` / `d.frameReader=nil` / `d.acquiring=false` / `d.status.Connection=ConnectionError` / `d.status.LastError`），锁外 `conn.Close()`。
   - 移除原 `lastDataAt` 跟踪 + 循环体 `time.Since(lastDataAt) > noDataTimeout` 检测逻辑。
   - 每次收到有效数据（n > 0）调用 `noDataTimer.Reset(noDataTimeout)` 续期；readLoop 退出 `defer noDataTimer.Stop()`。
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go`：`readLoop`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604.go`：`readLoop`
   - `noDataTimeout` 从 const 改为 var（10s 默认），包级共享（DAQP1604 / DAQP1064Pre / WTNPXI 三驱动复用）。
   - 移除 `lastDataAt` 跟踪 + `consecutiveTimeouts` 计数器，改用独立 `time.AfterFunc` timer。
   - 回调内 `acquiring` + `expectedConn` 双重检查，避免 Stop 后或重连后误触发。
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：`readLoop`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：`readLoop`
   - 复用包级 `noDataTimeout`（10s 默认），与 `effectiveReadLoopWatchdog()`（readLoopWatchdog）解耦——避免共享超时导致同时触发后 readLoopWatchdog 覆盖 noDataTimer 设置的 LastError。
   - readLoop 入口启动独立 `time.AfterFunc(noDataTimeout, ...)` timer，回调内 `acquiring` + `expectedConn` 双重检查后毒化连接。
   - 每次收到有效数据调用 `noDataTimer.Reset(noDataTimeout)` 续期。
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/wtn_pxi.go`：`readLoop`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/wtn_pxi.go`：`readLoop`
   - `wtnPXINoDataTimeout` 从 const 改为 var（10s 默认）。
   - readLoop 入口启动独立 `time.AfterFunc(wtnPXINoDataTimeout, ...)` timer，回调内 `acquiring` + `expectedConn` 双重检查后毒化连接。
   - 每次收到有效数据调用 `noDataTimer.Reset(wtnPXINoDataTimeout)` 续期。
@@ -699,7 +699,7 @@ ok      daq-t1603/adapters/hardware     3.242s
 **新增测试用例（覆盖 deadline 失效场景）：**
 
 - `TestDAQT1603ReadLoop_InvalidatesConnOnNoDataTimeout`：deadlineIgnoringConn 让 Read 永久阻塞，验证 noDataTimer 到期后 d.conn=nil / status=Error / LastError 含 "no data" / onReadLoopExit 被调用。
-- `TestDAQP1604ReadLoop_InvalidatesConnOnNoDataTimeout`：同上，验证 Wind-DAQ P1604。
+- `TestDAQP1604ReadLoop_InvalidatesConnOnNoDataTimeout`：同上，验证 WindLabX4 P1604。
 - `TestDAQP1064PreReadLoop_InvalidatesConnOnNoDataTimeout`：同上，验证 DAQP1064Pre。noDataTimer 与 readLoopWatchdog 解耦后，readLoop 静默退出（IsClosedConnError 识别 io.ErrClosedPipe），defer 不调 invalidate，onError 不被调用。
 - `TestWTNPXIReadLoop_InvalidatesConnOnNoDataTimeout`：同上，验证 WTN-PXI。
 - `TestP1604ReadLoop_InvalidatesConnOnNoDataTimeout`：同上，验证独立 P1604。timer 触发后 handleConnectionLost 清理 driver + 设置 status=Error。
@@ -713,13 +713,13 @@ $ go test ./shared/device-sdk/go/daq/hardware/... -run NoData -v
 --- PASS: TestDAQT1603ApplyDaqT1603Config_DoesNotCloseHealthyConnWhenNoData (0.00s)
 ok      shared.local/device-sdk/go/daq/hardware 5.928s
 
-$ cd projects/wind-daq/services/api-go; go test ./internal/adapters/hardware/... -run NoData -v
+$ cd projects/windlabx4/services/api-go; go test ./internal/adapters/hardware/... -run NoData -v
 --- PASS: TestDAQP1064PreReadLoop_InvalidatesConnOnNoDataTimeout (0.30s)
 --- PASS: TestDAQP1604StartAcquisition_DoesNotCloseHealthyConnWhenNoData (1.00s)
 --- PASS: TestDAQP1604SetUnit_DoesNotCloseHealthyConnWhenNoData (0.02s)
 --- PASS: TestDAQP1604ReadLoop_InvalidatesConnOnNoDataTimeout (0.30s)
 --- PASS: TestWTNPXIReadLoop_InvalidatesConnOnNoDataTimeout (0.30s)
-ok      wind-daq/services/api-go/internal/adapters/hardware 7.524s
+ok      windlabx4/services/api-go/internal/adapters/hardware 7.524s
 
 $ cd projects/daq-p1604/apps/desktop-wails; GOWORK=off; go test ./adapters/hardware/... -run NoData -v
 --- PASS: TestP1604ReadLoop_InvalidatesConnOnNoDataTimeout (0.30s)
@@ -729,20 +729,20 @@ ok      daq-p1604/adapters/hardware 5.945s
 **完整测试套件无回归：**
 
 - `go test ./shared/device-sdk/go/...`：全部 ok（daq/hardware 16.388s, protocol 7.234s 等）
-- `cd projects/wind-daq/services/api-go; go test ./internal/...`：全部 ok（adapters/hardware 32.936s, usecase 102.435s 等）
+- `cd projects/windlabx4/services/api-go; go test ./internal/...`：全部 ok（adapters/hardware 32.936s, usecase 102.435s 等）
 - `cd projects/daq-p1604/apps/desktop-wails; GOWORK=off; go test ./...`：全部 ok（adapters/hardware 29.270s, backend 12.961s 等）
 - `go vet`：三处均无 warning。
 
-**遗留：** 无。五套采集 read-loop（T1603 / Wind-DAQ P1604 / 独立 P1604 / DAQP1064Pre / WTN-PXI）均已有独立 no-data owner，不依赖循环体执行，deadline 失效场景下也能到期触发连接毒化。
+**遗留：** 无。五套采集 read-loop（T1603 / WindLabX4 P1604 / 独立 P1604 / DAQP1064Pre / WTN-PXI）均已有独立 no-data owner，不依赖循环体执行，deadline 失效场景下也能到期触发连接毒化。
 
-### R0-11：T1603 与 Wind-DAQ P1604 异常 read 退出保留失效连接
+### R0-11：T1603 与 WindLabX4 P1604 异常 read 退出保留失效连接
 
 位置：
 
 - `shared/device-sdk/go/daq/hardware/daq_t1603.go`：`readLoop` defer
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go`：`readLoop` defer
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604.go`：`readLoop` defer
 
-现状：T1603 在异常 read 后可能把 ConnectionAcquiring 恢复为 Connected，且不清 conn/frameReader；Wind-DAQ P1604 标记 Error 但仍保留并未统一 Close 的 conn/frameReader。EOF、RST、协议错误或 no-data 退出后，后续操作仍可能复用失效或字节边界不确定的连接。
+现状：T1603 在异常 read 后可能把 ConnectionAcquiring 恢复为 Connected，且不清 conn/frameReader；WindLabX4 P1604 标记 Error 但仍保留并未统一 Close 的 conn/frameReader。EOF、RST、协议错误或 no-data 退出后，后续操作仍可能复用失效或字节边界不确定的连接。
 
 整改：所有非主动停止的 terminal read error 统一走 expected-conn invalidation：清 conn/reader、停止采集、标记 Error、保存 LastError、Close 旧连接并通知上层。回调不得承担底层状态正确性的唯一责任。
 
@@ -755,7 +755,7 @@ ok      daq-p1604/adapters/hardware 5.945s
   - 移除原"status 从 Acquiring 改回 Connected"的错误逻辑，改调用 `d.invalidateConnectionAfterReadLoopTimeout(unexpectedErr.Error())` 统一毒化：清 `d.conn=nil` / `d.frameReader=nil` / `d.acquiring=false` / `d.stop=nil` / `d.readLoopDone=nil` / `d.status.Connection=ConnectionError` / `d.status.LastError=message`，并在锁外 `conn.Close()`。
   - `onReadLoopExit` 回调在 invalidate 之后显式调用，调用方读取到的 status 已是 Error。
   - 保留原 `@f1` best-effort Write + watchdog 兜底（连接未死时通知设备停止推送，连接已死时 watchdog 1s 兜底解除 Write 阻塞）。
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go`：`readLoop` defer
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604.go`：`readLoop` defer
   - 移除手写的状态清理逻辑（`d.acquiring=false` / `d.status.Acquiring=false` / `d.status.LastError=...` / `d.status.Connection=ConnectionError` / 缓存并调用 `onError`），改调用 `d.invalidateConnection(unexpectedErr.Error())` 统一毒化：清 `d.conn=nil` / `d.frameReader=nil` / `d.acquiring=false` / `d.status.Acquiring=false` / `d.status.Connection=ConnectionError` / `d.status.LastError=message`，锁外 `conn.Close()` 并调用 `onError`。
   - `d.stop` 在 invalidate 之前显式置 nil（invalidate 不清 stop 字段，对齐原 defer 行为避免 readLoop 退出后 stop channel 残留）。
   - 保留主动停止场景（`StopReasonUserRequested`）的早 return，不触发 invalidate。
@@ -782,7 +782,7 @@ ok      daq-p1604/adapters/hardware 5.945s
   - 测试前置：`net.Pipe` 建立双向连接；device.conn / frameReader 已设置，acquiring=true；启动 readLoop goroutine。
   - 测试步骤：关闭 server 端模拟对端 EOF（client.Read 返回 io.EOF）。
   - 期待结果：`d.conn==nil`、`d.frameReader==nil`、`status.Connection==Error`、`status.LastError` 非空、`onReadLoopExit` 回调被调用并收到非 nil error。
-- `TestDAQP1604ReadLoop_InvalidatesConnOnTerminalReadError`（`projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604_test.go:703`）：
+- `TestDAQP1604ReadLoop_InvalidatesConnOnTerminalReadError`（`projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604_test.go:703`）：
   - 测试前置：`net.Pipe` 建立双向连接；d.conn / frameReader 已设置，acquiring=true；启动 readLoop goroutine。
   - 测试步骤：关闭 server 端模拟对端 EOF。
   - 期待结果：`d.conn==nil`、`d.frameReader==nil`、`status.Connection==Error`、`status.LastError` 非空、`onError` 回调被调用并收到非 nil error。
@@ -791,9 +791,9 @@ ok      daq-p1604/adapters/hardware 5.945s
 $ go test -race -count=1 ./shared/device-sdk/go/daq/hardware/...
 ok      shared.local/device-sdk/go/daq/hardware 11.512s
 
-$ go test -race -count=1 ./projects/wind-daq/services/api-go/...
-ok      wind-daq/services/api-go/internal/adapters/hardware     17.684s
-ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.491s
+$ go test -race -count=1 ./projects/windlabx4/services/api-go/...
+ok      windlabx4/services/api-go/internal/adapters/hardware     17.684s
+ok      windlabx4/services/api-go/internal/adapters/hardware/sim 2.491s
 ... (全部子包通过)
 
 $ GOWORK=off go test -race -count=1 ./projects/daq-t1603/apps/desktop-wails/...
@@ -808,7 +808,7 @@ ok      daq-t1603/adapters/hardware     3.238s
 - `shared/device-sdk/go/protocol/daq_t1603_frame.go` 的 T1603 命令 helper
 - `shared/device-sdk/go/protocol/conn_helpers.go` 的 P1604 ACK helper
 - `shared/device-sdk/go/protocol/daq_p1604_unit.go` 的单位 helper
-- Wind-DAQ P1604、DAQP1064Pre、DSA3217 的命令发送路径
+- WindLabX4 P1604、DAQP1064Pre、DSA3217 的命令发送路径
 
 现状：当前整改主要识别 `ErrWatchdogTriggered`。如果 OS soft deadline 正常先于 watchdog 返回，helper 会停止 watchdog 并返回 timeout，但迟到响应仍可能随后进入 TCP 流，被下一条命令或采集 reader 消费。该连接的协议边界已经不确定，不应继续复用。
 
@@ -822,7 +822,7 @@ ok      daq-t1603/adapters/hardware     3.238s
 
 **修改文件与符号：**
 
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：
   - `readResponseFrame`：新增响应 cmd 一致性校验。读取响应帧 header 后，检查 `respCmd != expectedCmd`，不匹配时返回 `ErrResponseCmdMismatch` 并包装 `protocol error` 上下文。
   - `sendCommand`：检测 `readResponseFrame` 返回的错误（包括 cmd mismatch）后，调用 `invalidateConnection` 毒化连接：`d.conn=nil`、`status=Error`、`status.LastError` 包含 `protocol error` 上下文、调 `onError`。
   - 与 watchdog 触发路径共享同一 `invalidateConnection` 函数，确保协议边界不确定时统一失效。
@@ -843,15 +843,15 @@ ok      daq-t1603/adapters/hardware     3.238s
 
 **对应测试和实际验证结果：**
 
-- `TestDAQP1064PreSendCommand_InvalidatesConnectionOnResponseCmdMismatch`（`projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1064pre_test.go:506`）：
+- `TestDAQP1064PreSendCommand_InvalidatesConnectionOnResponseCmdMismatch`（`projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1064pre_test.go:506`）：
   - 测试前置：`net.Pipe` + `deadlineIgnoringConn`（确保 `SetReadDeadline` 不先返回，让 `io.ReadFull` 必然读到完整 6 字节 header）。
   - 测试步骤：服务端收到命令后回复 cmd=0xFF（与请求 0x03 不匹配）。
   - 期待结果：`sendCommand` 返回 `cmd mismatch` 错误；`d.conn == nil`；`status.Connection == Error`；`status.LastError` 非空；`onError` 被调用。
 
 ```
-$ go test -race -count=1 ./projects/wind-daq/services/api-go/internal/adapters/hardware/...
-ok      wind-daq/services/api-go/internal/adapters/hardware     17.500s
-ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.421s
+$ go test -race -count=1 ./projects/windlabx4/services/api-go/internal/adapters/hardware/...
+ok      windlabx4/services/api-go/internal/adapters/hardware     17.500s
+ok      windlabx4/services/api-go/internal/adapters/hardware/sim 2.421s
 ```
 
 #### 第三批整改证据（2026-07-30）
@@ -866,7 +866,7 @@ ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.421s
   - 总预算耗尽（跳帧达到上限）同样视为 soft timeout 走毒化路径。
 - `shared/device-sdk/go/protocol/daq_p1604_unit.go`：`P1604ReadUnitCoefficient` / `P1604WriteUnitCoefficient`
   - Read/Write 阶段任一 soft deadline 触发都强制 `conn.Close()` 并返回 `ErrWatchdogTriggered`。
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/dsa3217.go`：`sendCommand`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/dsa3217.go`：`sendCommand`
   - 暴露 `cmdSoftTimeout` 字段供测试注入短超时（默认 `cmdTimeout`，测试可设 50ms）。
   - Write/Read 任一阶段 soft deadline 触发都调用 `invalidateConnection` 毒化连接，返回 `ErrWatchdogTriggered`。
   - `invalidateConnection` 内部 `d.mu.Lock` → 清 conn/reader/stop + Error 状态 → `conn.Close()` → `onError`，与 watchdog 触发路径共享同一失效函数。
@@ -905,7 +905,7 @@ ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.421s
   - 验证 `P1604ReadUnitCoefficient` soft timeout Close conn + 返回 sentinel。
 - `TestP1604WriteUnitCoefficient_SoftTimeoutClosesConnAndReturnsSentinel`（同文件:569）：
   - 验证 `P1604WriteUnitCoefficient` soft timeout Close conn + 返回 sentinel。
-- `TestDSA3217SendCommand_SoftTimeoutInvalidatesConn`（`projects/wind-daq/services/api-go/internal/adapters/hardware/dsa3217_test.go:402`）：
+- `TestDSA3217SendCommand_SoftTimeoutInvalidatesConn`（`projects/windlabx4/services/api-go/internal/adapters/hardware/dsa3217_test.go:402`）：
   - 测试前置：注入 `cmdSoftTimeout=50ms`（让 soft deadline 先于 watchdog 触发）。
   - 测试步骤：调用 `sendCommand`，服务端不响应。
   - 期待结果：返回错误包装 `ErrWatchdogTriggered`；`d.conn==nil`；`status.Connection==Error`；`onError` 被调用。
@@ -915,9 +915,9 @@ $ go test -race -count=1 ./shared/device-sdk/go/protocol/... ./shared/device-sdk
 ok      shared.local/device-sdk/go/protocol     11.072s
 ok      shared.local/device-sdk/go/daq/hardware 19.859s
 
-$ go test -race -count=1 ./projects/wind-daq/services/api-go/internal/adapters/hardware/...
-ok      wind-daq/services/api-go/internal/adapters/hardware     19.636s
-ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.404s
+$ go test -race -count=1 ./projects/windlabx4/services/api-go/internal/adapters/hardware/...
+ok      windlabx4/services/api-go/internal/adapters/hardware     19.636s
+ok      windlabx4/services/api-go/internal/adapters/hardware/sim 2.404s
 
 $ go vet + go build：全部空输出
 ```
@@ -931,7 +931,7 @@ $ go vet + go build：全部空输出
 位置：
 
 - `shared/device-sdk/go/protocol/daq_p1604_unit.go`
-- Wind-DAQ `DAQP1604.SetUnit`
+- WindLabX4 `DAQP1604.SetUnit`
 - 独立应用 `P1604Adapter.ApplyConfig`
 
 现状：单位 helper 的 watchdog 可 Close conn，但调用方主要只检查 peer reset，没有统一处理 `ErrWatchdogTriggered`；已关闭连接可能继续注册为 Connected。
@@ -944,10 +944,10 @@ $ go vet + go build：全部空输出
 
 - `shared/device-sdk/go/protocol/daq_p1604_unit.go`：`P1604ReadUnitCoefficient` / `P1604WriteUnitCoefficient`
   - soft timeout / watchdog 触发时已统一返回 `ErrWatchdogTriggered` sentinel（详见 R0-12 第三批整改证据）。
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go`：`DAQP1604.SetUnit`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604.go`：`DAQP1604.SetUnit`
   - 调用 `P1604ReadUnitCoefficient` / `P1604WriteUnitCoefficient` 后，检测 `errors.Is(err, sharedproto.ErrWatchdogTriggered)` 或 `IsConnResetByPeer(err)`，命中时调用 `invalidateConnection` 毒化连接（清 conn/reader + Error 状态 + `onError`）。
   - 同时处理 `v01101` 命令路径的 EOF/RST，复用同一 `invalidateConnection`，避免已关闭连接继续注册为 Connected。
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go`：`sendCommandACK`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604.go`：`sendCommandACK`
   - Write/Read 阶段 watchdog 触发时调用 `invalidateConnection`，返回 `ErrWatchdogTriggered`。
   - Write 成功但 watchdog 触发（conn 在 Write 后被 Close）同样走 `invalidateConnection`，避免状态不一致。
   - 不调 `onError`：让 readLoop defer 的 `unexpectedErr` 路径统一调用 `invalidateConnection`，避免双重调用。
@@ -966,7 +966,7 @@ $ go vet + go build：全部空输出
 **是否存在可选/探测读取：** 否，`SetUnit` / `ApplyConfig` / `sendCommandACK` 都是期待响应的命令路径。
 
 **如何证明不会误杀健康连接：**
-- `TestDAQP1604SetUnit_DoesNotCloseHealthyConnWhenNoData`（`projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604_test.go:584`）：
+- `TestDAQP1604SetUnit_DoesNotCloseHealthyConnWhenNoData`（`projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604_test.go:584`）：
   - 测试前置：`net.Pipe` + `deadlineIgnoringConn` + 设备正常响应 `v01101` 但不响应单位查询（模拟无数据）。
   - 测试步骤：调用 `SetUnit("Pa")`。
   - 期待结果：返回错误；`d.conn != nil`（健康连接未被关闭，仅 timeout）；`status.Connection != Error`。
@@ -974,7 +974,7 @@ $ go vet + go build：全部空输出
 
 **对应测试和实际验证结果：**
 
-- `TestDAQP1604_SetUnit_V01101EOFTriggersOnError`（`projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604_test.go:133`）：
+- `TestDAQP1604_SetUnit_V01101EOFTriggersOnError`（`projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604_test.go:133`）：
   - 测试前置：`net.Pipe` + 服务端收到 `v01101` 后 Close conn（模拟 EOF）。
   - 测试步骤：调用 `SetUnit("Pa")`。
   - 期待结果：返回错误；`d.conn == nil`；`status.Connection == Error`；`onError` 被调用。
@@ -987,14 +987,14 @@ $ go vet + go build：全部空输出
 - 独立应用 `ApplyConfig` 的 R1-1 整改通过 `TestZeroCalibration_*` 系列测试间接验证（`handleConnectionLost` 路径共享）。
 
 ```
-$ go test -race -count=1 ./projects/wind-daq/services/api-go/internal/adapters/hardware/...
-ok      wind-daq/services/api-go/internal/adapters/hardware     19.636s
-ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.404s
+$ go test -race -count=1 ./projects/windlabx4/services/api-go/internal/adapters/hardware/...
+ok      windlabx4/services/api-go/internal/adapters/hardware     19.636s
+ok      windlabx4/services/api-go/internal/adapters/hardware/sim 2.404s
 
 $ go vet + go build：全部空输出
 ```
 
-**遗留：** 无。Wind-DAQ `DAQP1604.SetUnit` / `sendCommandACK` 和独立应用 `P1604Adapter.ApplyConfig` 三条路径的 helper Close 后调用方统一失效全部覆盖。
+**遗留：** 无。WindLabX4 `DAQP1604.SetUnit` / `sendCommandACK` 和独立应用 `P1604Adapter.ApplyConfig` 三条路径的 helper Close 后调用方统一失效全部覆盖。
 
 ### R1-2：独立 P1604 `operationMu` 与校零生命周期未完整覆盖
 
@@ -1070,7 +1070,7 @@ $ go vet + go build：全部空输出
 
 位置：
 
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/dsa3217_readloop.go`：`readLoop`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/dsa3217_readloop.go`：`readLoop`
 
 现状：watchdog Close、EOF、RST、非主动停止的其他 terminal `ReadString` error 后，defer 都可能把状态恢复为 Connected，且不清除 conn/reader，仅依赖外层 `onError` 后续处理。
 
@@ -1080,13 +1080,13 @@ $ go vet + go build：全部空输出
 
 **修改文件与符号：**
 
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/dsa3217_readloop.go`：`readLoop`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/dsa3217_readloop.go`：`readLoop`
   - defer 块新增 `unexpectedErr` 检查：`unexpectedErr != nil` 时调用 `d.invalidateConnection(unexpectedErr.Error())` 统一毒化连接。
   - `unexpectedErr == nil` 分支保留原清理逻辑（主动停止或 conn 被外部路径 Close，仅清理 `readLoopDone`）。
   - readLoop 自身 watchdog 触发时设 `unexpectedErr = fmt.Errorf("read loop watchdog triggered: ...")`。
   - 非 closed 类错误（协议错误等）设 `unexpectedErr = err`。
   - `isClosedConnError` 分支：检查 `stop` 是否已 close，是则 `unexpectedErr=nil`（主动停止），否则设 `unexpectedErr`（外部 Close 但非主动停止）。
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/dsa3217.go`：`invalidateConnection`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/dsa3217.go`：`invalidateConnection`
   - 复用既有实现：`d.mu.Lock` → 清 conn/reader/stop + `status.Connection=Error` + `status.LastError=message` → `d.mu.Unlock` → `conn.Close()` → `onError`。
   - 与 `sendCommand` / `invalidateConnectionAfterReadLoopTimeout` 共享同一失效函数，保证状态最终一致。
 
@@ -1107,7 +1107,7 @@ $ go vet + go build：全部空输出
 
 **对应测试和实际验证结果：**
 
-- `TestDSA3217ReadLoop_InvalidatesConnOnTerminalReadError`（`projects/wind-daq/services/api-go/internal/adapters/hardware/dsa3217_test.go:301`）：
+- `TestDSA3217ReadLoop_InvalidatesConnOnTerminalReadError`（`projects/windlabx4/services/api-go/internal/adapters/hardware/dsa3217_test.go:301`）：
   - 测试前置：`net.Pipe` + 注入短 `readLoopWatchdog` + `deadlineIgnoringConn`（让 Read 永久阻塞触发 watchdog）。
   - 测试步骤：调用 `StartAcquisition`，等待 readLoop watchdog 触发。
   - 期待结果：`d.conn == nil`；`status.Connection == Error`；`status.LastError` 包含 `watchdog triggered`；`onError` 被调用。
@@ -1117,9 +1117,9 @@ $ go vet + go build：全部空输出
   - 验证 `sendCommand` soft timeout 路径走 `invalidateConnection`（R0-12 整改证据）。
 
 ```
-$ go test -race -count=1 ./projects/wind-daq/services/api-go/internal/adapters/hardware/...
-ok      wind-daq/services/api-go/internal/adapters/hardware     19.636s
-ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.404s
+$ go test -race -count=1 ./projects/windlabx4/services/api-go/internal/adapters/hardware/...
+ok      windlabx4/services/api-go/internal/adapters/hardware     19.636s
+ok      windlabx4/services/api-go/internal/adapters/hardware/sim 2.404s
 
 $ go vet + go build：全部空输出
 ```
@@ -1147,7 +1147,7 @@ $ go vet + go build：全部空输出
 
 现状：进程级 watchdog 在 `net.DialTimeout` 返回后才启动，无法覆盖 Dial 本身；工具内部的命令 Write、首字节/帧读取、可选 ACK、quiet-window 和 drain 仍主要依赖短 deadline。5 分钟进程退出只能防止无限存活，不能兑现每条操作声明的毫秒/秒级预算，也不能保证可选/探测语义正确。
 
-整改：统一改用修正后的 `protocol.DialTCP`；为每条命令、帧读取和探测操作使用与生产协议一致的 owner/边界，移除破坏性 drain 和 deadline-only 可选读取；进程 watchdog 仅作为最后防线。Wind-DAQ 0.11.2 release note 已把四套工具列入整改交付声明，因此本清单按交付范围管理；若实际安装包不包含它们，发布材料必须明确"开发/现场诊断工具，不随安装包交付"。
+整改：统一改用修正后的 `protocol.DialTCP`；为每条命令、帧读取和探测操作使用与生产协议一致的 owner/边界，移除破坏性 drain 和 deadline-only 可选读取；进程 watchdog 仅作为最后防线。WindLabX4 0.11.2 release note 已把四套工具列入整改交付声明，因此本清单按交付范围管理；若实际安装包不包含它们，发布材料必须明确"开发/现场诊断工具，不随安装包交付"。
 
 #### 第五批整改证据（2026-07-30）
 
@@ -1190,11 +1190,11 @@ $ go vet + go build：全部空输出
   $ cd projects/daq-t1603/apps/desktop-wails; $env:GOWORK="off"; go build ./cmd/freqprobe/... ./cmd/frameprobe/...  # 空输出
   ```
 
-**遗留：** 工具内部的命令 Write、首字节/帧读取、可选 ACK、quiet-window 和 drain 仍主要依赖短 deadline——这些是诊断工具的探测语义，不是生产路径。**注意：进程级 5 分钟 watchdog 仅作为"防止工具无限存活"的最后防线，不等价于 ADR-009 要求的"每条操作具有独立硬边界"。** 5 分钟超时远超单条操作的毫秒/秒级预算，不能兑现声明的超时语义，也无法保证可选/探测语义正确。该差距在 finding 7 中已明确标为"局部完成"，按交付范围管理（Wind-DAQ 0.11.2 release note 已声明），若实际安装包不包含四套工具，发布材料必须明确"开发/现场诊断工具，不随安装包交付"。
+**遗留：** 工具内部的命令 Write、首字节/帧读取、可选 ACK、quiet-window 和 drain 仍主要依赖短 deadline——这些是诊断工具的探测语义，不是生产路径。**注意：进程级 5 分钟 watchdog 仅作为"防止工具无限存活"的最后防线，不等价于 ADR-009 要求的"每条操作具有独立硬边界"。** 5 分钟超时远超单条操作的毫秒/秒级预算，不能兑现声明的超时语义，也无法保证可选/探测语义正确。该差距在 finding 7 中已明确标为"局部完成"，按交付范围管理（WindLabX4 0.11.2 release note 已声明），若实际安装包不包含四套工具，发布材料必须明确"开发/现场诊断工具，不随安装包交付"。
 
 ### R2-2：DSA3217 Disconnect 掩盖 join-timeout Error
 
-位置：`projects/wind-daq/services/api-go/internal/adapters/hardware/dsa3217.go`：`Disconnect`。
+位置：`projects/windlabx4/services/api-go/internal/adapters/hardware/dsa3217.go`：`Disconnect`。
 
 现状：join 超时失效路径设置 Error 后，后续阶段可能无条件覆盖成 Disconnected，丢失“连接被强制关闭”的诊断状态。
 
@@ -1204,7 +1204,7 @@ $ go vet + go build：全部空输出
 
 **修改文件与符号：**
 
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/dsa3217.go`：`Disconnect` Phase 3
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/dsa3217.go`：`Disconnect` Phase 3
   - 原 `d.status.Connection = device.ConnectionDisconnected` 无条件覆盖。
   - 改为 `if d.status.Connection != device.ConnectionError { d.status.Connection = device.ConnectionDisconnected }`。
   - 保留 Phase 2 `invalidateConnectionAfterReadLoopTimeout` 设置的 Error + LastError，让前端感知"连接被强制关闭"。
@@ -1227,7 +1227,7 @@ $ go vet + go build：全部空输出
 
 **对应测试和实际验证结果：**
 
-- `TestDSA3217Disconnect_DoesNotDeadlockWhenReadLoopBlocked`（`projects/wind-daq/services/api-go/internal/adapters/hardware/dsa3217_test.go:120`）：
+- `TestDSA3217Disconnect_DoesNotDeadlockWhenReadLoopBlocked`（`projects/windlabx4/services/api-go/internal/adapters/hardware/dsa3217_test.go:120`）：
   - 强化断言：原"Disconnected 或 Error"改为严格断言 Error + LastError 非空（readLoop 卡死场景必须保留 Error）。
 - `TestDSA3217Disconnect_PreservesErrorStatusFromInvalidate`（同文件:182）：
   - 测试前置：`net.Pipe` + `deadlineIgnoringConn` + `readLoopWatchdog=30s`（确保 readLoop 卡死触发 invalidate）。
@@ -1239,15 +1239,15 @@ $ go vet + go build：全部空输出
   - 期待结果：`status.Connection == Disconnected`（反向断言：正常路径不保留 Error）。
 
 ```
-$ go test -race -count=1 -run TestDSA3217Disconnect ./projects/wind-daq/services/api-go/internal/adapters/hardware/...
-ok      wind-daq/services/api-go/internal/adapters/hardware     8.852s
+$ go test -race -count=1 -run TestDSA3217Disconnect ./projects/windlabx4/services/api-go/internal/adapters/hardware/...
+ok      windlabx4/services/api-go/internal/adapters/hardware     8.852s
 
-$ go test -race -count=1 ./shared/device-sdk/go/protocol/... ./shared/device-sdk/go/daq/hardware/... ./shared/device-sdk/go/motion/adapters/hardware/... ./projects/wind-daq/services/api-go/internal/adapters/hardware/...
+$ go test -race -count=1 ./shared/device-sdk/go/protocol/... ./shared/device-sdk/go/daq/hardware/... ./shared/device-sdk/go/motion/adapters/hardware/... ./projects/windlabx4/services/api-go/internal/adapters/hardware/...
 ok      shared.local/device-sdk/go/protocol     11.285s
 ok      shared.local/device-sdk/go/daq/hardware 19.853s
 ok      shared.local/device-sdk/go/motion/adapters/hardware     2.894s
-ok      wind-daq/services/api-go/internal/adapters/hardware     20.724s
-ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.391s
+ok      windlabx4/services/api-go/internal/adapters/hardware     20.724s
+ok      windlabx4/services/api-go/internal/adapters/hardware/sim 2.391s
 
 $ go vet + gofmt：全部空输出
 ```
@@ -1258,7 +1258,7 @@ $ go vet + gofmt：全部空输出
 
 ### C-1：独立 P1604 Start 已移除阻塞 drain
 
-`projects/daq-p1604/apps/desktop-wails/adapters/hardware/p1604_adapter.go` 的 `StartAcquisition` 已明确不再调用 `DrainConnection`，通过停止 idle reader、Reset 和 ACK 跳帧处理残留。这是 Wind-DAQ P1604 的整改参考。
+`projects/daq-p1604/apps/desktop-wails/adapters/hardware/p1604_adapter.go` 的 `StartAcquisition` 已明确不再调用 `DrainConnection`，通过停止 idle reader、Reset 和 ACK 跳帧处理残留。这是 WindLabX4 P1604 的整改参考。
 
 ### C-2：P1604 ACK helper 的局部边界
 
@@ -1283,7 +1283,7 @@ T1603 的 `winsockDiscoverySocket.Receive` 已在 `Recvfrom` 前启动独立 `Cl
 
 1. **第一批：永久阻塞、双 reader 与健康连接误杀**
    - R0-3 T1603 optional ACK/drain
-   - R0-5 Wind-DAQ P1604 drain
+   - R0-5 WindLabX4 P1604 drain
    - R0-6 DAQP1064Pre 双 reader
    - R0-8、R0-9 Windows discovery Receive/三套 Send
    - 修正对应错误测试
@@ -1331,9 +1331,9 @@ T1603 的 `winsockDiscoverySocket.Receive` 已在 `Recvfrom` 前启动独立 `Cl
 | 编号 | 范围 | 验收结论 |
 |---|---|---|
 | R0-3 | T1603 可选 ACK / drain 误杀健康连接 | **完成** — `ConsumeOptionalACK` 移除 watchdog Close；`drainConnection` 彻底删除；3 个不误杀测试通过 |
-| R0-5 | Wind-DAQ P1604 `DrainConnection` 误杀健康连接 | **完成** — `StartAcquisition` 和 `SetUnit` 移除 `DrainConnection`，改用 `frameReader.Reset()`；2 个不误杀测试通过 |
+| R0-5 | WindLabX4 P1604 `DrainConnection` 误杀健康连接 | **完成** — `StartAcquisition` 和 `SetUnit` 移除 `DrainConnection`，改用 `frameReader.Reset()`；2 个不误杀测试通过 |
 | R0-6 | DAQP1064Pre 同一 TCP 流存在双 reader | **完成** — 新增 `ioMu` 串行化 I/O；watchdog 覆盖锁等待/Write/Read；8 个针对性测试通过 |
-| R0-8 | P1604、Wind-DAQ Windows UDP Recvfrom 无 raw-handle watchdog | **完成** — 三套 Windows scanner 统一 `time.AfterFunc(Closesocket)` watchdog；3 个测试覆盖软超时/外部 Close/loopback 不误杀 |
+| R0-8 | P1604、WindLabX4 Windows UDP Recvfrom 无 raw-handle watchdog | **完成** — 三套 Windows scanner 统一 `time.AfterFunc(Closesocket)` watchdog；3 个测试覆盖软超时/外部 Close/loopback 不误杀 |
 | R0-9 | 三套 UDP discovery Send 无独立 Close owner | **完成** — 三套 `Send` 统一 `SO_SNDTIMEO` + `time.AfterFunc(Close/Closesocket)` watchdog；3 个测试覆盖阻塞/超时/loopback 不误杀 |
 | R0-12 | 命令响应 soft timeout 后未统一毒化协议连接 | **DAQP1064Pre 路径已完成**（附带），其他路径（T1603 helper / P1604 ACK helper / P1604 unit helper / DSA3217）待第三批 |
 
@@ -1349,12 +1349,12 @@ $ go test -race -count=1 ./shared/device-sdk/go/protocol/... ./shared/device-sdk
 ok      shared.local/device-sdk/go/protocol     8.246s
 ok      shared.local/device-sdk/go/daq/hardware 8.385s
 
-$ go test -race -count=1 ./projects/wind-daq/services/api-go/internal/adapters/hardware/...
-ok      wind-daq/services/api-go/internal/adapters/hardware     17.500s
-ok      wind-daq/services/api-go/internal/adapters/hardware/sim 2.421s
+$ go test -race -count=1 ./projects/windlabx4/services/api-go/internal/adapters/hardware/...
+ok      windlabx4/services/api-go/internal/adapters/hardware     17.500s
+ok      windlabx4/services/api-go/internal/adapters/hardware/sim 2.421s
 
-$ go test -race -count=1 ./projects/wind-daq/services/api-go/internal/adapters/scan/...
-ok      wind-daq/services/api-go/internal/adapters/scan 4.047s
+$ go test -race -count=1 ./projects/windlabx4/services/api-go/internal/adapters/scan/...
+ok      windlabx4/services/api-go/internal/adapters/scan 4.047s
 
 $ GOWORK=off; cd projects/daq-p1604/apps/desktop-wails/adapters/hardware; go test -race -count=1 ./...
 ok      daq-p1604/adapters/hardware     24.520s
@@ -1363,7 +1363,7 @@ $ GOWORK=off; cd projects/daq-t1603/apps/desktop-wails/adapters/hardware; go tes
 ok      daq-t1603/adapters/hardware     3.242s
 
 # go vet
-$ go vet ./shared/device-sdk/go/protocol/... ./shared/device-sdk/go/daq/hardware/... ./projects/wind-daq/services/api-go/internal/adapters/hardware/... ./projects/wind-daq/services/api-go/internal/adapters/scan/...
+$ go vet ./shared/device-sdk/go/protocol/... ./shared/device-sdk/go/daq/hardware/... ./projects/windlabx4/services/api-go/internal/adapters/hardware/... ./projects/windlabx4/services/api-go/internal/adapters/scan/...
 （空输出，无告警）
 
 $ GOWORK=off; cd projects/daq-p1604/apps/desktop-wails/adapters/hardware; go vet ./...
@@ -1373,7 +1373,7 @@ $ GOWORK=off; cd projects/daq-t1603/apps/desktop-wails/adapters/hardware; go vet
 （空输出）
 
 # go build -buildvcs=false
-$ go build -buildvcs=false ./shared/device-sdk/go/protocol/... ./shared/device-sdk/go/daq/hardware/... ./projects/wind-daq/services/api-go/internal/adapters/hardware/... ./projects/wind-daq/services/api-go/internal/adapters/scan/...
+$ go build -buildvcs=false ./shared/device-sdk/go/protocol/... ./shared/device-sdk/go/daq/hardware/... ./projects/windlabx4/services/api-go/internal/adapters/hardware/... ./projects/windlabx4/services/api-go/internal/adapters/scan/...
 （空输出，编译通过）
 
 $ GOWORK=off; cd projects/daq-p1604/apps/desktop-wails/adapters/hardware; go build -buildvcs=false ./...
@@ -1398,10 +1398,10 @@ Risk level: critical
 
 `scripts/go-file-waivers.txt` 新增以下条目（行数增长由 ADR-009 整改直接导致，禁止顺手拆分）：
 
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1064pre.go`（845 行，R0-6/R0-12 整改）
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/sim/simulator.go`（528 行，SIM-1 整改）
-- `projects/wind-daq/services/api-go/internal/usecase/traversal_manager_registry.go`（512 行，双探针模式整改）
-- `projects/wind-daq/services/api-go/internal/usecase/traversal_view.go`（516 行，双探针 + ADR-009 整改）
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1064pre.go`（845 行，R0-6/R0-12 整改）
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/sim/simulator.go`（528 行，SIM-1 整改）
+- `projects/windlabx4/services/api-go/internal/usecase/traversal_manager_registry.go`（512 行，双探针模式整改）
+- `projects/windlabx4/services/api-go/internal/usecase/traversal_view.go`（516 行，双探针 + ADR-009 整改）
 - 5 个预存超长文件（app.go / t1603_adapter.go / csv_recorder.go / types.go x2）暂予豁免，与本次整改无关。
 
 ### 未完成项（复核修订 2026-07-30）
@@ -1410,10 +1410,10 @@ Risk level: critical
 
 - **finding 1（Critical）**：P1604 启动失败路径 `rollbackAcquisition` double-close channel panic — **已修复**（owner 检查 + 2 个回归测试）
 - **finding 2（High）**：4 套 `invalidateConnection`（daq_p1604 / daq_p1064pre / dsa3217 / b140_motion）不比较 expected conn — **已修复**（4 套均添加 `expectedConn` 参数，仅当 `d.conn == expectedConn` 时清状态；旧 conn 始终在锁外关闭）
-- **finding 3（High）**：T1603 `SendCommand`/`SendCommandIdle`/`SendCommandExact` 非 timeout 错误（EOF/短读/io.ErrUnexpectedEOF）不毒化连接；DAQP1064Pre `readResponseFrame` invalid header / response too long / 短 body 不毒化；Wind-DAQ P1604 ACK EOF/短帧不毒化 — **已修复**（所有协议边界错误均强制 `conn.Close()` 并包装 `ErrWatchdogTriggered` sentinel，调用方 `IsWatchdogTriggered` 触发 `invalidateConnection`）
+- **finding 3（High）**：T1603 `SendCommand`/`SendCommandIdle`/`SendCommandExact` 非 timeout 错误（EOF/短读/io.ErrUnexpectedEOF）不毒化连接；DAQP1064Pre `readResponseFrame` invalid header / response too long / 短 body 不毒化；WindLabX4 P1604 ACK EOF/短帧不毒化 — **已修复**（所有协议边界错误均强制 `conn.Close()` 并包装 `ErrWatchdogTriggered` sentinel，调用方 `IsWatchdogTriggered` 触发 `invalidateConnection`）
 - **finding 4（High）**：T1603 `ApplyConfig`/readLoop @f1 cleanup 先 `writeMu.Lock` 后启动 watchdog；独立 P1604 `Disconnect`/`StartAcquisition`/`StopAcquisition`/`ApplyConfig` 直接 `operationMu.Lock` 无 watchdog 覆盖锁等待 — **已修复**（所有路径 watchdog 前移到 `Lock` 之前，触发后跳过 I/O 直接毒化连接返回错误）
-- **finding 5（High）**：3 套 `discovery_socket_windows.go`（daq-t1603 / daq-p1604 / wind-daq scan）`time.AfterFunc` + `defer Stop` 无 stop-and-join 语义，raw handle 非原子失效 — **已修复**（`handleMu` 保护 handle，`closeHandleLocked` 原子取走 handle 并 Closesocket 一次；`startWatchdog` 返回 stop-and-join 函数通过 `sync.WaitGroup` 确保 callback 完全退出后才返回，避免 callback 在 Send/Receive 返回后误关已复用的 handle 数值）
-- **finding 6（High）**：3 套 scanner（t1603 / p1604 / wind-daq network）Send 失败后继续复用已 watchdog 销毁的 socket — **已修复**（Send 失败直接 `return nil, nil`/`return nil`，不进入 Receive 循环；3 套均补 `TestXxxScanner_SendFailureSkipsReceive` 测试，断言 `ReceiveCallCount == 0`）
+- **finding 5（High）**：3 套 `discovery_socket_windows.go`（daq-t1603 / daq-p1604 / windlabx4 scan）`time.AfterFunc` + `defer Stop` 无 stop-and-join 语义，raw handle 非原子失效 — **已修复**（`handleMu` 保护 handle，`closeHandleLocked` 原子取走 handle 并 Closesocket 一次；`startWatchdog` 返回 stop-and-join 函数通过 `sync.WaitGroup` 确保 callback 完全退出后才返回，避免 callback 在 Send/Receive 返回后误关已复用的 handle 数值）
+- **finding 6（High）**：3 套 scanner（t1603 / p1604 / windlabx4 network）Send 失败后继续复用已 watchdog 销毁的 socket — **已修复**（Send 失败直接 `return nil, nil`/`return nil`，不进入 Receive 循环；3 套均补 `TestXxxScanner_SendFailureSkipsReceive` 测试，断言 `ReceiveCallCount == 0`）
 - **finding 7（Medium）**：R2-1 只修 Dial，Write/Read/ACK/drain 仍只依赖 deadline — 状态已更新为"局部完成"
 - **finding 8（Medium）**：文档页首"全部完成"与总览/后文矛盾 — 状态已恢复为"整改未完成"
 - **finding 9（High）**：T1603 `sendCommand` 不校验 A/E 响应（设备返回 'E' 仍继续下发命令）；temp 型号固件 `@fe BIN 1` ACK 但不切换，FrameReader 错误进入 64 字节二进制解析 — **部分修复**（第一批：`sendCommand` 解析 A/E/其他字节三态，新增 `ErrDeviceRejected` sentinel 不毒化连接；`syncHardwareConfigLocked` 发送 `@fe BIN 1` 后重新查询 `@fd BIN` 验证，读回 0 时回退 ASCII。第二批复核修订：`queryBinaryMode` 严格校验只接受 "0"/"1"，其他响应返回协议错误中止同步；BIN 验证失败（非 watchdog）不再假定 BIN=1 而是中止同步；`applyHardwareConfig` 中途收到 'E' 后调用 `resyncHardwareConfigMode` 重新读取设备实际 BIN/TIME/HEAD 并同步到本地 cfg 与 FrameReader。9 个回归测试覆盖 A/E/非法 ACK/temp 回退/正常路径/BIN 验证非法响应/BIN 验证中止/部分失败 resync/全成功无 resync）
@@ -1444,9 +1444,9 @@ ok      shared.local/device-sdk/go/protocol     8.227s
 ok      shared.local/device-sdk/go/daq/hardware 11.370s
 
 # 跨项目回归验证
-$ go test -race -count=1 ./projects/wind-daq/services/api-go/internal/adapters/hardware/...
-ok      wind-daq/services/api-go/internal/adapters/hardware     23.141s
-ok      wind-daq/services/api-go/internal/adapters/hardware/sim 8.076s
+$ go test -race -count=1 ./projects/windlabx4/services/api-go/internal/adapters/hardware/...
+ok      windlabx4/services/api-go/internal/adapters/hardware     23.141s
+ok      windlabx4/services/api-go/internal/adapters/hardware/sim 8.076s
 
 $ GOWORK=off; cd projects/daq-t1603/apps/desktop-wails/adapters/hardware; go test -race -count=1 ./...
 ok      daq-t1603/adapters/hardware     3.232s
@@ -1476,12 +1476,12 @@ R0-10 / R0-11 已于 2026-07-30 完成（见上方 R0-10 / R0-11 章节"第二�
 
 **修改文件与符号：**
 
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go`：`invalidateConnection` / `invalidateConnectionAfterReadLoopTimeout`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604.go`：`invalidateConnection` / `invalidateConnectionAfterReadLoopTimeout`
   - 新增 `expectedConn net.Conn` 参数。`d.mu.Lock` 后比较 `currentConn := d.conn; if currentConn != expectedConn` 分支：仅关闭旧 `expectedConn`，不修改 `d.conn`/状态/不调 `onError`，直接返回。
   - `StopAcquisition` / `StartAcquisition` 等待 `readLoopDone` 超时前在 `d.mu.Lock` 内捕获 `expectedConn := d.conn`，传给 `invalidateConnectionAfterReadLoopTimeout`。
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：`invalidateConnection` / `invalidateConnectionAfterReadLoopTimeout`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：`invalidateConnection` / `invalidateConnectionAfterReadLoopTimeout`
   - 同样的 `expectedConn` 比较逻辑；`StopAcquisition` 在 `d.mu.Lock` 内捕获 `expectedConn`。
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/dsa3217.go`：`invalidateConnection` / `invalidateConnectionAfterReadLoopTimeout`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/dsa3217.go`：`invalidateConnection` / `invalidateConnectionAfterReadLoopTimeout`
   - 同样的 `expectedConn` 比较逻辑；`StopAcquisition` 在 `d.mu.Lock` 内捕获 `expectedConn`。
 - `shared/device-sdk/go/motion/adapters/hardware/b140_motion.go`：`invalidateConnectionLocked` / `applyInvalidate`
   - `invalidateConnectionLocked` 新增 `expectedConn` 参数。`c.connMu.Lock` 后比较 `currentConn := c.conn; if currentConn != expectedConn` 分支：仅关闭旧 `expectedConn`，不修改 `c.conn`/状态，直接返回。
@@ -1498,7 +1498,7 @@ R0-10 / R0-11 已于 2026-07-30 完成（见上方 R0-10 / R0-11 章节"第二�
 
 ### finding 3：命令响应失败仍会复用协议边界不可信的连接
 
-**问题根因：** T1603/DAQP1064Pre/Wind-DAQ P1604 ACK 只把 timeout 当作连接中毒；EOF、短读、io.ErrUnexpectedEOF、invalid header、cmd mismatch、response too long 等错误作为普通错误返回，连接被复用，迟到响应可能进入 TCP 流被下一条命令消费导致协议错位。
+**问题根因：** T1603/DAQP1064Pre/WindLabX4 P1604 ACK 只把 timeout 当作连接中毒；EOF、短读、io.ErrUnexpectedEOF、invalid header、cmd mismatch、response too long 等错误作为普通错误返回，连接被复用，迟到响应可能进入 TCP 流被下一条命令消费导致协议错位。
 
 **修改文件与符号：**
 
@@ -1512,7 +1512,7 @@ R0-10 / R0-11 已于 2026-07-30 完成（见上方 R0-10 / R0-11 章节"第二�
   - 跳帧循环到上限（`maxResidualFrameSkips=20`）仍无 ACK → `softTimeoutTriggered = true`（"too many residual frames"）。
   - 总预算耗尽 → `softTimeoutTriggered = true`（context.DeadlineExceeded）。
   - 末尾统一：`if softTimeoutTriggered { _ = conn.Close(); return fmt.Errorf("%w; %w", ackErr, ErrWatchdogTriggered) }`。
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：`sendCommand` / `readResponseFrame`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：`sendCommand` / `readResponseFrame`
   - `sendCommand` Write 阶段失败 → `_ = conn.Close(); d.invalidateConnection(conn, ...); return ... ErrWatchdogTriggered`。
   - `readResponseFrame` 在 5 个错误分支（header EOF/短读、invalid magic、cmd mismatch、response too long、body EOF/短读）均 `_ = conn.Close()` 并返回 `fmt.Errorf("...; %w", sharedproto.ErrWatchdogTriggered)`。
   - `sendCommand` 调用 `readResponseFrame` 后检测 `IsWatchdogTriggered(err)` → `d.invalidateConnection(conn, ...)`。
@@ -1521,7 +1521,7 @@ R0-10 / R0-11 已于 2026-07-30 完成（见上方 R0-10 / R0-11 章节"第二�
 
 - T1603 三条命令路径（`SendCommand`/`SendCommandIdle`/`SendCommandExact`）的 Write + Read 全覆盖。
 - DAQP1064Pre `sendCommand` 的 Write + `readResponseFrame` 5 个错误分支全覆盖。
-- Wind-DAQ P1604 `P1604ReadCommandACK` 的 `ReadFrame` 错误 + 跳帧上限 + 总预算耗尽全覆盖。
+- WindLabX4 P1604 `P1604ReadCommandACK` 的 `ReadFrame` 错误 + 跳帧上限 + 总预算耗尽全覆盖。
 - 所有错误路径均通过 `ErrWatchdogTriggered` sentinel 让调用方统一触发 `invalidateConnection`，避免连接被复用。
 
 **遗留：** finding 3 已覆盖审查指出的 5 个位置的 EOF / 短读 / io.ErrUnexpectedEOF / invalid header / cmd mismatch / response too long / timeout / 跳帧上限 / 总预算耗尽等"协议边界不可信"错误。**未覆盖范围**（明确保留连接，不计入 finding 3）：完整的 Nxx 设备拒绝帧（业务层拒绝，协议边界仍可信）。其他"完整但非法"响应（如未知 ACK 字节、错误帧类型）当前作为普通错误返回不毒化连接。
@@ -1617,17 +1617,17 @@ ok  shared.local/device-sdk/go/protocol     11.275s
 ok  shared.local/device-sdk/go/daq/hardware 19.869s
 ok  shared.local/device-sdk/go/motion/adapters/hardware     2.921s
 
-# Wind-DAQ hardware
-$ go test -race -count=1 ./projects/wind-daq/services/api-go/internal/adapters/hardware/...
-ok  wind-daq/services/api-go/internal/adapters/hardware     20.741s
-ok  wind-daq/services/api-go/internal/adapters/hardware/sim 2.329s
+# WindLabX4 hardware
+$ go test -race -count=1 ./projects/windlabx4/services/api-go/internal/adapters/hardware/...
+ok  windlabx4/services/api-go/internal/adapters/hardware     20.741s
+ok  windlabx4/services/api-go/internal/adapters/hardware/sim 2.329s
 
 # 独立 DAQ-P1604（GOWORK=off）
 $ go test -race -count=1 ./adapters/hardware/...
 ok  daq-p1604/adapters/hardware     27.255s
 
-# go vet（shared + wind-daq）
-$ go vet ./shared/device-sdk/go/protocol/... ./shared/device-sdk/go/daq/hardware/... ./shared/device-sdk/go/motion/adapters/hardware/... ./projects/wind-daq/services/api-go/internal/adapters/hardware/...
+# go vet（shared + windlabx4）
+$ go vet ./shared/device-sdk/go/protocol/... ./shared/device-sdk/go/daq/hardware/... ./shared/device-sdk/go/motion/adapters/hardware/... ./projects/windlabx4/services/api-go/internal/adapters/hardware/...
 （空输出）
 
 # go vet（daq-p1604，GOWORK=off）
@@ -1647,7 +1647,7 @@ $ go vet ./adapters/hardware/...
 
 **修改文件与符号：**
 
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：`readResponseFrame`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1064pre.go`：`readResponseFrame`
   - header 读取从 6 字节改为 5 字节：`io.ReadFull(conn, header[:5])`。
   - 读取 `dataLen` 字节 payload 后，再读 1 字节 checksum：`io.ReadFull(conn, checksumByte[:1])`。
   - 校验 checksum：`expectedChecksum := d.calculateChecksum(append(header, respData...))`，不匹配则 `_ = conn.Close()` + 返回 `fmt.Errorf("checksum mismatch: ...; %w", sharedproto.ErrWatchdogTriggered)`。
@@ -1661,7 +1661,7 @@ $ go vet ./adapters/hardware/...
 
 **对应测试和实际验证结果：**
 
-- `TestDAQP1064PreSendCommand_NonEmptyPayloadSuccess`（`projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1064pre_test.go`）：
+- `TestDAQP1064PreSendCommand_NonEmptyPayloadSuccess`（`projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1064pre_test.go`）：
   - 测试前置：`net.Pipe` + `deadlineIgnoringConn` + `d.conn=ignored` + `status=Connected`；服务端 goroutine 读掉命令后写入完整帧 `[0xA5, 0x5A, 0x03, 0x00, 0x04] + [0x00, 0x01, 0x02, 0x03] + checksum`。
   - 测试步骤：调用 `sendCommand(CMD_READ_CALIBRATION, []byte{0}, 2000)`。
   - 期待结果：`err == nil`；`len(resp) == 4`（修复前会丢失首字节 0x00、末尾混入 checksum，长度仍为 4 但内容错位）；`resp[i] == expectedPayload[i]` 逐字节相等。
@@ -1672,17 +1672,17 @@ $ go vet ./adapters/hardware/...
 
 **遗留：** 无。命令响应帧边界与采集解析路径、`buildFrame` 完全一致，非空 payload 路径通过新增测试覆盖。
 
-### finding 2（本轮）：Wind-DAQ P1604 `SetUnit` 仍可能由旧操作清掉重连后的新连接
+### finding 2（本轮）：WindLabX4 P1604 `SetUnit` 仍可能由旧操作清掉重连后的新连接
 
 **问题根因：** `SetUnit` 捕获旧 `conn`（`daq_p1604.go:423`），错误返回后却直接无条件执行 `d.conn = nil` / `d.frameReader = nil` / `status.Connection = Error`（`daq_p1604.go:457-459`）。如果旧 `SetUnit` 与 `Disconnect -> Connect` 并发，当前新连接仍会被旧操作清除。`syncUnitFromHardware` 也直接修改当前状态（`daq_p1604.go:520`），未走 `invalidateConnection` helper。
 
 **修改文件与符号：**
 
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go`：`SetUnit`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604.go`：`SetUnit`
   - 错误分支原内联清状态（`d.conn = nil` / `d.frameReader = nil` / `status.Connection = Error`）改为调用 `d.invalidateConnection(conn, fmt.Sprintf("write hardware unit coefficient: %v", err))`。
   - `invalidateConnection` 内部比较 `d.conn == expectedConn`：相等才清状态；不等仅 Close 旧 conn 不动状态，保护并发替换的新连接。
   - `IsConnResetByPeer(err) || IsWatchdogTriggered(err)` 才触发 invalidation（保留软错误不毒化的语义）。
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go`：`syncUnitFromHardware`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604.go`：`syncUnitFromHardware`
   - 同样把内联清状态改为 `d.invalidateConnection(conn, fmt.Sprintf("read unit coefficient: %v", err))`。
   - 仅 `IsWatchdogTriggered(err)` 触发 invalidation（保留 `IsConnResetByPeer` 软错误路径的现有行为，避免过度毒化）。
 
@@ -1694,7 +1694,7 @@ $ go vet ./adapters/hardware/...
 
 **对应测试和实际验证结果：**
 
-- `TestDAQP1604_SetUnit_OldConnFailurePreservesNewConn`（`projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604_test.go`）：
+- `TestDAQP1604_SetUnit_OldConnFailurePreservesNewConn`（`projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604_test.go`）：
   - 测试前置：构造 `oldClient`/`newClient` 两个 `net.Pipe`；先 `d.conn = oldClient`，再 `d.conn = newClient`（模拟 `Disconnect -> Connect` 已替换）；`status = Connected`；`SetOnError` 回调计数器。
   - 测试步骤：调用 `d.invalidateConnection(oldClient, "old setUnit v01101 EOF: simulated")`。
   - 期待结果：`d.conn == newClient`（新连接未被误杀）；`d.frameReader != nil`；`status == Connected`（旧操作的 invalidation 不改状态）；`onError` 未被调用（no-op 分支）。
@@ -1711,7 +1711,7 @@ $ go vet ./adapters/hardware/...
   - Send 失败 `break` 改为 `return nil, nil`，不进入 `readT1603Responses(socket, ...)`。
 - `projects/daq-p1604/apps/desktop-wails/adapters/hardware/p1604_scanner.go`：`Scan`
   - 同样 Send 失败 `return nil, nil`，不进入 `readP1604Responses(socket, ...)`。
-- `projects/wind-daq/services/api-go/internal/adapters/scan/network_scanner.go`：`scanWithSocket`
+- `projects/windlabx4/services/api-go/internal/adapters/scan/network_scanner.go`：`scanWithSocket`
   - 同样 Send 失败 `return nil`，不进入 Receive 循环；记录日志说明"终止本轮扫描并跳过 Receive"。
 
 **协议契约一致性：**
@@ -1727,8 +1727,8 @@ $ go vet ./adapters/hardware/...
   - 期待结果：`err == nil`；`len(results) == 0`；`elapsed < 200ms`（不进入 Receive 循环）；`ReceiveCallCount() == 0`。
 - `TestP1604Scanner_SendFailureSkipsReceive`（`projects/daq-p1604/apps/desktop-wails/adapters/hardware/p1604_scanner_test.go`）：
   - 同样模式，断言 P1604 scanner Send 失败后 `ReceiveCallCount == 0`。
-- `TestScanWithSocket_SendFailureSkipsReceive`（`projects/wind-daq/services/api-go/internal/adapters/scan/network_scanner_test.go`）：
-  - 同样模式，断言 Wind-DAQ `scanWithSocket` Send 失败后 `ReceiveCallCount == 0`。
+- `TestScanWithSocket_SendFailureSkipsReceive`（`projects/windlabx4/services/api-go/internal/adapters/scan/network_scanner_test.go`）：
+  - 同样模式，断言 WindLabX4 `scanWithSocket` Send 失败后 `ReceiveCallCount == 0`。
 
 **遗留：** 无。三套 scanner Send 失败后均直接返回，不进入 Receive 循环；3 个针对性测试通过。
 
@@ -1742,13 +1742,13 @@ ok      shared.local/device-sdk/go/daq/hardware 19.897s
 $ go test -race -count=1 ./shared/device-sdk/go/protocol/...
 ok      shared.local/device-sdk/go/protocol     11.293s
 
-# Wind-DAQ hardware + sim + scan
-$ go test -race -count=1 ./projects/wind-daq/services/api-go/internal/adapters/hardware/...
-ok      wind-daq/services/api-go/internal/adapters/hardware     27.401s
-ok      wind-daq/services/api-go/internal/adapters/hardware/sim 3.241s
+# WindLabX4 hardware + sim + scan
+$ go test -race -count=1 ./projects/windlabx4/services/api-go/internal/adapters/hardware/...
+ok      windlabx4/services/api-go/internal/adapters/hardware     27.401s
+ok      windlabx4/services/api-go/internal/adapters/hardware/sim 3.241s
 
-$ go test -race -count=1 ./projects/wind-daq/services/api-go/internal/adapters/scan/...
-ok      wind-daq/services/api-go/internal/adapters/scan 10.464s
+$ go test -race -count=1 ./projects/windlabx4/services/api-go/internal/adapters/scan/...
+ok      windlabx4/services/api-go/internal/adapters/scan 10.464s
 
 # 独立 DAQ-P1604（GOWORK=off）
 $ cd projects/daq-p1604/apps/desktop-wails/adapters/hardware; go test -race -count=1 ./...
@@ -1763,4 +1763,4 @@ ok      daq-t1603/adapters/hardware     8.916s
 
 无。findings 1-3 全部修复，相关位置代码已就位，针对性测试通过。
 
-R2-1（finding 7）仍保持"局部完成"：四套诊断工具的 Dial 已改用 `DialTCP`，但工具内部的命令 Write、首字节/帧读取、可选 ACK、quiet-window 和 drain 仍主要依赖短 deadline——这些是诊断工具的探测语义，不是生产路径。**进程级 5 分钟 watchdog 仅作为"防止工具无限存活"的最后防线，不等价于 ADR-009 要求的"每条操作具有独立硬边界"，5 分钟超时远超单条操作的毫秒/秒级预算。** 该差距按交付范围管理（Wind-DAQ 0.11.2 release note 已声明）。
+R2-1（finding 7）仍保持"局部完成"：四套诊断工具的 Dial 已改用 `DialTCP`，但工具内部的命令 Write、首字节/帧读取、可选 ACK、quiet-window 和 drain 仍主要依赖短 deadline——这些是诊断工具的探测语义，不是生产路径。**进程级 5 分钟 watchdog 仅作为"防止工具无限存活"的最后防线，不等价于 ADR-009 要求的"每条操作具有独立硬边界"，5 分钟超时远超单条操作的毫秒/秒级预算。** 该差距按交付范围管理（WindLabX4 0.11.2 release note 已声明）。

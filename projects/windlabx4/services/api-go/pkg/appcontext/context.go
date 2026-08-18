@@ -206,6 +206,55 @@ func copyDefaultProfilesIfNeeded(devicePath, motionPath string) error {
 	return ensureJSONFile(motionPath, defaultMotionProfiles())
 }
 
+// migrateLegacyConfigDir 将旧配置目录 %APPDATA%\wind-daq 的内容一次性迁移到
+// 新目录 %APPDATA%\windlabx4。仅当新目录不存在且旧目录存在时执行（幂等），
+// 保证老用户升级后设备配置等数据不丢失。
+func migrateLegacyConfigDir(oldDir, newDir string) {
+	if oldDir == newDir {
+		return
+	}
+	if _, err := os.Stat(oldDir); err != nil {
+		return
+	}
+	if _, err := os.Stat(newDir); err == nil {
+		return
+	}
+	slog.Info("migrating config from wind-daq to windlabx4", "component", "AppContext", "from", oldDir, "to", newDir)
+	if err := copyTree(oldDir, newDir); err != nil {
+		slog.Warn("config migration failed, fall back to new dir", "component", "AppContext", "error", err)
+		return
+	}
+	_ = os.MkdirAll(newDir, 0o755)
+}
+
+// copyTree 递归复制目录树（保留文件权限）。
+func copyTree(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		if err := os.MkdirAll(dst, info.Mode().Perm()); err != nil {
+			return err
+		}
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if err := copyTree(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, info.Mode().Perm())
+}
+
 func ensureJSONFile(path string, fallback any) error {
 	data, err := os.ReadFile(path)
 	if err == nil {

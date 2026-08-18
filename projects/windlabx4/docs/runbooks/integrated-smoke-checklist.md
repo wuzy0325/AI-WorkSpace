@@ -11,7 +11,7 @@
 - **执行人/Agent:** OpenCode
 
 ## 注意
-机器上 PID 4504（ApplicationWebServer）长期占用 `:8080`，Go API 需使用其他端口（如 `:9090`），或通过 `WIND_DAQ_ADDR` 环境变量配置。不影响功能验证。
+机器上 PID 4504（ApplicationWebServer）长期占用 `:8080`，Go API 需使用其他端口（如 `:9090`），或通过 `WINDLABX4_ADDR` 环境变量配置。不影响功能验证。
 
 ## 测试流程
 

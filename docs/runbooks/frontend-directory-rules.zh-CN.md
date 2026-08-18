@@ -155,7 +155,7 @@ composable 命名规则：
 
 | 已有项目 | 当前结构 | 要求 |
 |---|---|---|
-| wind-daq | `views/` + `components/<domain>/` + `components/ui/` | 符合标准，维持 |
+| windlabx4 | `views/` + `components/<domain>/` + `components/ui/` | 符合标准，维持 |
 | motion-controller | `views/` + `components/<domain>/` + `components/ui/` | 符合标准，维持 |
 | daq-t1603 | `views/` + `components/<domain>/` + `bridge/` | 符合标准，建议补 `components/ui/` |
 | five-hole-interpolator | 极简（无 pages/ 等） | 无需改动 |

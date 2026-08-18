@@ -10,7 +10,7 @@ Accepted
 
 ## Context
 
-工作空间内 6 个仍在维护的桌面产品需要提供 Windows 7 SP1 x64 版本：`daq-t1603`、`probe-interpolator`、`daq-p1604`、`1604Cal`、`motion-controller` 和 `wind-daq`。
+工作空间内 6 个仍在维护的桌面产品需要提供 Windows 7 SP1 x64 版本：`wista`、`probe-interpolator`、`wispa`、`1604Cal`、`motion-controller` 和 `windlabx4`。
 
 当前主线使用 Go 1.25+、Wails 和 WebView2，并会继续升级。Windows 7 版本必须固定 Go 1.20.14、Electron 22.3.27 和 Chromium 108。若在主线同时维护两套桌面壳和 Go 1.20 兼容依赖闭包，会扩大主线改造范围，并使现有项目长期承受 Win7 的技术限制。
 
@@ -30,12 +30,12 @@ DAQ-T1603 已用平级 Git worktree `AI-Workspace-win7` 的未提交 working tre
 
 纳入 Win7 LTS：
 
-1. `daq-t1603`
+1. `wista`
 2. `probe-interpolator`
-3. `daq-p1604`
+3. `wispa`
 4. `1604Cal`
 5. `motion-controller`
-6. `wind-daq`
+6. `windlabx4`
 
 不新增独立 Win7 产品：
 
@@ -146,5 +146,5 @@ npm run build
 
 - `docs/decisions/ADR-007-daq-t1603-win7-lts.md`
 - `docs/plans/2026-07-23-workspace-win7-lts-worktree.md`
-- `projects/daq-t1603/README.md`
+- `projects/wista/README.md`
 - Electron 官方公告：`https://www.electronjs.org/blog/windows-7-to-8-1-deprecation-notice`

@@ -20,7 +20,7 @@
 - [ ] 设备已上电（LED 状态灯正常）
 - [ ] 串口号已确认（Windows: `设备管理器 → 端口 (COM 和 LPT)`）
 - [ ] 后端已启动：`go run .\cmd\server\main.go`
-- [ ] 调试日志已启用：`$env:WIND_DAQ_DEBUG = "1"`
+- [ ] 调试日志已启用：`$env:WINDLABX4_DEBUG = "1"`
 
 ---
 
@@ -130,7 +130,7 @@ READ:CHANnel1?
 
 ```powershell
 # 设置环境变量启用网络扫描
-$env:WIND_DAQ_NETWORK_SCAN = "true"
+$env:WINDLABX4_NETWORK_SCAN = "true"
 go run .\cmd\server\main.go
 
 # 测试扫描 API

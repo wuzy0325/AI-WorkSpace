@@ -42,7 +42,7 @@
 - 初始化 Pinia store
 - 初始化依赖注入容器
 - 预热关键服务（motion, feedback）
-- 在开发环境导出容器到全局（`window.__WINDDAQ_CONTAINER__`）
+- 在开发环境导出容器到全局（`window.__WINDLABX4_CONTAINER__`）
 
 ### 4. 返回值适配器 ✅
 
@@ -66,13 +66,13 @@
 **状态**: 已规划并实现工具
 
 创建了 `src/core/storeIds.ts`：
-- 定义了新的 Store ID：`winddaq-motion`, `winddaq-feedback`
+- 定义了新的 Store ID：`WINDLABX4-motion`, `WINDLABX4-feedback`
 - 提供了 ID 解析和迁移工具
 - 包含迁移检查功能
 - 向后兼容旧的 ID
 
 **迁移策略**：
-- 本地 store 使用新 ID（如 `winddaq-motion`）
+- 本地 store 使用新 ID（如 `WINDLABX4-motion`）
 - 共享模块使用原始 ID（如 `motion`）
 - 提供兼容层支持两种访问方式
 
@@ -317,7 +317,7 @@ function initializeServices(): void {
 
 ```typescript
 if (import.meta.env.DEV) {
-  (window as any).__WINDDAQ_CONTAINER__ = container;
+  (window as any).__WINDLABX4_CONTAINER__ = container;
 }
 ```
 
@@ -364,7 +364,7 @@ if (import.meta.env.DEV) {
 
 ## 总结
 
-依赖注入系统已成功实现并集成到 WindDAQ 项目中。该系统提供了：
+依赖注入系统已成功实现并集成到 WINDLABX4 项目中。该系统提供了：
 
 - ✅ **统一的依赖管理**
 - ✅ **完整的类型安全**

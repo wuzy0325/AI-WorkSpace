@@ -1,4 +1,4 @@
-# Spec: Wind-DAQ P1 Naive UI → Ui\* Replacement
+# Spec: WindLabX4 P1 Naive UI → Ui\* Replacement
 
 ## Objective
 
@@ -15,14 +15,14 @@ After refactoring, feature code will not import `NButton`, `NCard`, `NInput`, `N
 ## Tech Stack
 
 - **Frontend:** Vue 3 + TypeScript + Naive UI (underlying library)
-- **Primitives:** `components/ui/Ui*` — Wind-DAQ project component layer
+- **Primitives:** `components/ui/Ui*` — WindLabX4 project component layer
 - **Tokens:** `styles/tokens/` — color, spacing, typography CSS custom properties
 
 ## Commands
 
 ```powershell
 # After each group
-cd projects\wind-daq\apps\desktop-wails\frontend
+cd projects\windlabx4\apps\desktop-wails\frontend
 npm run typecheck
 npm run build
 npm run test

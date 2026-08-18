@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, ref } from 'vue'
+import { computed, inject, ref, type Ref } from 'vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useTheme } from '@composables/useTheme'
@@ -15,6 +15,7 @@ import {
 } from 'naive-ui'
 import {
   Activity,
+  Crosshair,
   Layers,
   LineChart,
   Loader2,
@@ -30,6 +31,8 @@ const i18n = useI18nStore()
 const { theme } = useTheme()
 
 const openConfig = inject<() => void>('shell:openConfig', () => {})
+const zeroCalibration = inject<() => Promise<void>>('shell:zeroCalibration', async () => {})
+const isZeroing = inject<Ref<boolean>>('shell:zeroing', ref(false))
 
 const selected = computed(() => deviceStore.selectedProfile)
 const displayHz = computed(() => {
@@ -37,6 +40,7 @@ const displayHz = computed(() => {
   return Math.round(1000 / selected.value.p1604Config.samplingRate)
 })
 const status = computed(() => (selected.value ? deviceStore.statusFor(selected.value.id) : ''))
+const canZeroCalibration = computed(() => status.value === 'Connected' || status.value === 'Acquiring')
 const errorMessage = computed(() => (selected.value ? deviceStore.errorFor(selected.value.id) : ''))
 const isAcquiring = computed(() => (selected.value ? deviceStore.acquiringFor(selected.value.id) : false))
 const sampleCount = computed(() => (selected.value ? deviceStore.historyFor(selected.value.id).length : 0))
@@ -189,6 +193,19 @@ function statusLabel(): string {
                   <Network v-else :size="14" />
                 </template>
                 {{ status === 'Connected' || status === 'Acquiring' ? i18n.t('monitor.disconnect') : status === 'Connecting' ? i18n.t('monitor.connecting') : i18n.t('monitor.connect') }}
+              </NButton>
+              <NButton
+                size="small"
+                secondary
+                :disabled="!canZeroCalibration"
+                :loading="isZeroing"
+                :title="canZeroCalibration
+                  ? i18n.t('monitor.zeroCalibration')
+                  : i18n.t('monitor.connectBeforeZero')"
+                data-testid="btn-zero-calibration"
+                @click="zeroCalibration"
+              >
+                <template #icon><Crosshair :size="14" /></template>{{ i18n.t('monitor.zeroCalibration') }}
               </NButton>
               <NButton size="small" secondary @click="openConfig()">
                 <template #icon><Settings2 :size="14" /></template>{{ i18n.t('monitor.config') }}

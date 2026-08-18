@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "daqp1604"
+version = "1.0.0"
+description = "DAQ-P-1604 压力采集设备 Python 客户端库（TCP 二进制协议，零第三方依赖）"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "Proprietary" }
+authors = [{ name = "DAQ-P-1604 Team" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Interface Engine/Protocol Translator",
+]
+
+[tool.setuptools]
+packages = ["daqp1604"]

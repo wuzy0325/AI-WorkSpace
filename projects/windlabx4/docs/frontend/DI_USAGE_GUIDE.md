@@ -1,8 +1,8 @@
-# WindDAQ 依赖注入系统使用指南
+# WINDLABX4 依赖注入系统使用指南
 
 ## 概述
 
-WindDAQ 引入了一个统一的依赖注入（DI）容器来管理应用中的所有服务依赖。这个系统提供了：
+WINDLABX4 引入了一个统一的依赖注入（DI）容器来管理应用中的所有服务依赖。这个系统提供了：
 
 - **类型安全**：完整的 TypeScript 类型支持
 - **统一访问**：通过 Composables 访问服务
@@ -208,8 +208,8 @@ feedback.toast.success('成功');
 
 ```typescript
 // 在浏览器控制台中
-window.__WINDDAQ_CONTAINER__.motion
-window.__WINDDAQ_CONTAINER__.feedback
+window.__WINDLABX4_CONTAINER__.motion
+window.__WINDLABX4_CONTAINER__.feedback
 ```
 
 ## 最佳实践
@@ -231,7 +231,7 @@ A: motionStore 仍然可以使用，但建议通过 `useMotionService().store` �
 
 ### Q: 如何处理 Pinia store id 冲突？
 
-A: 容器内部已经处理了这个问题。如果需要显式指定 store ID，可以使用 `storeIds.ts` 中定义的新 ID（如 `winddaq-motion`）。
+A: 容器内部已经处理了这个问题。如果需要显式指定 store ID，可以使用 `storeIds.ts` 中定义的新 ID（如 `WINDLABX4-motion`）。
 
 ### Q: 如何测试使用了 DI 的组件？
 

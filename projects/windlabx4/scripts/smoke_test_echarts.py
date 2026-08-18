@@ -23,7 +23,7 @@ from playwright.sync_api import sync_playwright, Page
 # 截图目录：Windows 上 /tmp 在 git-bash 里有 alias，但 Python 进程拿不到，
 # 用 tempfile 取真实路径，并确保目录存在
 import tempfile
-SCREENSHOT_DIR = os.path.join(tempfile.gettempdir(), "winddaq-smoke")
+SCREENSHOT_DIR = os.path.join(tempfile.gettempdir(), "WINDLABX4-smoke")
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 

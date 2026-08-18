@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DAQ-T-1603 温度采集软件 用户说明书</title>
+<title>WISTA 温度采集软件 用户说明书</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -220,7 +220,7 @@ body.lang-en    .lang-content-en { display: block; }
 
 <aside class="sidebar">
   <div class="sidebar-header">
-    <h1><span class="lang-zh">DAQ-T-1603 温度采集软件</span><span class="lang-en">DAQ-T-1603 Temperature Acquisition</span></h1>
+    <h1><span class="lang-zh">WISTA 温度采集软件</span><span class="lang-en">WISTA Temperature Acquisition</span></h1>
     <div class="sub"><span class="lang-zh">用户说明书 · v0.5.0</span><span class="lang-en">User Manual · v0.5.0</span></div>
     <button id="lang-toggle" class="lang-toggle" title="中/EN">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10"/><path d="M12 2a15.3 15.3 0 00-4 10 15.3 15.3 0 004 10"/></svg>
@@ -253,7 +253,7 @@ body.lang-en    .lang-content-en { display: block; }
 <main class="main">
 
 <div class="doc-meta">
-  <h1>DAQ-T-1603 温度采集软件 用户说明书</h1>
+  <h1>WISTA 温度采集软件 用户说明书</h1>
   <div class="ver">适用软件版本：v0.5.0 ｜ 适用设备：DAQ-T-1603 热电偶温度采集器（16 通道）｜ 文档日期：2026-07</div>
 </div>
 
@@ -541,7 +541,7 @@ body.lang-en    .lang-content-en { display: block; }
   <li><strong>检索</strong>：顶部搜索框可按消息 / 标签 / 详情 / 设备即时过滤日志；</li>
   <li><strong>级别过滤</strong>：Debug / Info / Warn / Error，表示「显示的最低级别」（默认 Info，即 Info 及以上）；</li>
   <li><strong>分类过滤</strong>：全部 / 系统 / 通信（设备命令收发）/ 采集；</li>
-  <li><strong>保存日志到文件</strong>：点击后选择目录，日志持续写入 <code>daq-log_年月日-时分秒.log</code>，再次点击停止。软件每次启动也会自动在 <code>%APPDATA%\daq-t1603\logs</code> 下保存运行日志（同前缀最多保留最近 7 个文件）；</li>
+  <li><strong>保存日志到文件</strong>：点击后选择目录，日志持续写入 <code>daq-log_年月日-时分秒.log</code>，再次点击停止。软件每次启动也会自动在 <code>%APPDATA%\wista\logs</code> 下保存运行日志（同前缀最多保留最近 7 个文件）；</li>
   <li><strong>拷贝全部日志</strong>：把当前过滤结果复制到剪贴板，可直接粘贴给技术支持；悬停单条日志可复制该条；</li>
   <li><strong>清空日志</strong>：清空面板（不影响已写入文件的日志）；</li>
   <li>面板最多保留最近 500 条（最新在顶部）；高频通信日志自动合并显示「… 及 N 条同类日志」。</li>
@@ -572,8 +572,8 @@ body.lang-en    .lang-content-en { display: block; }
 <h2 id="files">13. 配置与数据文件位置</h2>
 <table>
   <tr><th>内容</th><th>位置</th></tr>
-  <tr><td>设备配置（设备列表、通道、热电偶类型、自动连接等）</td><td><code>%APPDATA%\daq-t1603\device-profiles.json</code></td></tr>
-  <tr><td>运行日志（自动保存，最多保留 7 个）</td><td><code>%APPDATA%\daq-t1603\logs\</code></td></tr>
+  <tr><td>设备配置（设备列表、通道、热电偶类型、自动连接等）</td><td><code>%APPDATA%\wista\device-profiles.json</code></td></tr>
+  <tr><td>运行日志（自动保存，最多保留 7 个）</td><td><code>%APPDATA%\wista\logs\</code></td></tr>
   <tr><td>CSV 数据文件</td><td>「开始保存」时用户选择的目录</td></tr>
   <tr><td>界面偏好（主题、刷新率等）</td><td>应用内本地存储，随系统用户保存</td></tr>
 </table>
@@ -618,7 +618,7 @@ body.lang-en    .lang-content-en { display: block; }
 
 <div class="callout success" style="margin-top:2rem">
   <span class="t">技术支持</span>
-  如遇本说明书未覆盖的问题，请导出日志（日志面板 → 拷贝全部日志，或提供 <code>%APPDATA%\daq-t1603\logs</code> 下对应时段的日志文件）并联系技术支持。
+  如遇本说明书未覆盖的问题，请导出日志（日志面板 → 拷贝全部日志，或提供 <code>%APPDATA%\wista\logs</code> 下对应时段的日志文件）并联系技术支持。
 </div>
 
 </main>
@@ -916,7 +916,7 @@ body.lang-en    .lang-content-en { display: block; }
   <li><strong>Search</strong>: the search box at the top lets you filter logs by message / tag / details / device in real time;</li>
   <li><strong>Level filter</strong>: Debug / Info / Warn / Error, representing the minimum level to display (default Info: show Info and above);</li>
   <li><strong>Category filter</strong>: All / System / Communication (device command send/receive) / Acquisition;</li>
-  <li><strong>Save log to file</strong>: click and select a directory; logs are continuously written to <code>daq-log_YYYYMMDD-HHmmss.log</code>; click again to stop. The software also automatically saves a run log under <code>%APPDATA%\daq-t1603\logs</code> on each startup (same prefix, up to 7 most recent files kept);</li>
+  <li><strong>Save log to file</strong>: click and select a directory; logs are continuously written to <code>daq-log_YYYYMMDD-HHmmss.log</code>; click again to stop. The software also automatically saves a run log under <code>%APPDATA%\wista\logs</code> on each startup (same prefix, up to 7 most recent files kept);</li>
   <li><strong>Copy all logs</strong>: copies the current filtered results to the clipboard, ready to paste to technical support; hovering a single log entry lets you copy just that entry;</li>
   <li><strong>Clear logs</strong>: clears the panel (does not affect logs already written to file);</li>
   <li>The panel retains at most the last 500 entries (newest at top); high-frequency communication logs are automatically collapsed as &ldquo;&hellip; and N similar entries&rdquo;.</li>
@@ -947,8 +947,8 @@ body.lang-en    .lang-content-en { display: block; }
 <h2 id="files">13. Config &amp; Data File Locations</h2>
 <table>
   <tr><th>Content</th><th>Location</th></tr>
-  <tr><td>Device configuration (device list, channels, thermocouple type, auto-connect, etc.)</td><td><code>%APPDATA%\daq-t1603\device-profiles.json</code></td></tr>
-  <tr><td>Runtime logs (auto-saved, up to 7 files kept)</td><td><code>%APPDATA%\daq-t1603\logs\</code></td></tr>
+  <tr><td>Device configuration (device list, channels, thermocouple type, auto-connect, etc.)</td><td><code>%APPDATA%\wista\device-profiles.json</code></td></tr>
+  <tr><td>Runtime logs (auto-saved, up to 7 files kept)</td><td><code>%APPDATA%\wista\logs\</code></td></tr>
   <tr><td>CSV data files</td><td>Directory selected by the user when clicking &ldquo;Start Record&rdquo;</td></tr>
   <tr><td>UI preferences (theme, refresh rate, etc.)</td><td>Application-local storage, persisted per system user</td></tr>
 </table>
@@ -993,7 +993,7 @@ body.lang-en    .lang-content-en { display: block; }
 
 <div class="callout success" style="margin-top:2rem">
   <span class="t">Technical Support</span>
-  For issues not covered by this manual, please export the logs (Log Panel &rarr; Copy All Logs, or provide the log files from the relevant time period under <code>%APPDATA%\daq-t1603\logs</code>) and contact technical support.
+  For issues not covered by this manual, please export the logs (Log Panel &rarr; Copy All Logs, or provide the log files from the relevant time period under <code>%APPDATA%\wista\logs</code>) and contact technical support.
 </div>
 
 </main>

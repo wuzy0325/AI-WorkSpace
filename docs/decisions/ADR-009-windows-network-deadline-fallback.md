@@ -82,13 +82,13 @@ n, addr, err := conn.ReadFrom(buf)
 - 零 deadline 探针输出：`deadline calls: read=0 write=0`，并正常读取 ACK 和单位系数。
 - DAQ-P-1604 两套适配器均有 watchdog 关闭阻塞连接的自动化测试。
 - DAQ-P-1604 两套停止路径均验证 reader join 超时后关闭并废弃连接，且不会在旧连接上发送 `c 02` 或启动第二个 reader。
-- 历史测试已证明外部 Close 可以解除部分 UDP 阻塞，但不能据此认定三套生产 scanner 全部合规。2026-07-29 复核确认：T1603 Windows 实现已有 raw `Closesocket` watchdog，但生产 timer 触发证据仍需加强；P1604 与 Wind-DAQ Windows `Recvfrom`、以及三套 scanner Send 阶段仍列入整改。
+- 历史测试已证明外部 Close 可以解除部分 UDP 阻塞，但不能据此认定三套生产 scanner 全部合规。2026-07-29 复核确认：T1603 Windows 实现已有 raw `Closesocket` watchdog，但生产 timer 触发证据仍需加强；P1604 与 WindLabX4 Windows `Recvfrom`、以及三套 scanner Send 阶段仍列入整改。
 
 ## 2026-08-01 补充：最终兜底失效（Close 卡死）与 LSP 环境加固
 
 ### Context
 
-2026-07-31 至 2026-08-01 在 wind-daq 本机复现出比 deadline 失效更深一层的故障模式：某些 Windows 电脑上的网络过滤器 / LSP（如 Astrill ASProxy64.dll、深信服驱动）不仅使 `SetReadDeadline` 失效，还会让 **`conn.Close()` / `closesocket` 在存在挂起 Read 时永久阻塞**。实测：`SetReadDeadline(500ms)` 下 `Read` 阻塞超过 60s；goroutine dump 显示 `apiServer.Shutdown → FD.Close → cancelIO 等待`。由此 `WatchdogClose` 原本"watchdog 到期调用 Close 兜底"的最终手段本身成为卡死点，并沿调用链传染：驱动方法 → per-id connMu → DeviceManager 全局锁 → Wails binding → 前端 promise 永不 resolve（用户感知"本机卡死"）。
+2026-07-31 至 2026-08-01 在 windlabx4 本机复现出比 deadline 失效更深一层的故障模式：某些 Windows 电脑上的网络过滤器 / LSP（如 Astrill ASProxy64.dll、深信服驱动）不仅使 `SetReadDeadline` 失效，还会让 **`conn.Close()` / `closesocket` 在存在挂起 Read 时永久阻塞**。实测：`SetReadDeadline(500ms)` 下 `Read` 阻塞超过 60s；goroutine dump 显示 `apiServer.Shutdown → FD.Close → cancelIO 等待`。由此 `WatchdogClose` 原本"watchdog 到期调用 Close 兜底"的最终手段本身成为卡死点，并沿调用链传染：驱动方法 → per-id connMu → DeviceManager 全局锁 → Wails binding → 前端 promise 永不 resolve（用户感知"本机卡死"）。
 
 ### 新增决策
 
@@ -105,17 +105,17 @@ n, addr, err := conn.ReadFrom(buf)
 ### 验证
 
 - `shared/device-sdk/go`：build + protocol/daq/motion 测试通过。
-- `projects/wind-daq` api-go：build + hardware/scan/usecase 测试通过（usecase 96s）；desktop backend build 通过。
-- `daq-t1603`（GOWORK=off）与 `daq-p1604` build 通过。
-- 完整整改计划与实施记录见 `projects/wind-daq/docs/specs/plan-device-network-hang-2026-08-01.md`。
+- `projects/windlabx4` api-go：build + hardware/scan/usecase 测试通过（usecase 96s）；desktop backend build 通过。
+- `wista`（GOWORK=off）与 `wispa` build 通过。
+- 完整整改计划与实施记录见 `projects/windlabx4/docs/specs/plan-device-network-hang-2026-08-01.md`。
 
 ### References
 
-- `projects/wind-daq/docs/specs/plan-device-network-hang-2026-08-01.md`
+- `projects/windlabx4/docs/specs/plan-device-network-hang-2026-08-01.md`
 - `shared/device-sdk/go/protocol/conn_helpers.go`（含 2026-07-31 Close 卡死实测注释）
-- `projects/wind-daq/apps/desktop-wails/backend/app.go`
-- `projects/wind-daq/services/api-go/internal/usecase/device_manager.go`
+- `projects/windlabx4/apps/desktop-wails/backend/app.go`
+- `projects/windlabx4/services/api-go/internal/usecase/device_manager.go`
 - `docs/audits/2026-07-28-go-network-deadline-audit.md`
 - `docs/audits/2026-07-29-adr009-remaining-remediation.md`
-- `projects/daq-p1604/apps/desktop-wails/adapters/hardware/p1604_adapter.go`
-- `projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go`
+- `projects/wispa/apps/desktop-wails/adapters/hardware/p1604_adapter.go`
+- `projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604.go`

@@ -3,13 +3,13 @@
 // 设计原则：
 //  1. 独立于主 API 端口，避免误暴露到生产；
 //  2. 默认只监听 127.0.0.1，外部不可访问；
-//  3. 由环境变量 WINDDAQ_PPROF_ADDR 控制是否启用与监听地址（如 "localhost:6060"）；
+//  3. 由环境变量 WINDLABX4_PPROF_ADDR 控制是否启用与监听地址（如 "localhost:6060"）；
 //  4. 仅当显式启用时 import 路径副作用注册 pprof handler，避免无谓资源占用。
 //
 // 用法（开发模式）：
 //
 //	# PowerShell
-//	$env:WINDDAQ_PPROF_ADDR = "localhost:6060"
+//	$env:WINDLABX4_PPROF_ADDR = "localhost:6060"
 //	go run ./services/api-go/cmd/server
 //
 // 然后浏览器或 go tool pprof：
@@ -30,7 +30,7 @@ import (
 )
 
 // EnvAddr 环境变量名：未设置则不启动 debug server。
-const EnvAddr = "WINDDAQ_PPROF_ADDR"
+const EnvAddr = "WINDLABX4_PPROF_ADDR"
 
 // Start 按环境变量启动 debug server。返回 *http.Server 便于上层 Shutdown。
 // 若未配置或地址不合法则返回 (nil, nil)，调用方应判空。
@@ -43,7 +43,7 @@ func Start(ctx context.Context) (*http.Server, error) {
 		return nil, nil
 	}
 	if !strings.HasPrefix(addr, "localhost:") && !strings.HasPrefix(addr, "127.0.0.1:") {
-		slog.Warn("debugserver: refusing non-localhost address; set WINDDAQ_PPROF_ADDR to localhost:<port>",
+		slog.Warn("debugserver: refusing non-localhost address; set WINDLABX4_PPROF_ADDR to localhost:<port>",
 			"addr", addr)
 		return nil, nil
 	}

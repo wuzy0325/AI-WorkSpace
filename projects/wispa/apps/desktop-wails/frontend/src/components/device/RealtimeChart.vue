@@ -10,6 +10,7 @@ import { useDisplayStore } from '@stores/displayStore'
 import { useI18nStore } from '@stores/i18nStore'
 import { useTheme } from '@composables/useTheme'
 import { channelDisplayName } from '../../utils/channelDisplayName'
+import { channelColor } from '../../utils/channelColors'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
 
@@ -21,16 +22,6 @@ const deviceStore = useDeviceStore()
 const displayStore = useDisplayStore()
 const i18n = useI18nStore()
 const { theme } = useTheme()
-
-// 18 通道波形配色：剔除容易与「警告/异常」混淆的橙黄（amber/orange/yellow），
-// 改用蓝青绿紫粉等冷色/中性色，降低视觉噪音并避免误读。
-const COLORS = [
-  '#3b82f6', '#10b981', '#8b5cf6', '#06b6d4',
-  '#f43f5e', '#14b8a6', '#6366f1', '#22c55e',
-  '#a855f7', '#0ea5e9', '#ec4899', '#84cc16',
-  '#64748b', '#d946ef', '#ef4444', '#4f46e5',
-  '#0891b2', '#be185d',
-]
 
 interface ThemeColors {
   text: string
@@ -104,8 +95,8 @@ const option = computed(() => {
 
   const c = palette.value
 
-  const series = selectedChannels.map((ch, i) => {
-    const color = ch.color || COLORS[i % COLORS.length]
+  const series = selectedChannels.map((ch) => {
+    const color = channelColor(ch.color, ch.index)
     const name = channelDisplayName(ch.index, ch.name, i18n.t)
     return {
       name,

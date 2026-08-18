@@ -1,4 +1,4 @@
-# Spec: Wind-DAQ P0 Architecture Violation Refactoring
+# Spec: WindLabX4 P0 Architecture Violation Refactoring
 
 ## Objective
 
@@ -23,13 +23,13 @@ Remove hard-constraint violations in 4 frontend files that leak business logic, 
 
 ```powershell
 # Frontend verification
-cd projects\wind-daq\apps\desktop-wails\frontend
+cd projects\windlabx4\apps\desktop-wails\frontend
 npm run typecheck
 npm run build
 npm run test
 
 # Backend verification (if backend changes are needed)
-cd projects\wind-daq\services\api-go
+cd projects\windlabx4\services\api-go
 go build -buildvcs=false ./...
 go vet ./...
 go test ./internal/... ./api/...

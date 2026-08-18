@@ -64,8 +64,8 @@ The five-hole interpolator is now an independent project. WindLabX4 and the stan
 
 | Variable | Default | Description |
 |---|---|---|
-| `WIND_DAQ_ADDR` | `:8080` | Backend HTTP listen address |
-| `WIND_DAQ_PROFILE_PATH` | `config/device-profiles.json` | Profile persistence file |
+| `WINDLABX4_ADDR` | `:8080` | Backend HTTP listen address |
+| `WINDLABX4_PROFILE_PATH` | `config/device-profiles.json` | Profile persistence file |
 
 ### Verification
 

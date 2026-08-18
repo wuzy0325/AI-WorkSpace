@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { Sun, Moon, Activity, Crosshair, Plus, CircleDot, Play, Square, Circle, Gauge } from '@lucide/vue'
+import { Sun, Moon, Activity, CircleDot, Play, Square, Circle, Gauge } from '@lucide/vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useDisplayStore } from '@stores/displayStore'
 import { useRecordingStore } from '@stores/recordingStore'
@@ -10,8 +10,6 @@ import { pickDirectory } from '@bridge/recordingBridge'
 import LanguageToggle from '@shared-frontend/components/LanguageToggle.vue'
 
 const emit = defineEmits<{
-  (e: 'add-device'): void
-  (e: 'zero-calibration'): void
   (e: 'toggle-acquisition'): void
 }>()
 
@@ -44,16 +42,6 @@ const canToggleAcquisition = computed(() => isAcquiring.value || hasConnectedDev
 /** 采集按钮是否应该被禁用（操作进行中或无可操作设备） */
 const isAcquisitionDisabled = computed(() => (
   !canToggleAcquisition.value || props.isToggling || props.isZeroing
-))
-
-const selectedStatus = computed(() => (
-  deviceStore.selectedId ? deviceStore.statusFor(deviceStore.selectedId) : 'Disconnected'
-))
-const canZeroCalibration = computed(() => (
-  selectedStatus.value === 'Connected' || selectedStatus.value === 'Acquiring'
-))
-const isZeroCalibrationDisabled = computed(() => (
-  !canZeroCalibration.value || props.isZeroing || props.isToggling
 ))
 
 function themeToggleLabel(): string {
@@ -179,26 +167,6 @@ onBeforeUnmount(() => {
             <span>{{ recordingStore.isRecording ? i18n.t('topbar.stopSave') : i18n.t('topbar.startSave') }}</span>
           </button>
         </div>
-
-        <button
-          class="topbar__icon-btn"
-          :title="i18n.t('topbar.addDevice')"
-          @click="emit('add-device')"
-        >
-          <Plus class="topbar__icon" />
-        </button>
-
-        <button
-          class="topbar__icon-btn"
-          :disabled="isZeroCalibrationDisabled"
-          :title="props.isZeroing
-            ? i18n.t('topbar.zeroing')
-            : (canZeroCalibration ? i18n.t('topbar.zeroCalibration') : i18n.t('topbar.connectBeforeZero'))"
-          data-testid="btn-zero-calibration"
-          @click="emit('zero-calibration')"
-        >
-          <Crosshair class="topbar__icon" />
-        </button>
 
         <button
           class="topbar__icon-btn"

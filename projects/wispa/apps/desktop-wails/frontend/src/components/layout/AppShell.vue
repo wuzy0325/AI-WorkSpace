@@ -97,6 +97,10 @@ async function zeroCalibration() {
   }
 }
 
+provide('shell:openConfig', requestConfig)
+provide('shell:zeroCalibration', zeroCalibration)
+provide('shell:zeroing', isZeroing)
+
 function openAddDevice(prefill?: { address: string; port: number }) {
   newName.value = ''
   newAddress.value = prefill?.address ?? '192.168.3.101'
@@ -242,12 +246,10 @@ async function confirmAddScanned() {
       :version="appVersion"
       :is-toggling="isToggling"
       :is-zeroing="isZeroing"
-      @add-device="openAddDevice"
-      @zero-calibration="zeroCalibration"
       @toggle-acquisition="toggleAcquisition"
     />
     <div class="shell__body">
-      <DeviceSidebar @scan="openScanDialog" />
+      <DeviceSidebar @scan="openScanDialog" @add-device="openAddDevice" />
       <main class="shell__main">
         <slot />
       </main>

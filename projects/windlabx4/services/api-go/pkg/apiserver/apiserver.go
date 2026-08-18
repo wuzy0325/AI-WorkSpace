@@ -184,7 +184,7 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 		srv.ListenAndServe()
 	}()
 
-	// 按需启动 pprof debug server（受 WINDDAQ_PPROF_ADDR 环境变量控制）。
+	// 按需启动 pprof debug server（受 WINDLABX4_PPROF_ADDR 环境变量控制）。
 	// 共享主 ctx，主服务关闭时 pprof 端点同步关闭。
 	if _, err := debugserver.Start(ctx); err != nil {
 		// 仅警告，不阻塞主服务启动

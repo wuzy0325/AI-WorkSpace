@@ -7,7 +7,7 @@
 - 适用协议：DAQ-P-1604 TCP，连接已成功执行 `w1601`
 - 涉及实现：
   - 独立应用：`projects/daq-p1604/apps/desktop-wails/adapters/hardware/p1604_adapter.go`
-  - Wind-DAQ：`projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go`
+  - WindLabX4：`projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604.go`
   - 共享协议：`shared/device-sdk/go/protocol/daq_p1604_frame.go`、`shared/device-sdk/go/protocol/conn_helpers.go`
 
 本文只定义 Stop 事务的整改方案，不表示代码已经完成整改。实施后必须更新本文状态，并附上验证结果。
@@ -114,9 +114,9 @@ socket:          [payload 后半段][后续帧][ACK]
 
 固定帧数上限会把合法 Stop 错判成协议混乱并关闭健康连接。
 
-### 4.3 Wind-DAQ：生命周期操作缺少事务级互斥
+### 4.3 WindLabX4：生命周期操作缺少事务级互斥
 
-Wind-DAQ 的 Start 和 Stop 只在局部状态读写时持有 `d.mu`，完整命令事务未串行化。Stop 在 join readLoop 后发送 `c 02 1` 的窗口内，并发 Start 可以继续发送 `c 00`、`c 05`、`c 01`，造成命令交叉或 ACK 串线。
+WindLabX4 的 Start 和 Stop 只在局部状态读写时持有 `d.mu`，完整命令事务未串行化。Stop 在 join readLoop 后发送 `c 02 1` 的窗口内，并发 Start 可以继续发送 `c 00`、`c 05`、`c 01`，造成命令交叉或 ACK 串线。
 
 必须以 operation owner 串行化至少以下操作：
 
@@ -136,9 +136,9 @@ operation gate 必须支持有界等待，不能仅使用无法取消的裸 `syn
 - 已重连后的新连接不得被旧等待者 timer 关闭；
 - 连接失效和状态通知必须幂等，同一旧连接只完成一次毒化。
 
-### 4.4 Wind-DAQ：设备拒绝 Stop 后仍可能保留连接
+### 4.4 WindLabX4：设备拒绝 Stop 后仍可能保留连接
 
-Wind-DAQ 在发送 `c 02 1` 前已将本地状态改为非采集。如果设备返回 `Nxx`，当前路径只返回错误，可能保留正在推流的连接和 Connected 状态，造成硬件与本地状态分裂。
+WindLabX4 在发送 `c 02 1` 前已将本地状态改为非采集。如果设备返回 `Nxx`，当前路径只返回错误，可能保留正在推流的连接和 Connected 状态，造成硬件与本地状态分裂。
 
 Stop 未收到成功 ACK 时必须废弃连接。设备拒绝不是可继续复用的 Stop 结果。
 
@@ -249,25 +249,25 @@ func P1604ReadCommandACK(
 
 1. 删除 Stop 路径发送 `c 02 1` 前的 `driver.frameReader.Reset()`。
 2. 删除 Disconnect 停流路径发送 `c 02 1` 前的 Reset。
-3. 将 `p1604Driver.sendCommandACK` 迁移到共享 ACK helper，避免独立实现和 Wind-DAQ 继续漂移。
+3. 将 `p1604Driver.sendCommandACK` 迁移到共享 ACK helper，避免独立实现和 WindLabX4 继续漂移。
 4. Stop ACK 前的尾帧使用当前 profile 的时间戳和大气数据配置调用 `ParseStreamFrameEx` 校验。
 5. 任意 Stop 错误继续复用现有 `handleConnectionLost`，并统一返回 `reconnect required`。
 6. 只有 ACK 成功后才设置 Connected 并启动 idleReadLoop。
 7. 将已有裸 `operationMu` 升级为支持有界获取的 operation gate，覆盖完整 Stop 事务。不能依赖 Close 连接间接保证 `sync.Mutex.Lock()` 返回，因为前序 owner 可能阻塞在非 I/O 路径。
 8. `Disconnect` 不得在持有 operation owner 时调用会再次获取 owner 的公开 `StopAcquisition`。应提取 `stopAcquisitionOwned` 等私有 helper，由已持有 owner 的 Stop 和 Disconnect 复用，或让 Disconnect 自行完成 best-effort Stop。
 9. Disconnect 中停流失败最终仍保持 Disconnected；交互式 Stop 失败才进入 Error 并要求重连。
-10. 与 Wind-DAQ 使用相同的连接身份/代次规则和单一绝对 deadline，确保 gate 等待本身也能在预算内取消。
+10. 与 WindLabX4 使用相同的连接身份/代次规则和单一绝对 deadline，确保 gate 等待本身也能在预算内取消。
 
-### 6.3 Wind-DAQ
+### 6.3 WindLabX4
 
-目标文件：`projects/wind-daq/services/api-go/internal/adapters/hardware/daq_p1604.go`
+目标文件：`projects/windlabx4/services/api-go/internal/adapters/hardware/daq_p1604.go`
 
 改动：
 
 1. 为 `DAQP1604` 增加支持有界获取的 operation gate，串行化完整生命周期和命令事务；禁止直接使用不可取消的裸 mutex 等待作为唯一机制。
 2. Stop 入口创建一个绝对 deadline 和一个绑定连接代次的 owner timer，覆盖 gate 等待、readLoop join、Write、尾帧和 ACK Read；不得在各阶段重置完整预算。
 3. Stop 保持 Stopping，直到 readLoop join 和 `c 02 1` ACK 成功。
-4. Stop ACK 前不调用 `frameReader.Reset()`；当前 Wind-DAQ Stop 已未调用 Reset，应保持此行为并补测试锁定。
+4. Stop ACK 前不调用 `frameReader.Reset()`；当前 WindLabX4 Stop 已未调用 Reset，应保持此行为并补测试锁定。
 5. `c 02 1` 返回任何错误，包括 `Nxx`，均调用 `invalidateConnection(expectedConn, ...)` 并返回 `reconnect required`。
 6. ACK 成功后清理 `readLoopDone`、stop channel 等生命周期字段，再转 Connected。
 7. Start 必须等待前一 Stop operation 完成，不能仅等待 readLoopDone。
@@ -314,7 +314,7 @@ func P1604ReadCommandACK(
 8. Stop Write 在忽略 write deadline 的连接上阻塞时，绝对 deadline owner Close 连接并在预算内返回。
 9. 至少 3 个生命周期操作排队时，旧等待者超时不得关闭重连后的新连接，也不得由迟到 timer 关闭已完成重验的连接。
 
-### 7.3 Wind-DAQ
+### 7.3 WindLabX4
 
 必须新增：
 
@@ -346,8 +346,8 @@ go test -race ./adapters/hardware -count=1
 go test ./... -count=1
 Pop-Location
 
-# Wind-DAQ
-Push-Location (Join-Path $repoRoot "projects/wind-daq/services/api-go")
+# WindLabX4
+Push-Location (Join-Path $repoRoot "projects/windlabx4/services/api-go")
 go test -race ./internal/adapters/hardware -count=1
 go test ./internal/... ./api/... -count=1
 go vet ./...
@@ -379,7 +379,7 @@ Pop-Location
 1. 先补共享协议层半帧和大量尾帧失败测试，证明当前 Reset 与 20 帧上限问题。
 2. 改造共享 ACK helper 为总时间 + 总字节预算，并加入尾帧严格校验。
 3. 迁移独立 DAQ-P1604，删除 Stop/Disconnect 前 Reset。
-4. 为 Wind-DAQ 增加 operation owner，统一 Stop 失败毒化。
+4. 为 WindLabX4 增加 operation owner，统一 Stop 失败毒化。
 5. 执行全量 race/vet 和实机矩阵。
 6. 使用 GitNexus `detect_changes` 检查受影响流程，确认只触及预期的 P1604 生命周期和共享协议。
 7. 验证完成后将本文状态改为“已完成”，附测试输出摘要和实机记录路径。

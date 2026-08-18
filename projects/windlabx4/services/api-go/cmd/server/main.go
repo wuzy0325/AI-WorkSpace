@@ -73,7 +73,7 @@ func initAuxServices() {
 	// 路径：环境变量 WTNDAQ16H_DLL_PATH 或可执行文件同目录。
 	ffi.InitWTNDAQ16HFromEnv()
 
-	// 按需启动 pprof debug server（受 WINDDAQ_PPROF_ADDR 环境变量控制）
+	// 按需启动 pprof debug server（受 WINDLABX4_PPROF_ADDR 环境变量控制）
 	debugCtx, debugCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer debugCancel()
 	if _, err := debugserver.Start(debugCtx); err != nil {

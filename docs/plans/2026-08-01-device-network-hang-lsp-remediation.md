@@ -8,7 +8,7 @@
 
 ## Overview
 
-本计划整改 wind-daq 全部设备网络操作链路（T1603/P1603/P1064/P1604/DSA3217 驱动、B140/WTNMC4A 运动控制、winsock 设备扫描、本地 API server、桌面壳层 binding），目标是：**在任何单项网络 I/O 被 LSP 卡死时，应用不整体假死、单设备不永久楔死、goroutine/线程不无界泄漏**。
+本计划整改 windlabx4 全部设备网络操作链路（T1603/P1603/P1064/P1604/DSA3217 驱动、B140/WTNMC4A 运动控制、winsock 设备扫描、本地 API server、桌面壳层 binding），目标是：**在任何单项网络 I/O 被 LSP 卡死时，应用不整体假死、单设备不永久楔死、goroutine/线程不无界泄漏**。
 
 现状核心矛盾：既有 ADR-009 watchdog 体系（DialTCP 软超时、WatchdogClose、noDataTimer、invalidate 毒化）设计健全，但**所有恢复路径的最终兜底都是 `conn.Close()`，而本机 LSP 环境下 `Close()` 自身会永久阻塞**。于是 watchdog 触发本身变成卡死点，并沿调用链传染：驱动方法 → per-id connMu → DeviceManager 全局锁 → Wails binding → 前端 promise 永不 resolve（用户感知"本机卡死"）。
 
@@ -135,7 +135,7 @@ return func() bool {
 
 ### 7. 端口占用显性化（Phase 4）
 
-`app.go:247-283`：`ListenAndServe` 绑定失败/运行中异常退出时，不静默——弹出提示（"本地服务端口 8900 被占用，请关闭其他 Wind-DAQ 实例"）+ 退出或回退端口（如 8901，需前端同步配置，默认回退为退出）。
+`app.go:247-283`：`ListenAndServe` 绑定失败/运行中异常退出时，不静默——弹出提示（"本地服务端口 8900 被占用，请关闭其他 WindLabX4 实例"）+ 退出或回退端口（如 8901，需前端同步配置，默认回退为退出）。
 
 ## 验证计划
 
@@ -157,7 +157,7 @@ return func() bool {
 3. 扫描（无设备网段）：在超时窗口内可再次点击扫描，不永久"扫描中"。
 4. 运动：连接 B140/WTNMC4A 后断开设备网线 → 急停按钮仍可用；状态轮询不累积 goroutine（观察进程线程数平稳）。
 5. 退出（回归 2026-08-01 修复）：正常退出 <2s，不出现 30s watchdog。
-6. 多实例：同时启动第二个 wind-daq，第二个应提示端口冲突而非静默无 UI。
+6. 多实例：同时启动第二个 windlabx4，第二个应提示端口冲突而非静默无 UI。
 
 ## 分阶段交付清单
 
@@ -184,7 +184,7 @@ return func() bool {
 | 计划项 | 实际改动 | 验证 |
 |---|---|---|
 | P1 全局锁移出 I/O | `device_manager.go`：SetUnit / ApplyDaqT1603Config / GetDsa3217ScanConfig / UpsertProfile 四处改为锁内快照引用→锁外调用→重取锁更新 | `go build` + usecase 测试通过 |
-| P2 WatchdogClose | **根因实为 vendor 滞后**：shared 源码已含正确实现（timer 回调 `go AbortConnection + close(timedOut)`），但 wind-daq 两个 vendor 副本是旧版（同步 `_ = conn.Close()` + `<-timedOut` 永久阻塞）。已把 shared 最新 `conn_helpers.go` / `daq_t1603_frame.go` / `daq_t1603.go` 同步到 `services/api-go/vendor` 与 `apps/desktop-wails/vendor` | build + hardware 测试通过 |
+| P2 WatchdogClose | **根因实为 vendor 滞后**：shared 源码已含正确实现（timer 回调 `go AbortConnection + close(timedOut)`），但 windlabx4 两个 vendor 副本是旧版（同步 `_ = conn.Close()` + `<-timedOut` 永久阻塞）。已把 shared 最新 `conn_helpers.go` / `daq_t1603_frame.go` / `daq_t1603.go` 同步到 `services/api-go/vendor` 与 `apps/desktop-wails/vendor` | build + hardware 测试通过 |
 | P2 驱动 Close detach | `daq_p1064pre.go` 13 处、`daq_p1604.go` 6 处、`wtn_pxi.go` 3 处、`dsa3217.go` 3 处：所有可能在挂起 I/O 下阻塞的 `conn.Close()` 改为 `go sharedproto.AbortConnection(conn)`（含 Disconnect join 超时、invalidate、noDataTimer、握手 watchdog、命令失败路径） | build + hardware 测试通过 |
 | P3 WTNMC4A FFI | `wtnmc4a_motion.go` 新增 `ffiGate`（单 worker + 有界投递/等待 + 超时放弃），全部 15+ 个 DLL 调用点走 gate；新增 `markControllerUnreachableLocked`；Disconnect 关闭 gate。同步两个 vendor | build + WTNMC4A 测试通过 |
 | P3 扫描链路 | `discovery_socket_windows.go`：Closesocket 移出 handleMu 锁（后台执行，锁内仅取走 handle）；`discovery_socket.go`：watchdog 回调 `go conn.Close()`；`device_manager.go`：`<-pending.done` 加 8s deadline + 超时重置 scanInFlight | build + scan/usecase 测试通过 |

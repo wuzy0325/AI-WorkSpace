@@ -94,7 +94,7 @@ AI agent 在打包前必须执行以下流程：
     "BOM: $($b[0])-$($b[1])"
     ```
     - **UTF-8/ASCII 编码**（daq-t1603 / motion-controller / five-hole-interpolator / three-hole-interpolator 实测如此）：Edit 工具可直接改，无编码风险。
-    - **UTF-16 LE with BOM 编码**（daq-p1604 / wind-daq 实测如此）：Edit 类工具会破坏编码导致 makensis 报 "Bad text encoding"，必须用 PowerShell 保留编码替换：
+    - **UTF-16 LE with BOM 编码**（wispa / windlabx4 实测如此）：Edit 类工具会破坏编码导致 makensis 报 "Bad text encoding"，必须用 PowerShell 保留编码替换：
       ```powershell
       $path = 'apps/desktop-wails/build/windows/installer/project.nsi'
       $content = Get-Content -Path $path -Encoding Unicode -Raw
@@ -323,7 +323,7 @@ daq-t1603-0.1.2-amd64-installer.exe
 
 ### 归档命令
 
-**有 Taskfile 的项目**（daq-p1604 / daq-t1603 / wind-daq / motion-controller / five-hole-interpolator）：
+**有 Taskfile 的项目**（wispa / daq-t1603 / windlabx4 / motion-controller / five-hole-interpolator）：
 
 ```powershell
 cd projects/<project>/apps/desktop-wails

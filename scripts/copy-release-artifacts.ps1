@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     # Project name(s): WindLabX4 / wispa / wista / motion-controller / five-hole-interpolator / three-hole-interpolator. Required.
     [Parameter(Mandatory = $true)]

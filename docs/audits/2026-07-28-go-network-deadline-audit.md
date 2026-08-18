@@ -19,7 +19,7 @@
 本次立即修复：
 
 - DAQ-T1603 UDP scanner 增加独立 Close watchdog。
-- Wind-DAQ `NetworkScanner.scanWithSocket` 增加独立 Close watchdog。
+- WindLabX4 `NetworkScanner.scanWithSocket` 增加独立 Close watchdog。
 - 两处均增加“忽略 deadline、只响应 Close”的回归测试。
 - 两套 DAQ-P1604 `StopAcquisition` 在 reader join 超时后立即关闭并废弃连接，不再发送 `c 02` 或启动第二个 reader；回归测试断言服务端未收到任何停止命令字节。
 
@@ -33,9 +33,9 @@
 | Shared DAQ-T1603 | `drainConnection`, `readLoop`, `stopAcquisitionLocked` | stop channel 不解除 Read；Disconnect 在 Close 前执行 stop/drain | join 超时立即 Close，禁止在失效连接上继续 drain/stop |
 | B140 motion | `sendCommand` | I/O goroutine 阻塞后取消分支仍等待 `done`；Close 需要同一 `connMu` | watchdog 绕过 `connMu` 关闭捕获连接，取消后禁止无界等待 |
 | DAQ-P1604 desktop | `zeroCalibrationDirect`, `idleReadLoop` | 校准/idle reader 只靠 deadline；idle join 超时后仍可能继续使用同一连接 | join/校准超时 Close 并标记断线，后续必须重连 |
-| Wind-DAQ DSA3217 | `readLoop`, `sendCommand`, `Disconnect` | `ioMu` 覆盖阻塞读写，Disconnect 先发 STOP 后 Close | Close 必须可绕过 `ioMu`；无法有序停止时直接废弃连接 |
-| Wind-DAQ P1064Pre | `sendCommand`, `readLoop`, start write | deadline 是唯一边界，且命令 reader 可能与采集 reader 竞争 | 单一 reader 所有权；命令 watchdog；停止后 join 或 Close |
-| Wind-DAQ WTN-PXI | `readLoop`, `StopAcquisition` | stop 只关闭 channel，不 join 或 Close | 停止时 Close/reconnect，或统一 connection-owner 取消模型 |
+| WindLabX4 DSA3217 | `readLoop`, `sendCommand`, `Disconnect` | `ioMu` 覆盖阻塞读写，Disconnect 先发 STOP 后 Close | Close 必须可绕过 `ioMu`；无法有序停止时直接废弃连接 |
+| WindLabX4 P1064Pre | `sendCommand`, `readLoop`, start write | deadline 是唯一边界，且命令 reader 可能与采集 reader 竞争 | 单一 reader 所有权；命令 watchdog；停止后 join 或 Close |
+| WindLabX4 WTN-PXI | `readLoop`, `StopAcquisition` | stop 只关闭 channel，不 join 或 Close | 停止时 Close/reconnect，或统一 connection-owner 取消模型 |
 
 ### P1: 通用 helper 依赖调用方，但契约不够强
 
@@ -58,7 +58,7 @@
 
 ## Simulator Review
 
-Wind-DAQ TCP simulator 的 command/read loops 依赖 deadline，但存在显式 `Close`。当前 `Start(ctx)` 未把 `ctx.Done()` 接到 Close，且连接 goroutine 未统一 join，判为待审而非生产 P0。建议将 context cancellation 与 simulator Close 绑定，并纳入 wait group。
+WindLabX4 TCP simulator 的 command/read loops 依赖 deadline，但存在显式 `Close`。当前 `Start(ctx)` 未把 `ctx.Done()` 接到 Close，且连接 goroutine 未统一 join，判为待审而非生产 P0。建议将 context cancellation 与 simulator Close 绑定，并纳入 wait group。
 
 ## Required Test Pattern
 
@@ -84,7 +84,7 @@ func (c *deadlineIgnoringConn) Close() error {
 
 ## Remediation Order
 
-1. 已完成：DAQ-P1604 Connect、两套 DAQ-P1604 Stop/read-loop join、P1604 scanner、T1603 scanner、Wind-DAQ scanner。
+1. 已完成：DAQ-P1604 Connect、两套 DAQ-P1604 Stop/read-loop join、P1604 scanner、T1603 scanner、WindLabX4 scanner。
 2. 下一批：各设备 Stop/Disconnect 和 reader join，因为它们决定应用能否退出或重连。
 3. 再下一批：Connect/command-response helper，统一超时后连接失效语义。
 4. 最后：诊断工具和 simulator 生命周期。

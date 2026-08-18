@@ -12,7 +12,7 @@
 |---|---|---|---|---|
 | Profile CRUD | Done | ✅ core/device + usecase/device_manager | ✅ DeviceManagementDrawer | REST API + HTTP client |
 | Device scan (simulated) | Done | ✅ ports.DeviceScanner + simulated scanner | ✅ Drawer scan button | Real network scan pending |
-| Device scan (network) | Partial | ✅ adapters/scan/network_scanner.go | ✅ Drawer scan button | UDP broadcast + protocol parsing, enable via WIND_DAQ_NETWORK_SCAN=true |
+| Device scan (network) | Partial | ✅ adapters/scan/network_scanner.go | ✅ Drawer scan button | UDP broadcast + protocol parsing, enable via WINDLABX4_NETWORK_SCAN=true |
 | Connect / Disconnect | Done | ✅ usecase + API | ✅ MainDashboardView / Drawer | HTTP POST |
 | DAQ-T-1603 config | Partial | ✅ API + usecase | ✅ DaqT1603Config component | Hardware config fields only |
 | Unit configuration | Partial | ✅ API PUT unit | ✅ DeviceManagementDrawer | Default unit per device type, no dedicated UI dropdown |

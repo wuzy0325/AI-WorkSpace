@@ -1,0 +1,22 @@
+# Python 字节码缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 构建产物
+build/
+dist/
+*.egg-info/
+
+# PyInstaller 临时文件
+*.manifest
+*.spec
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/

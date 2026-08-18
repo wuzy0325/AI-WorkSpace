@@ -4,11 +4,12 @@ import { useDeviceStore } from '@stores/deviceStore'
 import { useI18nStore } from '@stores/i18nStore'
 import {
   Activity, Trash2, Network, Loader2,
-  CircleDot, Zap, AlertTriangle, ChevronRight, Search
+  CircleDot, Zap, AlertTriangle, ChevronRight, Search, Plus, X
 } from '@lucide/vue'
 
 const emit = defineEmits<{
   (e: 'scan'): void
+  (e: 'add-device'): void
 }>()
 
 const deviceStore = useDeviceStore()
@@ -16,11 +17,24 @@ const i18n = useI18nStore()
 const pendingDeleteId = ref<string | null>(null)
 const pendingDeleteName = ref('')
 
+/** 设备列表搜索关键词：按名称或地址过滤 */
+const searchQuery = ref('')
+
 const sorted = computed(() =>
   [...deviceStore.profiles].sort(
     (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)
   )
 )
+
+/** 过滤后的设备列表，名称或地址匹配搜索关键词时不区分大小写 */
+const filteredSorted = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return sorted.value
+  return sorted.value.filter((p) =>
+    (p.name || '').toLowerCase().includes(q) ||
+    `${p.address}:${p.port}`.toLowerCase().includes(q)
+  )
+})
 
 function handleDelete(id: string, name: string, event: Event): void {
   event.stopPropagation()
@@ -74,29 +88,70 @@ function statusLabel(status: string, acquiring: boolean): string {
     <div class="sidebar__header">
       <h2 class="sidebar__title">{{ i18n.t('sidebar.deviceList') }}</h2>
       <div class="sidebar__header-actions">
-        <span class="sidebar__count" data-testid="sidebar-count">{{ sorted.length }}</span>
+        <span class="sidebar__count" data-testid="sidebar-count">{{ filteredSorted.length }}</span>
         <button
-          class="sidebar__scan-btn"
+          class="sidebar__icon-btn"
+          :title="i18n.t('sidebar.addDevice')"
+          @click="emit('add-device')"
+        >
+          <Plus class="sidebar__icon-btn-svg" />
+        </button>
+        <button
+          class="sidebar__icon-btn"
           :title="i18n.t('sidebar.scanDevices')"
           :disabled="deviceStore.isScanning"
           @click="emit('scan')"
         >
-          <Search class="sidebar__scan-icon" />
+          <Search class="sidebar__icon-btn-svg" />
         </button>
       </div>
     </div>
 
-    <div v-if="sorted.length === 0" class="sidebar__empty">
+    <!-- 设备列表搜索过滤：设备数较多时按名称/地址快速定位 -->
+    <div class="sidebar__search">
+      <div class="sidebar__search-inner">
+        <Search class="sidebar__search-icon" />
+        <input
+          v-model="searchQuery"
+          type="text"
+          class="sidebar__search-input"
+          :placeholder="i18n.t('sidebar.searchDevices')"
+          data-testid="sidebar-search-input"
+        />
+        <button
+          v-if="searchQuery"
+          class="sidebar__search-clear"
+          :title="i18n.t('common.clear')"
+          @click="searchQuery = ''"
+        >
+          <X class="sidebar__search-clear-icon" />
+        </button>
+      </div>
+    </div>
+
+    <div v-if="filteredSorted.length === 0" class="sidebar__empty">
       <div class="sidebar__empty-illu">
         <Activity class="sidebar__empty-icon" />
       </div>
-      <p class="sidebar__empty-text">{{ i18n.t('sidebar.noDevices') }}</p>
-      <p class="sidebar__empty-hint">{{ i18n.t('sidebar.addHint') }}</p>
+      <!-- 区分"无设备"和"搜索无匹配"两种状态，避免误导用户重复添加 -->
+      <p class="sidebar__empty-text">
+        {{ deviceStore.profiles.length === 0
+            ? i18n.t('sidebar.noDevices')
+            : i18n.t('sidebar.noSearchMatch') }}
+      </p>
+      <p v-if="deviceStore.profiles.length === 0" class="sidebar__empty-hint">{{ i18n.t('sidebar.addHint') }}</p>
+      <button
+        v-else
+        class="sidebar__empty-action"
+        @click="searchQuery = ''"
+      >
+        {{ i18n.t('sidebar.clearSearch') }}
+      </button>
     </div>
 
     <ul v-else class="sidebar__list" data-testid="sidebar-list">
       <li
-        v-for="(p, idx) in sorted"
+        v-for="(p, idx) in filteredSorted"
         :key="p.id"
         class="sidebar__item"
         data-testid="sidebar-item"
@@ -337,7 +392,8 @@ function statusLabel(status: string, acquiring: boolean): string {
   gap: 0.35rem;
 }
 
-.sidebar__scan-btn {
+/* 头部小图标按钮：添加/扫描，与顶栏 icon-btn 风格一致但尺寸更小 */
+.sidebar__icon-btn {
   width: 26px;
   height: 26px;
   display: flex;
@@ -349,22 +405,93 @@ function statusLabel(status: string, acquiring: boolean): string {
   color: var(--text-muted);
   cursor: pointer;
   transition: all var(--motion-fast) var(--easing-standard);
+  flex-shrink: 0;
 }
 
-.sidebar__scan-btn:hover:not(:disabled) {
+.sidebar__icon-btn:hover:not(:disabled) {
   color: var(--accent);
   border-color: var(--accent-border);
   background: var(--accent-soft);
 }
 
-.sidebar__scan-btn:disabled {
+.sidebar__icon-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-.sidebar__scan-icon {
+.sidebar__icon-btn-svg {
   width: 14px;
   height: 14px;
+}
+
+/* 设备列表搜索过滤 */
+.sidebar__search {
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--divider-color);
+  flex-shrink: 0;
+}
+
+.sidebar__search-inner {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.6rem;
+  height: 2rem;
+  background: var(--btn-bg);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  transition: border-color var(--motion-fast) var(--easing-standard);
+}
+
+.sidebar__search-inner:focus-within {
+  border-color: var(--accent-border);
+  background: var(--bg-panel);
+}
+
+.sidebar__search-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.sidebar__search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  outline: none;
+}
+
+.sidebar__search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.sidebar__search-clear {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sidebar__search-clear:hover {
+  color: var(--text-primary);
+  background: var(--btn-bg-hover);
+}
+
+.sidebar__search-clear-icon {
+  width: 12px;
+  height: 12px;
 }
 
 /* 空状态 */
@@ -408,6 +535,23 @@ function statusLabel(status: string, acquiring: boolean): string {
   font-size: var(--font-size-xs);
   color: var(--text-muted);
   text-align: center;
+}
+
+/* 搜索无匹配时的"清除搜索"按钮 */
+.sidebar__empty-action {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  padding: 0.35rem 0.85rem;
+  cursor: pointer;
+  transition: all var(--motion-fast) var(--easing-standard);
+}
+
+.sidebar__empty-action:hover {
+  background: var(--accent-muted);
 }
 
 /* 设备列表 */

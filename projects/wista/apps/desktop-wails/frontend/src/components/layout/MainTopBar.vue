@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { Sun, Moon, Activity, Plus, CircleDot, Play, Square, Circle, Gauge } from '@lucide/vue'
+import { Sun, Moon, Activity, CircleDot, Play, Square, Circle, Gauge } from '@lucide/vue'
 import { useDeviceStore } from '@stores/deviceStore'
 import { useDisplayStore } from '@stores/displayStore'
 import { useI18nStore } from '@stores/i18nStore'
@@ -11,7 +11,6 @@ import { setUIRefreshRateHz } from '@bridge/deviceBridge'
 import LanguageToggle from '@shared-frontend/components/LanguageToggle.vue'
 
 const emit = defineEmits<{
-  (e: 'add-device'): void
   (e: 'toggle-acquisition'): void
 }>()
 
@@ -195,14 +194,6 @@ onBeforeUnmount(() => {
             <span>{{ recordingStore.isRecording ? i18n.t('topbar.stopSave') : i18n.t('topbar.startSave') }}</span>
           </button>
         </div>
-
-        <button
-          class="topbar__icon-btn"
-          :title="i18n.t('topbar.addDevice')"
-          @click="emit('add-device')"
-        >
-          <Plus class="topbar__icon" />
-        </button>
 
         <button
           class="topbar__icon-btn"
