@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -151,5 +152,21 @@ func TestStorageStartRecordingResolvesRelativeOutputDir(t *testing.T) {
 	status := app.StorageGetStatus()
 	if status.OutputDir != want {
 		t.Fatalf("expected output dir %q, got %q", want, status.OutputDir)
+	}
+}
+
+func TestStartLocalAPIServerRejectsOccupiedPort(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:8900")
+	if err != nil {
+		t.Fatalf("listen on local API port: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	app := &App{appContext: &appcontext.AppContext{}}
+	if err := app.startLocalAPIServer(); err == nil {
+		t.Fatal("expected local API startup to fail when its port is occupied")
+	}
+	if app.apiServer != nil {
+		t.Fatal("local API server must not be retained after a port conflict")
 	}
 }

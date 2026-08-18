@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -239,8 +240,17 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	// MotionManager 并不缓存状态（StatusAll 每次直查硬件），遍历/校准用例也是
 	// 直接调 StatusAll，不依赖该 poller。与 motion-controller 项目保持一致：
 	// 前端 HTTP 轮询是唯一的状态消费者，避免与前端争抢同一把硬件连接锁。
+	if err := a.startLocalAPIServer(); err != nil {
+		slog.Error("[app] 本地 API 服务启动失败", "component", "app", "error", err)
+		if app := application.Get(); app != nil {
+			app.Dialog.Error().
+				SetTitle("本地服务启动失败").
+				SetMessage(fmt.Sprintf("本地 API 服务无法启动: %v\n\n请关闭正在使用 127.0.0.1:8900 的其他实例（包括旧版 Wind-DAQ）后重新启动。", err)).
+				Show()
+		}
+		return err
+	}
 	a.startDataRelay()
-	a.startLocalAPIServer()
 	// 主进程启动后，后台异步连接所有标记为 AutoConnect 的位移机构，
 	// 避免用户必须先打开运动控制面板才能触发连接。
 	a.startMotionAutoConnect()
@@ -252,22 +262,15 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	return nil
 }
 
-func (a *App) startLocalAPIServer() {
+func (a *App) startLocalAPIServer() error {
 	if a.appContext == nil {
-		return
+		return errors.New("app context is required")
 	}
-	// LSP 环境加固：端口被占（如残留的另一个 WindLabX4 实例）时不再静默失败——
-	// 前端所有轮询会失败表现为"卡死/无响应"。主动探测 + 弹窗提示 + 不启动服务。
+	// 端口被占时不能继续启动 UI，否则前端可能连到遗留实例的 API，形成前后端版本错配。
 	if err := probeLocalPort("127.0.0.1:8900"); err != nil {
 		slog.Error("[app] local API 端口被占用，服务未启动", "component", "app", "error", err)
-		if app := application.Get(); app != nil {
-			app.Dialog.Error().
-				SetTitle("本地服务端口被占用").
-				SetMessage(fmt.Sprintf("本地 API 服务端口 127.0.0.1:8900 被占用（可能已有另一个 WindLabX4 实例在运行）:\n%v\n\n请关闭其他 WindLabX4 实例后重试。", err)).
-				Show()
-		}
 		a.apiServer = nil
-		return
+		return fmt.Errorf("local API port unavailable: %w", err)
 	}
 	ring := func() *logging.RingBuffer {
 		if a.logMgr != nil {
@@ -301,6 +304,7 @@ func (a *App) startLocalAPIServer() {
 			slog.Error("[app] local API 服务器异常退出", "component", "app", "error", err)
 		}
 	}()
+	return nil
 }
 
 // probeLocalPort 探测本地 TCP 端口是否已被占用。
