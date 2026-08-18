@@ -212,6 +212,7 @@ func (a *App) NewDeps() api.Deps {
 		MotionService:        a.appContext.MotionManagerRaw,
 		CalibrationManager:  a.appContext.CalibrationMgr,
 		TraversalManager:    a.appContext.TraversalMgr,
+		TraversalRegistry:   a.appContext.TraversalRegistry,
 		StorageRecorder:     a.appContext.StorageRecorder,
 		ConfigManager:       a.appContext.ConfigManager,
 		LogRing:             ring,
