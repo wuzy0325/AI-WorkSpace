@@ -4,10 +4,10 @@
 
 ## Baseline
 
-- Last reviewed master: `481c053`（包含 Win7 LTS 日常开发 Runbook）
-- Current Win7 base: `a8de1c2`
+- Last reviewed master: `795578d`（wispa 文档名称引用同步 + windlabx4 端口占用修复）
+- Current Win7 base: `c0d615d`
 - Current branch: `lts/win7`
-- Last reviewed: 2026-07-23
+- Last reviewed: 2026-08-18
 - Review note: wista、`shared/device-sdk` Go 1.20 兼容层和 Electron 壳已固化为基线提交 `a8de1c2`。
 
 ## Ported Commits
@@ -17,12 +17,13 @@
 | `481c053` | `48a3ac5` | workspace docs | `cherry-pick -x` | `git diff --check` |
 | `9142150` | `f571832` | WindLabX4 | `cherry-pick -x` | 前端 typecheck 通过、vitest 361 tests 全绿 |
 | `2e4429e` | `a3ad1da` | WindLabX4 | `cherry-pick -x`（排除 bindings 产物） | 前端 typecheck 通过、vitest 361 tests 全绿 |
+| `795578d` | `4e8f062` | wispa | `cherry-pick -x -X theirs` | docs 名称引用同步 |
 
 ## Manually Ported Commits
 
 | Master SHA | Win7 SHA | Project | Excluded platform changes | Verification |
 |---|---|---|---|---|
-| - | - | - | - | - |
+| `9eb77d0` | `c0d615d` | WindLabX4 | Wails `application.Dialog` 弹窗（win7 无 Wails）→ 改在 `main.go` `probeLocalPort` 探测 + 退出码 2 终止，由 Electron 弹窗 | Go 1.20.14 build 通过；冒烟：端口占用时 backend 以退出码 2 提前退出，`/api/health` 200 |
 
 ## Excluded Commits
 
@@ -34,7 +35,7 @@
 
 | Master SHA | Project | Priority | Note |
 |---|---|---|---|
-| - | - | - | 下次审查从 `481c053` 之后开始 |
+| - | - | - | 下次审查从 `795578d` 之后开始 |
 
 ## Verification Records
 
@@ -42,6 +43,7 @@
 |---|---|---|---|---|---|
 | 2026-07-23 | wista | `a8de1c2` | Go 1.20 tests/vet/build, frontend typecheck/build, Electron/NSIS smoke | Windows 7 SP1 x64 原始安装包安装与启动通过；重建包待下次真机复核 | `3C74C055237D3585942D707A14A0CEA549EB22308D14F0356A64E9A28E8BED7E` |
 | 2026-07-23 | WindLabX4 | (pending commit) | Go 1.20 tests/vet/build, frontend typecheck/test (45 tests)/build, Electron/NSIS smoke | 本机 smoke 通过：/api/health 200，motion-only 8901 /api/health + /api/motion/status 200；Win7 真机验证待执行 | `64866A1D583B4467AE28C37FBE26CCDF039FEE38CA5A8B24881381EB4D2C94C7` |
+| 2026-08-18 | WindLabX4 | `c0d615d` | Go 1.20.14 build 通过；前端 typecheck/build 通过；Electron/NSIS 打包通过 | 本机 smoke 通过：/api/health 200；端口占用时 backend 退出码 2（防止前端连旧实例）；Win7 真机验证待执行 | `BBDB1A9202AF1181A80F6502A4FD62D41CC786D5243CAC3B8B70CA3EA5870E34` |
 
 ## Sync Rules
 
