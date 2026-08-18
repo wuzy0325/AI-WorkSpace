@@ -1,4 +1,4 @@
-Unicode true
+﻿Unicode true
 
 ####
 ## WindLabX4 NSIS installer script (custom version).
