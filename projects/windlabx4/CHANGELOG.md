@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.16.1] - 2026-08-19
+
+### Fixed
+
+- **五孔布点文件导入角度范围过严**：此前仅接受 ±30°，现场 α=34.921 的布点文件被整份拒绝。现允许范围放宽到 ±60°（含边界），错误提示同步为 `[-60, 60]`。
+
+### Internal
+
+- 新增 `TestParseFiveHolePointFileAcceptsUpTo60Degrees`（α=34.921 与边界 ±60 接受）回归测试；越界用例改用 60.1 / -60.1 / 61。
+
+### Verification
+
+- `go test ./internal/core/calibration ./internal/usecase ./api`（backend）: passed
+- `npm run typecheck`（frontend）: passed
+- `npm run build`（frontend）: passed
+- 生产构建 + NSIS 打包 + 冒烟启动: 见 releases/0.16.1.md
+
+### Known Issues
+
+- 暂无新增。已知限制同 0.16.0。
+
 ## [0.16.0] - 2026-08-19
 
 ### Added
