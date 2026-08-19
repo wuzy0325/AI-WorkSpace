@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.17.0] - 2026-08-19
+
+### Added
+
+- **新增 PACE1000 串口大气压力采集设备**：设备管理支持添加类型为 PACE1000 的设备，选择 COM 口后连接并启动采集，实时接收一个固定「大气压力」通道（单位 Pa）。
+- **PACE1000 协议支持**：串口参数固定 `9600-8-N-1`、无流控；查询命令 `:sens?\r`（CR 结尾）；响应按 LabVIEW `%s%f` 语义解析（丢弃字符串字段，浮点字段 ×1000 转 Pa）；单次查询等待 500ms，默认采样频率 2Hz。
+- **PACE1000 生命周期与容错**：停止/断开可解除阻塞读取并释放 COM 口；连续 3 次读取或解析失败自动退出采集并提示；PACE1000 通道禁止校零。
+
+### Internal
+
+- `shared/device-sdk/go` 新增 PACE1000 协议层（`protocol/pace1000.go`）与串口驱动（`daq/hardware/pace1000.go`）。
+- `serialport` 修复：`Read`/`Write` 不再持锁执行阻塞 I/O，`Close` 可解除阻塞读取并应用 `ReadTimeout`；新增阻塞串口回归测试。
+- WindLabX4 backend 新增 `PACE1000Adapter` 并在三处设备工厂注册；默认 profile（serial/9600/2Hz/单通道 Pa）与规范化。
+- 前端设备管理新增 PACE1000 serial-only 配置与固定单通道只读行为。
+
+### Verification
+
+- `go test ./...`（shared/device-sdk/go）: passed
+- `go vet ./...` / `go build ./...`（shared/device-sdk/go）: passed
+- `go test ./internal/... ./api/...`（windlabx4 backend）: passed
+- `go vet ./...` / `go build -buildvcs=false ./...`（windlabx4 backend）: passed
+- `npm run test -- --run` / `npm run typecheck` / `npm run build`（frontend）: passed
+- 生产构建 + NSIS 打包 + 冒烟启动: 见 releases/0.17.0.md
+
+### Known Issues
+
+- PACE1000 真实响应终止符与 `%s` 首字段内容待真机验收确认（字段结构已由 `%s%f` 确定，不阻塞使用）。
+
 ## [0.16.1] - 2026-08-19
 
 ### Fixed
