@@ -91,6 +91,17 @@ if ($WithInstaller) {
     }
 }
 
+# --- Step 4: Archive installer to releases/bin/ (only when makensis succeeded) ---
+if ($WithInstaller -and $LASTEXITCODE -eq 0) {
+    Write-Host ">>> Archiving installer to releases/bin/ ..." -ForegroundColor Cyan
+    & (Join-Path $WorkspaceRoot 'scripts\copy-release-artifacts.ps1') -Project WindLabX4
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "archive to releases/bin/ failed (exit $LASTEXITCODE)."
+    }
+} elseif ($WithInstaller) {
+    Write-Warning "makensis failed; skipping archive to releases/bin/."
+}
+
 # --- Summary ---
 Write-Host "<<< Build complete." -ForegroundColor Green
 Write-Host "    Exe: $OutputExe"

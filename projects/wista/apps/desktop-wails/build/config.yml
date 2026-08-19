@@ -1,13 +1,13 @@
-# Wails v3 项目配置（WISTA）
+# Wails v3 项目配置（wista）
 # 参考 wails3 v3.0.0-alpha.95 模板 schema，
 # 各字段含义见 wails3 命令源码（internal/commands/build_assets/config.yml）。
 version: '3'
 
 info:
   companyName: "WindTuner"
-  productName: "WISTA"
+  productName: "wista"
   productIdentifier: "com.wista.app"
-  description: "WISTA 温度采集"
+  description: "wista 温度采集"
   copyright: "(c) 2026, WindTuner Team"
   comments: "Wails v3 desktop edition"
   version: "0.6.10"

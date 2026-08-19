@@ -3,9 +3,9 @@ version: '3'
 # 项目元信息（用于 wails3 generate build-assets 等命令生成平台资源）
 info:
   companyName: "WindTuner"
-  productName: "WISPA"
+  productName: "wispa"
   productIdentifier: "com.wispa.app"
-  description: "WISPA (WindTuner Intelligent-Pressure Scanning Application) desktop app"
+  description: "wispa (WindTuner Intelligent-Pressure Scanning Application) desktop app"
   copyright: "(c) 2025, WindTuner Team"
   version: "0.7.5"
 

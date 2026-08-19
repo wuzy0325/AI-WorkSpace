@@ -1,4 +1,4 @@
-Unicode true
+﻿Unicode true
 
 ####
 ## WindLabX4 NSIS installer script (custom version).
@@ -55,6 +55,11 @@ ManifestDPIAware true
 !define MUI_FINISHPAGE_NOAUTOCLOSE
 !define MUI_ABORTWARNING
 
+# Launch app after install (checked by default)
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXECUTABLE}"
+!define MUI_FINISHPAGE_RUN_CHECKED
+!define MUI_FINISHPAGE_RUN_TEXT "$(INST_RUN_TEXT)"
+
 # Language selection dialog (zh/en)
 !define MUI_LANGDLL_ALLLANGUAGES
 !define MUI_LANGDLL_INFO "Please select the installation language:$\n请选择安装程序语言："
@@ -84,12 +89,14 @@ LangString INST_WELCOME_TEXT   ${LANG_SIMPCHINESE} "本系统专为风洞测试�
 LangString INST_DIRECTORY_TEXT ${LANG_SIMPCHINESE} "选择安装目录。$\r$\n$\r$\n建议安装在非系统盘，并确保有足够的磁盘空间用于数据存储。"
 LangString INST_FINISH_TITLE   ${LANG_SIMPCHINESE} "安装完成"
 LangString INST_FINISH_TEXT    ${LANG_SIMPCHINESE} "WindLabX4 风洞数据采集系统已成功安装。$\r$\n$\r$\n点击完成退出安装程序。"
+LangString INST_RUN_TEXT       ${LANG_SIMPCHINESE} "启动 ${INFO_PRODUCTNAME}"
 # English
 LangString INST_WELCOME_TITLE  ${LANG_ENGLISH} "Welcome to WindLabX4 Wind Tunnel DAQ System"
 LangString INST_WELCOME_TEXT   ${LANG_ENGLISH} "WindLabX4 is a comprehensive wind tunnel measurement platform for data acquisition, motion control, and probe calibration.$\r$\n$\r$\nKey features:$\r$\n  * Multi-channel pressure & temperature acquisition (DSA3217 / DAQ-P-1604 / DAQ-T-1603)$\r$\n  * Motion controller management (B140 / WTNMC4A)$\r$\n  * Five-hole / Three-hole / Total pressure / Total temperature calibration$\r$\n  * Traversal testing with real-time interpolation$\r$\n  * Data recording, storage and report generation$\r$\n$\r$\nThe wizard will guide you through the installation."
 LangString INST_DIRECTORY_TEXT ${LANG_ENGLISH} "Select the installation folder.$\r$\n$\r$\nA non-system drive with sufficient free space for data storage is recommended."
 LangString INST_FINISH_TITLE   ${LANG_ENGLISH} "Installation Complete"
 LangString INST_FINISH_TEXT    ${LANG_ENGLISH} "WindLabX4 has been successfully installed.$\r$\n$\r$\nClick Finish to exit the setup wizard."
+LangString INST_RUN_TEXT       ${LANG_ENGLISH} "Launch ${INFO_PRODUCTNAME}"
 
 # Registry key for installer language (must match backend/app.go::GetInstallerLanguage)
 !define INSTALLER_LANG_REGKEY "Software\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"

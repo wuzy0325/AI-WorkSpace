@@ -2,7 +2,7 @@
   "$schema": "https://wails.io/schemas/config.v3.json",
   "name": "wispa",
   "version": "0.7.5",
-  "outputfilename": "WISPA",
+  "outputfilename": "wispa",
   "frontend": {
     "dir": "frontend",
     "install": "npm install --no-audit --no-fund",

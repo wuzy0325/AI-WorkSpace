@@ -2,7 +2,7 @@
   "$schema": "https://wails.io/schemas/config.v3.json",
   "name": "wista",
   "version": "0.6.10",
-  "outputfilename": "WISTA",
+  "outputfilename": "wista",
   "frontend": {
     "dir": "frontend",
     "install": "npm install --no-audit --no-fund",

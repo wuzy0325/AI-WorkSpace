@@ -60,7 +60,7 @@ function activePageLabel(): string {
         </div>
         <div>
           <h1 data-test="topbar-brand-title" class="main-topbar__title">
-            Wind<span class="main-topbar__title-accent">DAQ</span>
+            Wind<span class="main-topbar__title-accent">LabX4</span>
           </h1>
           <p data-test="topbar-brand-subtitle" class="main-topbar__subtitle">DATA ACQUISITION</p>
         </div>
