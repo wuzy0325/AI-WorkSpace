@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.16.0] - 2026-08-19
+
+### Added
+
+- **五孔探针校准支持布点文件导入**：设置页新增「规则网格 / 文件导入」布点方式切换。导入用户指定文件（第一列 β、第二列 α；支持 CSV / Tab / 空白分隔，可选 `beta,alpha` 表头），校准严格按文件行序逐点执行；导入方案仅在当前软件进程内生效，重启后回退到规则网格。
+- **导入文件严格校验**：忽略空行；列数错误、非数字、空文件或角度超出 ±30° 时拒绝整份文件并提示行号；重复点保留并按出现次数重复校准。
+
+### Internal
+
+- 新增 `ParseFiveHolePointFile` 核心解析器及 `TestParseFiveHolePointFile*` 测试，覆盖顺序保留、重复点、表头大小写与希腊字母、空列拒绝、越界拒绝。
+- 新增 `handleFiveHolePointImport` HTTP 路由与 `CalibrationImportFiveHolePoints` Wails binding，HTTP/Wails 共用 `usecase.ImportFiveHolePoints`。
+- 新增前端进程内 `importedFiveHolePoints` 会话覆盖模块及 `importedFiveHolePoints.test.ts`。
+- 代码评审修正：CSV 空单元格（如 `0,,1`）不再被折叠为两列误解析；导入模式保存不再覆盖用户原网格参数；替换不存在的 CSS token（`--shadow-xs`/`--border-subtle`）。
+
+### Verification
+
+- `go test ./...`（backend）: passed
+- `npm run typecheck`（frontend）: passed
+- `npm run build`（frontend）: passed
+- `npm run test`（frontend，五孔相关 vitest）: passed（8 用例）
+- 生产构建 + NSIS 打包 + 冒烟启动: 见 releases/0.16.0.md
+
+### Known Issues
+
+- 暂无新增。已知限制同 0.15.6。
+
 ## [0.15.6] - 2026-08-19
 
 ### Fixed
