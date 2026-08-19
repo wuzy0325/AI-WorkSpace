@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const fiveHolePointAngleLimit = 30.0
+const fiveHolePointAngleLimit = 60.0
 
 // ParseFiveHolePointFile parses ordered beta/alpha pairs from CSV or whitespace-delimited text.
 func ParseFiveHolePointFile(content string) ([]FiveHoleSnakePoint, error) {
@@ -81,7 +81,7 @@ func parseFiveHolePointAngle(raw, name string, lineNumber int) (float64, error) 
 		return 0, fmt.Errorf("第 %d 行的 %s 必须是有限数值", lineNumber, name)
 	}
 	if value < -fiveHolePointAngleLimit || value > fiveHolePointAngleLimit {
-		return 0, fmt.Errorf("第 %d 行的 %s=%g 超出允许范围 [-30, 30]", lineNumber, name, value)
+		return 0, fmt.Errorf("第 %d 行的 %s=%g 超出允许范围 [-60, 60]", lineNumber, name, value)
 	}
 	return value, nil
 }

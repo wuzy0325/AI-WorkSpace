@@ -42,6 +42,17 @@ func TestParseFiveHolePointFileAcceptsHeaderCaseAndGreekLetters(t *testing.T) {
 	}
 }
 
+func TestParseFiveHolePointFileAcceptsUpTo60Degrees(t *testing.T) {
+	content := "0,34.921\n-60,60\n"
+	points, err := ParseFiveHolePointFile(content)
+	if err != nil {
+		t.Fatalf("ParseFiveHolePointFile: %v", err)
+	}
+	if len(points) != 2 {
+		t.Fatalf("expected 2 points, got %d", len(points))
+	}
+}
+
 func TestParseFiveHolePointFileRejectsInvalidInput(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -52,8 +63,8 @@ func TestParseFiveHolePointFileRejectsInvalidInput(t *testing.T) {
 		{name: "wrong columns", content: "0,1,2\n", want: "第 1 行"},
 		{name: "empty csv column", content: "0,,1\n", want: "第 1 行"},
 		{name: "non numeric", content: "beta,alpha\n0,nope\n", want: "第 2 行"},
-		{name: "alpha out of range", content: "0,30.1\n", want: "第 1 行"},
-		{name: "beta out of range", content: "-30.1,0\n", want: "第 1 行"},
+		{name: "alpha out of range", content: "0,60.1\n", want: "第 1 行"},
+		{name: "beta out of range", content: "-60.1,0\n", want: "第 1 行"},
 	}
 
 	for _, test := range tests {

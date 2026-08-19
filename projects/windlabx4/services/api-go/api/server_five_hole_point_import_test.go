@@ -33,7 +33,7 @@ func TestHandleFiveHolePointImportReturnsOrderedPoints(t *testing.T) {
 }
 
 func TestHandleFiveHolePointImportRejectsInvalidFile(t *testing.T) {
-	request := httptest.NewRequest(http.MethodPost, "/api/calibration/fivehole-points-import", strings.NewReader(`{"content":"0,31\n"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/calibration/fivehole-points-import", strings.NewReader(`{"content":"0,61\n"}`))
 	response := httptest.NewRecorder()
 
 	handleFiveHolePointImport(response, request, newTestFiveHoleCalibrationManager())
