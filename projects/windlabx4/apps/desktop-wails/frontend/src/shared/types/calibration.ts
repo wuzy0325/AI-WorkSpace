@@ -142,8 +142,6 @@ export interface FiveHolePointLayout {
   betaStep: number
   /** 蛇形走位：奇数行反向遍历 α；默认 false 为逐行 raster 扫描 */
   serpentine?: boolean
-  /** α 轴角度换算：true 时 α 目标角按 α' = arctan(tanα·cosβ) 换算（β 不变）；默认 false 不换算（spec-five-hole-angle-convert） */
-  angleConvert?: boolean
 }
 
 /** 三孔探针点位布局配置 */
