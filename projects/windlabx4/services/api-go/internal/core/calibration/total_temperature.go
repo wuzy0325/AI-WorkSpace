@@ -60,7 +60,12 @@ func (a *TotalTemperatureAlgorithm) AcquireDataWithConfig(point CalPoint, channe
 	if config.TotalTemperatureConfig != nil && config.TotalTemperatureConfig.SampleInterval > 0 {
 		sampleInterval = time.Duration(config.TotalTemperatureConfig.SampleInterval) * time.Millisecond
 	}
-	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, sampleInterval, checkAbort, config.TimestampReader, config.AcquisitionStateProvider, onSampleProgress)
+	dataPoint, err := a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, sampleInterval, checkAbort, config.TimestampReader, config.AcquisitionStateProvider, onSampleProgress)
+	if err != nil {
+		return nil, err
+	}
+	dataPoint.RawDeviceChannels, dataPoint.RawDeviceValid = readConfiguredRawDeviceChannels(channelReader, config.RawDeviceLayouts)
+	return dataPoint, nil
 }
 
 // AcquireDataWithChannels 使用探针通道配置采集数据

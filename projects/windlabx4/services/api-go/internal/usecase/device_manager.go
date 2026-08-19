@@ -141,7 +141,7 @@ func (m *DeviceManager) ScanDevices() ([]device.ScanResult, error) {
 func (m *DeviceManager) GetProfiles() []device.Profile {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return append([]device.Profile(nil), m.profiles...)
+	return cloneProfiles(m.profiles)
 }
 
 func (m *DeviceManager) UpsertProfile(profile device.Profile) error {

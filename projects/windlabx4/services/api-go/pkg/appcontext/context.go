@@ -138,6 +138,7 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	// 并在 ParseAndStartTraversal 启动 loop 之前主动拉起采集，避免"假绿 → no data"。
 	traversalMgr.SetAcquisitionController(deviceMgr)
 	calibrationMgr.SetAcquisitionController(deviceMgr)
+	calibrationMgr.SetDeviceProfileProvider(deviceMgr)
 
 	// 双探针 registry（Task 14）：与 legacy TraversalMgr 并存，共享
 	// AcquisitionHub/MotionAccess/DeviceManager 查询端口/appConfigStore/checkpointStore。

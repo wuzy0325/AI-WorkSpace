@@ -224,6 +224,26 @@ func TestDeviceManagerLoadsProfilesFromStore(t *testing.T) {
 	}
 }
 
+func TestDeviceManagerGetProfilesDeepCopiesChannels(t *testing.T) {
+	store := &memoryProfileStore{profiles: []device.Profile{newTestProfile("sim-1", device.DeviceSimulated)}}
+	manager, err := newTestDeviceManager(store, simulatedFactory{}, nil)
+	if err != nil {
+		t.Fatalf("NewDeviceManager returned error: %v", err)
+	}
+
+	profiles := manager.GetProfiles()
+	profiles[0].Channels[0].Name = "changed outside manager"
+	profiles[0].Channels = append(profiles[0].Channels, device.ChannelConfig{Index: 99})
+
+	again := manager.GetProfiles()
+	if again[0].Channels[0].Name == "changed outside manager" {
+		t.Fatal("GetProfiles returned a channel element backed by manager state")
+	}
+	if len(again[0].Channels) == len(profiles[0].Channels) {
+		t.Fatal("GetProfiles returned a channel slice backed by manager state")
+	}
+}
+
 func TestDeviceManagerNormalizesStoredProfilesWithNoChannels(t *testing.T) {
 	store := &memoryProfileStore{profiles: []device.Profile{
 		{

@@ -324,11 +324,18 @@ func (a *SevenHoleAlgorithm) AcquireDataWithConfig(
 	checkAbort func() bool,
 	onSampleProgress func(current, total int),
 ) (DataPoint, error) {
-	return a.AcquireDataWithChannels(
+	dataPoint, err := a.AcquireDataWithChannels(
 		point, channelReader, config.ProbeChannels, config.SamplesPerPoint,
 		checkAbort, config.TimestampReader, config.AcquisitionStateProvider, onSampleProgress,
 		config.RealtimeCallback, config.PrevRegion, config.PrevSector,
 	)
+	if err != nil {
+		return nil, err
+	}
+	if len(config.RawDeviceLayouts) > 0 {
+		dataPoint.RawDeviceChannels, dataPoint.RawDeviceValid = readConfiguredRawDeviceChannels(channelReader, config.RawDeviceLayouts)
+	}
+	return dataPoint, nil
 }
 
 // AcquireDataWithChannels 七孔探针数据采集主循环

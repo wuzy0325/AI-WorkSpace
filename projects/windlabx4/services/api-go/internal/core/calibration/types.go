@@ -63,6 +63,9 @@ type Config struct {
 	// 与"设备在采集但帧不更新"（真异常，返回超时错误）两类场景。
 	// 为 nil 时维持原超时行为（向后兼容旧装配路径与未注入场景）。
 	AcquisitionStateProvider AcquisitionStateProvider `json:"-"`
+	// RawDeviceLayouts 由 usecase 根据设备 profile 注入，仅用于校准原始通道落盘。
+	// 设备顺序与 ProbeChannels 首次出现顺序一致，通道来自对应 profile 的完整配置。
+	RawDeviceLayouts []RawDeviceLayout `json:"-"`
 
 	// ==================== 七孔探针专用注入字段（spec Task 5） ====================
 	//
@@ -84,6 +87,16 @@ type Config struct {
 	//   - 后续点：上一时刻的 region/sector（用于规则 3 滞回判定，避免边界点分区抖动）
 	PrevRegion string `json:"-"`
 	PrevSector int    `json:"-"`
+}
+
+type RawDeviceChannel struct {
+	Index int
+	Unit  string
+}
+
+type RawDeviceLayout struct {
+	DeviceID string
+	Channels []RawDeviceChannel
 }
 
 // SevenHoleRealtimeCallback 七孔实时数据推送回调类型
@@ -243,6 +256,7 @@ type FiveHoleDataPoint struct {
 	StartTime         int64                `json:"startTime"`
 	EndTime           int64                `json:"endTime"`
 	RawDeviceChannels map[string][]float64 `json:"rawDeviceChannels,omitempty"`
+	RawDeviceValid    map[string][]bool    `json:"-"`
 }
 
 // ==================== 三孔探针类型 ====================
@@ -290,14 +304,16 @@ type ThreeHoleCoefficients struct {
 
 // ThreeHoleDataPoint 三孔探针校准数据点
 type ThreeHoleDataPoint struct {
-	PointID      int                   `json:"pointId"`
-	Coordinates  map[string]float64    `json:"coordinates"`
-	RawData      ThreeHoleRawData      `json:"rawData"`
-	Coefficients ThreeHoleCoefficients `json:"coefficients"`
-	SampleCount  int                   `json:"sampleCount"`
-	StdDev       float64               `json:"stdDev"`
-	StartTime    int64                 `json:"startTime"`
-	EndTime      int64                 `json:"endTime"`
+	PointID           int                   `json:"pointId"`
+	Coordinates       map[string]float64    `json:"coordinates"`
+	RawData           ThreeHoleRawData      `json:"rawData"`
+	Coefficients      ThreeHoleCoefficients `json:"coefficients"`
+	SampleCount       int                   `json:"sampleCount"`
+	StdDev            float64               `json:"stdDev"`
+	StartTime         int64                 `json:"startTime"`
+	EndTime           int64                 `json:"endTime"`
+	RawDeviceChannels map[string][]float64  `json:"rawDeviceChannels,omitempty"`
+	RawDeviceValid    map[string][]bool     `json:"-"`
 }
 
 // ==================== 总压探针类型 ====================
@@ -327,11 +343,13 @@ type TotalPressureCoefficients struct {
 
 // TotalPressureDataPoint 总压探针校准数据点
 type TotalPressureDataPoint struct {
-	PointID      int                       `json:"pointId"`
-	Alpha        float64                   `json:"alpha"`
-	RawData      TotalPressureRawData      `json:"rawData"`
-	Coefficients TotalPressureCoefficients `json:"coefficients"`
-	SampleCount  int                       `json:"sampleCount"`
+	PointID           int                       `json:"pointId"`
+	Alpha             float64                   `json:"alpha"`
+	RawData           TotalPressureRawData      `json:"rawData"`
+	Coefficients      TotalPressureCoefficients `json:"coefficients"`
+	SampleCount       int                       `json:"sampleCount"`
+	RawDeviceChannels map[string][]float64      `json:"rawDeviceChannels,omitempty"`
+	RawDeviceValid    map[string][]bool         `json:"-"`
 	// StdDev 多次采样探针总压的样本标准差（Pa），用于判断采样稳定性。
 	// 与 FiveHole/ThreeHole/TotalTemperature 保持一致的字段命名，便于 CSV/UI 统一展示。
 	StdDev    float64 `json:"stdDev"`
@@ -378,18 +396,20 @@ type TotalTemperatureState struct {
 
 // TotalTemperatureDataPoint 总温探针校准数据点
 type TotalTemperatureDataPoint struct {
-	ID                     int     `json:"id"`
-	TargetMachNumber       float64 `json:"targetMachNumber"`
-	ActualMachNumber       float64 `json:"actualMachNumber"`
-	TestProbeTemp          float64 `json:"testProbeTemp"`
-	StandardProbeTemp      float64 `json:"standardProbeTemp"`
-	RecoveryCoefficient    float64 `json:"recoveryCoefficient"`
-	TotalPressure          float64 `json:"totalPressure"`
-	StaticPressure         float64 `json:"staticPressure"`
-	AtmosphericPressure    float64 `json:"atmosphericPressure"`
-	AtmosphericTemperature float64 `json:"atmosphericTemperature"`
-	StdDev                 float64 `json:"stdDev"`
-	Timestamp              int64   `json:"timestamp"`
+	ID                     int                  `json:"id"`
+	TargetMachNumber       float64              `json:"targetMachNumber"`
+	ActualMachNumber       float64              `json:"actualMachNumber"`
+	TestProbeTemp          float64              `json:"testProbeTemp"`
+	StandardProbeTemp      float64              `json:"standardProbeTemp"`
+	RecoveryCoefficient    float64              `json:"recoveryCoefficient"`
+	TotalPressure          float64              `json:"totalPressure"`
+	StaticPressure         float64              `json:"staticPressure"`
+	AtmosphericPressure    float64              `json:"atmosphericPressure"`
+	AtmosphericTemperature float64              `json:"atmosphericTemperature"`
+	StdDev                 float64              `json:"stdDev"`
+	Timestamp              int64                `json:"timestamp"`
+	RawDeviceChannels      map[string][]float64 `json:"rawDeviceChannels,omitempty"`
+	RawDeviceValid         map[string][]bool    `json:"-"`
 }
 
 // ==================== 七孔探针类型 ====================
@@ -484,6 +504,7 @@ type SevenHoleDataPoint struct {
 	StartTime         int64                 `json:"startTime"`
 	EndTime           int64                 `json:"endTime"`
 	RawDeviceChannels map[string][]float64  `json:"rawDeviceChannels,omitempty"`
+	RawDeviceValid    map[string][]bool     `json:"-"`
 	// 不确定度字段（spec §5，Task 4 填充）
 	UncertaintyKalpha *float64 `json:"uncertaintyKalpha,omitempty"`
 	UncertaintyKbeta  *float64 `json:"uncertaintyKbeta,omitempty"`
@@ -580,14 +601,14 @@ type RealtimeEvent struct {
 type RegionChangedEvent struct {
 	TaskID       string  `json:"taskId"`
 	WindowTag    string  `json:"windowTag"`
-	Region       string  `json:"region"`             // 当前区域："inner" 或 "outer"
-	Sector       int     `json:"sector"`              // 当前扇区：1~6（外区）或 7（内区）
-	PrevRegion   *string `json:"prevRegion"`          // 上一时刻区域，首点 nil（JSON null）
-	PrevSector   *int    `json:"prevSector"`          // 上一时刻扇区，首点 nil（JSON null）
-	BoundaryFlag string  `json:"boundaryFlag"`        // 边界标志："first" / "inner-outer" / "sector-switch" / "same-region"
-	PointIndex   int     `json:"pointIndex"`          // 当前点索引（0-based）
-	TotalPoints  int     `json:"totalPoints"`         // 总点数
-	Timestamp    int64   `json:"timestamp"`           // 事件时间戳（Unix 毫秒）
+	Region       string  `json:"region"`       // 当前区域："inner" 或 "outer"
+	Sector       int     `json:"sector"`       // 当前扇区：1~6（外区）或 7（内区）
+	PrevRegion   *string `json:"prevRegion"`   // 上一时刻区域，首点 nil（JSON null）
+	PrevSector   *int    `json:"prevSector"`   // 上一时刻扇区，首点 nil（JSON null）
+	BoundaryFlag string  `json:"boundaryFlag"` // 边界标志："first" / "inner-outer" / "sector-switch" / "same-region"
+	PointIndex   int     `json:"pointIndex"`   // 当前点索引（0-based）
+	TotalPoints  int     `json:"totalPoints"`  // 总点数
+	Timestamp    int64   `json:"timestamp"`    // 事件时间戳（Unix 毫秒）
 }
 
 // EventPublisher 校准事件发布接口

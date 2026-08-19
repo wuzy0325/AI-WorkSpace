@@ -130,6 +130,82 @@ func TestFiveHoleCsvRecordIncludesCoordinatesAndScanValveChannels(t *testing.T) 
 	}
 }
 
+func TestFiveHoleCsvSchemaIncludesAllConfiguredChannelsForReferencedDevices(t *testing.T) {
+	config := completeFiveHoleConfig()
+	config.RawDeviceLayouts = []RawDeviceLayout{
+		{
+			DeviceID: "temperature-device",
+			Channels: []RawDeviceChannel{
+				{Index: 2, Unit: "degC"},
+				{Index: 5, Unit: "degC"},
+			},
+		},
+		{
+			DeviceID: "pressure-device",
+			Channels: []RawDeviceChannel{
+				{Index: 0, Unit: "Pa"},
+				{Index: 3, Unit: "Pa"},
+				{Index: 7, Unit: "Pa"},
+			},
+		},
+	}
+	dp := &FiveHoleDataPoint{
+		RawDeviceChannels: map[string][]float64{
+			"temperature-device":  {22.25, 23.5},
+			"pressure-device":     {101.125, 102.25, 103.375},
+			"unreferenced-device": {999},
+		},
+	}
+
+	schema := NewCsvSchema(config)
+	header := schema.BuildHeader()
+	record := schema.BuildRecord(dp)
+	wantHeader := []string{
+		"temperature-device_CH3(degC)",
+		"temperature-device_CH6(degC)",
+		"pressure-device_CH1(Pa)",
+		"pressure-device_CH4(Pa)",
+		"pressure-device_CH8(Pa)",
+	}
+	wantValues := []string{"22.250", "23.500", "101.125", "102.250", "103.375"}
+	if !reflect.DeepEqual(header[len(header)-len(wantHeader):], wantHeader) {
+		t.Fatalf("unexpected raw channel header suffix: %v", header)
+	}
+	if !reflect.DeepEqual(record[len(record)-len(wantValues):], wantValues) {
+		t.Fatalf("unexpected raw channel value suffix: %v", record)
+	}
+	if len(header) != len(record) {
+		t.Fatalf("header/record column mismatch: header=%d record=%d", len(header), len(record))
+	}
+}
+
+func TestReadRawDeviceChannelsUsesConfiguredChannelIndices(t *testing.T) {
+	layouts := []RawDeviceLayout{
+		{DeviceID: "dev-b", Channels: []RawDeviceChannel{{Index: 4}, {Index: 9}}},
+		{DeviceID: "dev-a", Channels: []RawDeviceChannel{{Index: 1}}},
+	}
+	reader := func(deviceID string, channelIndex int) (float64, bool) {
+		values := map[string]float64{
+			"dev-b:4": 4.25,
+			"dev-b:9": 9.5,
+			"dev-a:1": 1.75,
+		}
+		value, ok := values[fmt.Sprintf("%s:%d", deviceID, channelIndex)]
+		return value, ok
+	}
+
+	got, valid := readConfiguredRawDeviceChannels(reader, layouts)
+	if !reflect.DeepEqual(got["dev-b"], []float64{4.25, 9.5}) {
+		t.Fatalf("unexpected dev-b channels: %v", got["dev-b"])
+	}
+	if !reflect.DeepEqual(got["dev-a"], []float64{1.75}) {
+		t.Fatalf("unexpected dev-a channels: %v", got["dev-a"])
+	}
+	if !reflect.DeepEqual(valid["dev-b"], []bool{true, true}) {
+		t.Fatalf("unexpected dev-b availability: %v", valid["dev-b"])
+	}
+}
+
 func (f *fakeCalibrationRuntime) GetChannelValue(deviceID string, channelIndex int) (float64, bool) {
 	v, ok := f.values[fmt.Sprintf("%s:%d", deviceID, channelIndex)]
 	return v, ok

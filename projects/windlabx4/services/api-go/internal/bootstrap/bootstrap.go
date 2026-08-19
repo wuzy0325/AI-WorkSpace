@@ -133,6 +133,7 @@ func BuildAPIServer(cfg Config) (APIServer, error) {
 	// 查询 IsAcquiring 区分"用户停采集"（可恢复，继续等待）与"设备在采集但帧不更新"（真异常），
 	// 与 traversal 的"等待恢复"语义对齐，避免"误停一次采集，整个校准就报废"。
 	calMgr.SetAcquisitionController(manager)
+	calMgr.SetDeviceProfileProvider(manager)
 
 	// 双探针 registry（Task 14 统一装配），与 legacy travMgr 并存。
 	registryBundle, err := appcontext.NewTraversalRegistry(appcontext.TraversalRegistryDeps{

@@ -120,6 +120,27 @@ func TestCalibrationCsvWriterAppendModeSkipsHeaderOnExistingFile(t *testing.T) {
 	}
 }
 
+func TestCalibrationCsvWriterAppendModeRejectsMismatchedExistingHeader(t *testing.T) {
+	savePath := filepath.Join(t.TempDir(), "five-hole.csv")
+	legacyConfig := calibration.Config{TaskID: "cal-1", Type: string(calibration.TypeFiveHole), SavePath: savePath}
+	legacyWriter := NewCalibrationCsvWriter(legacyConfig)
+	if err := legacyWriter.Initialize(legacyConfig); err != nil {
+		t.Fatalf("initialize legacy writer: %v", err)
+	}
+	if err := legacyWriter.Flush(); err != nil {
+		t.Fatalf("flush legacy writer: %v", err)
+	}
+
+	dynamicConfig := legacyConfig
+	dynamicConfig.RawDeviceLayouts = []calibration.RawDeviceLayout{
+		{DeviceID: "dev-1", Channels: []calibration.RawDeviceChannel{{Index: 0, Unit: "Pa"}}},
+	}
+	dynamicWriter := NewCalibrationCsvWriter(dynamicConfig)
+	if err := dynamicWriter.Initialize(dynamicConfig); err == nil {
+		t.Fatal("expected schema mismatch when appending dynamic channels to legacy header")
+	}
+}
+
 // TestCalibrationCsvWriterAppendPointDetectsBufferedError 验证 AppendPoint 在
 // csv.Writer 缓冲写入失败时（如底层文件已关闭）通过 Error() 检测并返回错误。
 //
@@ -257,4 +278,3 @@ func TestCalibrationCsvWriterFlushIdempotentNilSafe(t *testing.T) {
 		t.Fatalf("Flush 第二次调用应返回 nil，实际: %v", err)
 	}
 }
-

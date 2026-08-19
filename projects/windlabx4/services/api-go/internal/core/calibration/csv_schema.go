@@ -75,46 +75,53 @@ func (s CsvSchema) BuildHeader() []string {
 			"点位编号", "α(°)", "β(°)", "P1(Pa)", "P2(Pa)", "P3(Pa)", "P4(Pa)", "P5(Pa)",
 			"P∞(Pa)", "T∞(°C)", "Pt(Pa)", "Ps(Pa)", "Ma", "Kα", "Kβ", "CPT", "CPS", "采样次数", "标准差",
 		}
-		for i := 1; i <= 16; i++ {
-			header = append(header, "CH"+formatInt(i)+"(Pa)")
+		if len(s.config.RawDeviceLayouts) == 0 {
+			for i := 1; i <= 16; i++ {
+				header = append(header, "CH"+formatInt(i)+"(Pa)")
+			}
+			return header
 		}
+		header = append(header, buildRawDeviceChannelHeaders(s.config.RawDeviceLayouts)...)
 		return header
 	case TypeThreeHole:
 		// 三孔表头全中文，与五孔风格一致；不含 startTime/endTime
 		// 马赫数/速度列头中文+英文表达，与五孔 "Ma" 列风格对齐
-		return []string{
+		header := []string{
 			"点位编号", "θ(°)",
 			"P1(Pa)", "P2(Pa)", "P3(Pa)", "P∞(Pa)", "T∞(°C)", "Pt(Pa)", "Ps(Pa)",
 			"Kβ", "K0", "Kv",
 			"马赫数(Ma)", "速度V(m/s)",
 			"采样次数", "标准差",
 		}
+		return append(header, buildRawDeviceChannelHeaders(s.config.RawDeviceLayouts)...)
 	case TypeTotalPressure:
 		// 中文带单位，与五孔/三孔风格对齐；列顺序与 buildTotalPressureRecord 严格一致
 		// 马赫数/速度列与三孔表头一致，便于跨模块数据合并分析
 		// 去掉采样次数/标准差/开始时间/结束时间四列：操作员反馈这些列对校准结果分析无价值
 		// 采样次数/标准差反映"过程稳定性"，但 Ma/V/CPT 已能反映"流场质量"，过程列冗余；
 		// 开始时间/结束时间是过程时间戳，不参与校准曲线分析，去掉与三孔表头风格一致
-		return []string{
+		header := []string{
 			"点位编号",
 			"α(°)",
 			"P∞(Pa)", "T∞(°C)", "Pt风洞(Pa)", "Ps风洞(Pa)", "T风洞(°C)", "Pt探针(Pa)",
 			"CPT", "误差(%)", "马赫数(Ma)", "速度V(m/s)",
 		}
+		return append(header, buildRawDeviceChannelHeaders(s.config.RawDeviceLayouts)...)
 	case TypeTotalTemperature:
-		return []string{
+		header := []string{
 			"id", "targetMachNumber", "actualMachNumber",
 			"testProbeTemp", "standardProbeTemp", "recoveryCoefficient",
 			"totalPressure", "staticPressure", "atmosphericPressure",
 			"atmosphericTemperature", "stdDev", "timestamp",
 		}
+		return append(header, buildRawDeviceChannelHeaders(s.config.RawDeviceLayouts)...)
 	case TypeSevenHole:
 		// 七孔按 region 分流：内区/外区各一套 26 列表头（spec §7.5）
 		// 导出场景（sevenHoleExport）使用 18 列参考数据集格式（spec §7.2/§7.3）
 		if s.sevenHoleExport {
 			return s.buildSevenHoleExportHeader()
 		}
-		return s.buildSevenHoleHeader()
+		return append(s.buildSevenHoleHeader(), buildRawDeviceChannelHeaders(s.config.RawDeviceLayouts)...)
 	default:
 		return base
 	}
@@ -231,6 +238,9 @@ func (s CsvSchema) buildFiveHoleRecord(dp *FiveHoleDataPoint) []string {
 		formatInt(dp.SampleCount),
 		formatFloat(dp.StdDev),
 	}
+	if len(s.config.RawDeviceLayouts) > 0 {
+		return append(values, buildRawDeviceChannelValues(s.config.RawDeviceLayouts, dp.RawDeviceChannels, dp.RawDeviceValid)...)
+	}
 	return append(values, buildFiveHoleRawChannelValues(dp.RawDeviceChannels)...)
 }
 
@@ -276,7 +286,7 @@ func (s CsvSchema) buildThreeHoleRecord(dp *ThreeHoleDataPoint) []string {
 	// 精度与前端 ThreeHoleMain.vue 显示一致：
 	// θ 1 位（formatValue(point.coordinates['θ'], 1)）、压力 3 位（probePrecision 默认 3）、系数 4 位（formatValue(Kb, 4)）、标准差 4 位
 	// 马赫数 3 位、速度 3 位（与前端 physics.machNumber.toFixed(3) / velocity.toFixed(3) 一致）
-	return []string{
+	values := []string{
 		formatInt(dp.PointID),
 		formatFloatWithPrecision(dp.Coordinates["θ"], threeHoleThetaPrecision),
 		formatFloatWithPrecision(dp.RawData.P1, threeHolePressurePrecision),
@@ -294,6 +304,7 @@ func (s CsvSchema) buildThreeHoleRecord(dp *ThreeHoleDataPoint) []string {
 		formatInt(dp.SampleCount),
 		formatFloatWithPrecision(dp.StdDev, threeHoleStdDevPrecision),
 	}
+	return append(values, buildRawDeviceChannelValues(s.config.RawDeviceLayouts, dp.RawDeviceChannels, dp.RawDeviceValid)...)
 }
 
 func (s CsvSchema) buildTotalPressureRecord(dp *TotalPressureDataPoint) []string {
@@ -310,7 +321,7 @@ func (s CsvSchema) buildTotalPressureRecord(dp *TotalPressureDataPoint) []string
 	// 列顺序与 BuildHeader TypeTotalPressure 严格一致；
 	// 精度与前端 TotalPressureMain.vue 显示精度严格对齐：
 	//   α 1 位、压力 1 位、温度 1 位、CPT/误差 4 位、Ma 3 位、V 1 位
-	return []string{
+	values := []string{
 		formatInt(dp.PointID),
 		formatFloatWithPrecision(dp.Alpha, totalPressureAlphaPrecision),
 		formatFloatWithPrecision(dp.RawData.PAtm, totalPressurePressurePrecision),
@@ -324,10 +335,11 @@ func (s CsvSchema) buildTotalPressureRecord(dp *TotalPressureDataPoint) []string
 		machNumber,
 		velocity,
 	}
+	return append(values, buildRawDeviceChannelValues(s.config.RawDeviceLayouts, dp.RawDeviceChannels, dp.RawDeviceValid)...)
 }
 
 func (s CsvSchema) buildTotalTemperatureRecord(dp *TotalTemperatureDataPoint) []string {
-	return []string{
+	values := []string{
 		formatInt(dp.ID),
 		formatFloat(dp.TargetMachNumber),
 		formatFloat(dp.ActualMachNumber),
@@ -341,6 +353,7 @@ func (s CsvSchema) buildTotalTemperatureRecord(dp *TotalTemperatureDataPoint) []
 		formatFloat(dp.StdDev),
 		formatInt64(dp.Timestamp),
 	}
+	return append(values, buildRawDeviceChannelValues(s.config.RawDeviceLayouts, dp.RawDeviceChannels, dp.RawDeviceValid)...)
 }
 
 // buildSevenHoleRecord 构建七孔 CSV 数据行（spec §7.5 完整 27 列）
@@ -407,7 +420,7 @@ func (s CsvSchema) buildSevenHoleRecord(dp *SevenHoleDataPoint) []string {
 	if s.region == "outer" {
 		// 外区行：φ/θ + Kθ[n]/Kφ[n]/K0[n]/Ks[n]
 		// 外区点 U(Kθ[n]) 等复用 UncertaintyKalpha/Kbeta/K0/Ks 字段（见方法注释）
-		return []string{
+		values := []string{
 			formatInt(dp.PointID),
 			formatFloatWithPrecision(dp.Coordinates["φ"], sevenHoleAnglePrecision),
 			formatFloatWithPrecision(dp.Coordinates["θ"], sevenHoleAnglePrecision),
@@ -436,10 +449,11 @@ func (s CsvSchema) buildSevenHoleRecord(dp *SevenHoleDataPoint) []string {
 			uKs,
 			dp.BoundaryFlag,
 		}
+		return append(values, buildRawDeviceChannelValues(s.config.RawDeviceLayouts, dp.RawDeviceChannels, dp.RawDeviceValid)...)
 	}
 
 	// 内区行（默认分支）：α/β + Kα/Kβ/K0/Ks
-	return []string{
+	values := []string{
 		formatInt(dp.PointID),
 		formatFloatWithPrecision(dp.Coordinates["α"], sevenHoleAnglePrecision),
 		formatFloatWithPrecision(dp.Coordinates["β"], sevenHoleAnglePrecision),
@@ -468,4 +482,5 @@ func (s CsvSchema) buildSevenHoleRecord(dp *SevenHoleDataPoint) []string {
 		uKs,
 		dp.BoundaryFlag,
 	}
+	return append(values, buildRawDeviceChannelValues(s.config.RawDeviceLayouts, dp.RawDeviceChannels, dp.RawDeviceValid)...)
 }

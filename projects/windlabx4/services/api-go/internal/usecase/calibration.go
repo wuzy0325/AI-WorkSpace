@@ -84,6 +84,7 @@ type CalibrationManager struct {
 	runtime               ports.CalibrationRuntime
 	statusProvider        ports.DeviceStatusProvider
 	acquisitionController ports.AcquisitionController
+	profileProvider       ports.DeviceProfileProvider
 
 	// 校准引擎与当前会话。
 	// autoEngine 保留给既有读取路径（Pause/Resume/Status 等），
@@ -150,6 +151,12 @@ func (m *CalibrationManager) SetDeviceStatusProvider(p ports.DeviceStatusProvide
 func (m *CalibrationManager) SetAcquisitionController(controller ports.AcquisitionController) {
 	m.mu.Lock()
 	m.acquisitionController = controller
+	m.mu.Unlock()
+}
+
+func (m *CalibrationManager) SetDeviceProfileProvider(provider ports.DeviceProfileProvider) {
+	m.mu.Lock()
+	m.profileProvider = provider
 	m.mu.Unlock()
 }
 
@@ -220,6 +227,13 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 	}
 	if config.SamplesPerPoint <= 0 {
 		config.SamplesPerPoint = 1
+	}
+	if m.profileProvider != nil {
+		layouts, err := buildCalibrationRawDeviceLayouts(config.ProbeChannels, m.profileProvider.GetProfiles())
+		if err != nil {
+			return err
+		}
+		config.RawDeviceLayouts = layouts
 	}
 
 	// 归一化保存路径：相对路径转绝对，避免 csv_writer 的 os.MkdirAll
@@ -555,7 +569,6 @@ func (m *CalibrationManager) CollectCurrentPoint() error {
 	m.mu.Unlock()
 
 	// 使用总温算法手动采集
-	algorithm := calibration.NewTotalTemperatureAlgorithm()
 	channelReader := m.makeChannelReader()
 
 	pointIdx := 0
@@ -570,12 +583,10 @@ func (m *CalibrationManager) CollectCurrentPoint() error {
 	}
 
 	point := config.Points[pointIdx]
-	sampleInterval := time.Duration(50) * time.Millisecond
-	if config.TotalTemperatureConfig != nil && config.TotalTemperatureConfig.SampleInterval > 0 {
-		sampleInterval = time.Duration(config.TotalTemperatureConfig.SampleInterval) * time.Millisecond
-	}
-
-	dataPoint, err := algorithm.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, sampleInterval, nil, m.makeTimestampReader(), m.makeAcquisitionStateProvider(), nil)
+	algorithm := calibration.NewTotalTemperatureAlgorithm()
+	config.TimestampReader = m.makeTimestampReader()
+	config.AcquisitionStateProvider = m.makeAcquisitionStateProvider()
+	dataPoint, err := algorithm.AcquireDataWithConfig(point, channelReader, config, nil, nil)
 	if err != nil {
 		return m.fail("采集当前工况点失败: %v", err)
 	}

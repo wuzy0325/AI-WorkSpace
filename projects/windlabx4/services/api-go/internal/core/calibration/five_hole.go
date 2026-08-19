@@ -101,7 +101,14 @@ func (a *FiveHoleAlgorithm) AcquireData(point CalPoint, channelReader ChannelVal
 }
 
 func (a *FiveHoleAlgorithm) AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config, checkAbort func() bool, onSampleProgress func(current, total int)) (DataPoint, error) {
-	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, nil, checkAbort, config.TimestampReader, config.AcquisitionStateProvider, onSampleProgress)
+	dataPoint, err := a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, nil, checkAbort, config.TimestampReader, config.AcquisitionStateProvider, onSampleProgress)
+	if err != nil {
+		return nil, err
+	}
+	if len(config.RawDeviceLayouts) > 0 {
+		dataPoint.RawDeviceChannels, dataPoint.RawDeviceValid = readConfiguredRawDeviceChannels(channelReader, config.RawDeviceLayouts)
+	}
+	return dataPoint, nil
 }
 
 // AcquireDataWithChannels 使用探针通道配置采集数据（推荐方式）

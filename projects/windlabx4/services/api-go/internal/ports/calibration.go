@@ -84,6 +84,10 @@ type DeviceStatusProvider interface {
 	GetDeviceStatus(deviceID string) (connected bool, acquiring bool)
 }
 
+type DeviceProfileProvider interface {
+	GetProfiles() []device.Profile
+}
+
 // CalibrationCsvWriter 校准 CSV 写入端口
 // 抽象 CSV 字节 I/O，使 usecase 不依赖 adapters/storage。
 // 实现见 adapters/storage.CalibrationCsvWriter。

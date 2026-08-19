@@ -19,6 +19,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -223,6 +224,11 @@ func (w *CalibrationCsvWriter) initializeFileLocked(path string) error {
 	} else {
 		flags |= os.O_APPEND
 	}
+	if !w.truncate && !isNewFile {
+		if err := validateExistingCalibrationHeader(w.path, w.schema); err != nil {
+			return err
+		}
+	}
 	file, err := os.OpenFile(w.path, flags, 0644)
 	if err != nil {
 		return fmt.Errorf("打开CSV文件失败: %w", err)
@@ -240,6 +246,31 @@ func (w *CalibrationCsvWriter) initializeFileLocked(path string) error {
 		return err
 	}
 
+	return nil
+}
+
+func validateExistingCalibrationHeader(path string, schema calibration.CsvSchema) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("读取已有CSV表头失败: %w", err)
+	}
+	reader := io.Reader(bytes.NewReader(bytes.TrimPrefix(raw, utf8BOM)))
+	if schema.UseGBKEncoding() {
+		reader = transform.NewReader(bytes.NewReader(raw), simplifiedchinese.GBK.NewDecoder())
+	}
+	header, err := csv.NewReader(reader).Read()
+	if err != nil {
+		return fmt.Errorf("读取已有CSV表头失败: %w", err)
+	}
+	expected := schema.BuildHeader()
+	if len(header) != len(expected) {
+		return fmt.Errorf("已有CSV表头与当前校准配置不匹配")
+	}
+	for i := range header {
+		if header[i] != expected[i] {
+			return fmt.Errorf("已有CSV表头与当前校准配置不匹配")
+		}
+	}
 	return nil
 }
 

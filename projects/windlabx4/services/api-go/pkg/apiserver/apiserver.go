@@ -137,6 +137,7 @@ func Start(ctx context.Context, addr string) (*Server, error) {
 	// 并在 ParseAndStartTraversal 启动 loop 之前主动拉起采集，避免"假绿 → no data"。
 	travMgr.SetAcquisitionController(manager)
 	calMgr.SetAcquisitionController(manager)
+	calMgr.SetDeviceProfileProvider(manager)
 
 	// 双探针 registry（Task 14 统一装配），与 legacy travMgr 并存。
 	checkpointStore := storageadapter.NewFileCheckpointStore()

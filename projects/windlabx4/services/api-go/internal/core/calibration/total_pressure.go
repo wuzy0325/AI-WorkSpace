@@ -67,7 +67,12 @@ func (a *TotalPressureAlgorithm) ValidateConfig(config Config) error {
 // AcquireDataWithConfig 自动校准引擎调用入口：使用完整配置（含 ProbeChannels）采集单点。
 // 采样间隔优先取 AcquisitionSampling.BatchPollIntervalMs，缺省回退到 10ms（与 five-hole 一致）。
 func (a *TotalPressureAlgorithm) AcquireDataWithConfig(point CalPoint, channelReader ChannelValueReader, config Config, checkAbort func() bool, onSampleProgress func(current, total int)) (DataPoint, error) {
-	return a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, config.AcquisitionSampling, checkAbort, config.TimestampReader, config.AcquisitionStateProvider, onSampleProgress)
+	dataPoint, err := a.AcquireDataWithChannels(point, channelReader, config.ProbeChannels, config.SamplesPerPoint, config.AcquisitionSampling, checkAbort, config.TimestampReader, config.AcquisitionStateProvider, onSampleProgress)
+	if err != nil {
+		return nil, err
+	}
+	dataPoint.RawDeviceChannels, dataPoint.RawDeviceValid = readConfiguredRawDeviceChannels(channelReader, config.RawDeviceLayouts)
+	return dataPoint, nil
 }
 
 // AcquireData 旧接口实现，仅作 Algorithm 接口兼容。
