@@ -1,7 +1,7 @@
 {
   "$schema": "https://wails.io/schemas/config.v3.json",
   "name": "windlabx4",
-  "version": "0.15.5",
+  "version": "0.15.6",
   "outputfilename": "WindLabX4",
   "frontend": {
     "dir": "frontend",

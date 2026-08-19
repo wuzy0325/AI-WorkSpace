@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.15.6] - 2026-08-19
+
+### Fixed
+
+- **DAQ-P-1604 旧固件采集无数据**：部分旧固件会 ACK `0x0400` 设备时间戳配置，但仍返回不含时间戳的 77 字节旧格式帧，导致所有数据帧解析失败、界面无数据（日志高频 `auto-resync triggered`）。驱动现对启用设备时间戳时收到的标准 77 字节旧帧自动回退为「无时间戳」格式解析，数据改用主机接收时间；帧头/浮点校验仍严格保留，非法帧不会被误放行。
+- **新建设备默认单位错误**：新建窗口默认类型为模拟设备（单位 V），切换为 `DAQ-P-1604` 时沿用旧类型单位并把新通道覆盖为 `V`。现切换类型后从新类型的默认通道重新读取单位，`DAQ-P-1604` 新建默认 `Pa`。
+- **新建设备默认开启硬件时间戳**：`DAQ-P-1604` 新建配置默认从「开启设备时间戳」改为「关闭」（使用主机时间），避免旧固件设备采集无数据；用户可在设备编辑页手动开启。
+
+### Internal
+
+- 新增 `TestDAQP1604ProcessPayloadFallsBackForLegacyFrameWithoutTimestamp`（旧帧回退解析值校验）与 `TestDAQP1604ProcessPayloadDoesNotAcceptMalformedLegacyFrame`（非法旧帧不被兼容逻辑吞掉）两个回归测试。
+
+### Verification
+
+- `go test ./internal/adapters/hardware/...`（backend）: passed
+- `npm run typecheck`（frontend）: passed
+- `npm run test`（frontend，vitest）: passed（38 文件 / 366 用例）
+- 生产构建 + NSIS 打包 + 冒烟启动: 见 releases/0.15.6.md
+
+### Known Issues
+
+- 暂无新增。已知限制同 0.15.5：T 型量程下限恰为 0℃ 时真实 0℃ 测量与未接入不可区分；UI 修改热电偶类型保存后不会立即下发到已连接设备。
+
 ## [0.15.5] - 2026-08-17
 
 ### Fixed
