@@ -35,6 +35,8 @@ func TestIsAtmosphericChannel(t *testing.T) {
 		{"SIMULATED 通道(17)", DeviceSimulated, 17, false},
 		{"WTN_PXI 通道(16)", DeviceWTNPXI, 16, false},
 		{"DAQ-T-1603 通道(17)", DeviceDaqT1603, 17, false},
+		{"PACE1000 大气压通道(0)", DevicePACE1000, 0, true},
+		{"PACE1000 非法通道(1)", DevicePACE1000, 1, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

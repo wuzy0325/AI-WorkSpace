@@ -21,6 +21,8 @@ const (
 	// 机内 2 张独立采集卡（Unit ID 1/2），每卡 8 通道，合并对外 16 通道。
 	// 与 DAQ-T-1603 协议、传输、数据语义完全不同，身份严格隔离（spec-daq-t1602）。
 	DeviceDaqT1602 Type = "DAQ-T-1602"
+	// DevicePACE1000 PACE1000 单通道大气压力串口采集设备。
+	DevicePACE1000 Type = "PACE1000"
 )
 
 // ChannelSensorType 通道传感器类型枚举（仅 DAQ-P-1603 使用）。
@@ -66,10 +68,13 @@ const (
 //
 // 其他设备类型（DAQ-P-1603 / DAQ-T-1603 / DSA3217 / WTN_PXI / SIMULATED）
 // 无大气辅助通道，统一返回 false。
+// PACE1000 唯一通道（Index 0）即大气压力，同样禁止校零（spec-pace1000-integration）。
 func IsAtmosphericChannel(profileType Type, channelIndex int) bool {
 	switch profileType {
 	case DeviceDAQP1604, DeviceDAQP1604Pre:
 		return channelIndex == P1604PreAtmChannelIndex || channelIndex == P1604PreAtmTempChannelIndex
+	case DevicePACE1000:
+		return channelIndex == 0
 	default:
 		return false
 	}

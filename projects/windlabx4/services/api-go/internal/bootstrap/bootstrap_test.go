@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"windlabx4/services/api-go/internal/adapters/hardware"
 	"windlabx4/services/api-go/internal/core/device"
 )
 
@@ -37,5 +38,15 @@ func TestBuildAPIServerInitializesDefaultProfilesAndRouter(t *testing.T) {
 	}
 	if len(profiles) != 1 || profiles[0].ID != "sim-1" || profiles[0].Type != device.DeviceSimulated {
 		t.Fatalf("unexpected default profiles: %+v", profiles)
+	}
+}
+
+func TestDeviceFactoryCreatesPACE1000Adapter(t *testing.T) {
+	created, err := (deviceFactory{}).Create(device.Profile{ID: "pace-1", Type: device.DevicePACE1000})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, ok := created.(*hardware.PACE1000Adapter); !ok {
+		t.Fatalf("expected PACE1000Adapter, got %T", created)
 	}
 }

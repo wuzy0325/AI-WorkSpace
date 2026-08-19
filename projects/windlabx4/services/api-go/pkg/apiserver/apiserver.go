@@ -227,6 +227,8 @@ func (deviceFactory) Create(profile device.Profile) (windaqports.Device, error) 
 		return windaqhardware.NewT1603Adapter(profile), nil
 	case device.DeviceDaqT1602:
 		return windaqhardware.NewT1602Adapter(profile), nil
+	case device.DevicePACE1000:
+		return windaqhardware.NewPACE1000Adapter(profile), nil
 	case device.DeviceWTNPXI:
 		return windaqhardware.NewWTNPXI(profile), nil
 	case device.DeviceDSA3217:

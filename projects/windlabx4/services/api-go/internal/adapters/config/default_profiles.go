@@ -52,6 +52,11 @@ func NewDefaultProfile(id string, deviceType device.Type) device.Profile {
 		profile.Port = 502
 		profile.Channels = defaultDaqT1602Channels()
 		profile.DaqT1602Config = defaultDaqT1602Config()
+	case device.DevicePACE1000:
+		profile.Transport = "serial"
+		profile.BaudRate = 9600
+		profile.SamplingRate = 2
+		profile.Channels = defaultPACE1000Channels()
 	case device.DeviceDAQP1604Pre:
 		// 实测 DAQ-P-1604Pre 默认 IP/Port（与 Cursor DAQ 一致）
 		profile.Address = "192.168.3.232"
@@ -74,6 +79,9 @@ func NewDefaultProfile(id string, deviceType device.Type) device.Profile {
 		// （如总压/静压参考通道），与 DAQ-P-1604"全部启用"默认区分。
 		profile.Channels[i].CalibrationEnabled = converter.SupportsZeroCalibration(profile.Channels[i].Unit)
 		if profile.Type == device.DeviceDAQP1603 && i < 2 {
+			profile.Channels[i].CalibrationEnabled = false
+		}
+		if profile.Type == device.DevicePACE1000 {
 			profile.Channels[i].CalibrationEnabled = false
 		}
 	}
@@ -119,6 +127,16 @@ func NormalizeProfile(profile device.Profile) device.Profile {
 		}
 		if profile.SamplingRate == 0 {
 			profile.SamplingRate = defaultProfile.SamplingRate
+		}
+	}
+	if profile.Type == device.DevicePACE1000 {
+		profile.Transport = "serial"
+		profile.BaudRate = 9600
+		if profile.SamplingRate == 0 {
+			profile.SamplingRate = 2
+		}
+		for i := range profile.Channels {
+			profile.Channels[i].CalibrationEnabled = false
 		}
 	}
 	if profile.Type == device.DeviceDaqT1603 {
@@ -264,6 +282,13 @@ func defaultDaqT1602Channels() []device.ChannelConfig {
 		}
 	}
 	return channels
+}
+
+func defaultPACE1000Channels() []device.ChannelConfig {
+	return []device.ChannelConfig{{
+		Index: 0, Name: "大气压力", Enabled: true, Unit: "Pa", Precision: 1,
+		RangeMin: 30000, RangeMax: 120000,
+	}}
 }
 
 func defaultDAQP1604Channels() []device.ChannelConfig {

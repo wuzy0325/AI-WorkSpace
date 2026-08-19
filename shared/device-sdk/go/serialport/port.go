@@ -51,6 +51,10 @@ func Open(cfg Config) (*Port, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open serial %s: %w", cfg.Name, err)
 	}
+	if err := p.SetReadTimeout(cfg.ReadTimeout); err != nil {
+		_ = p.Close()
+		return nil, fmt.Errorf("configure serial %s read timeout: %w", cfg.Name, err)
+	}
 	slog.Info("Serial port opened", "port", cfg.Name, "baud", cfg.BaudRate)
 	return &Port{port: p, name: cfg.Name}, nil
 }
@@ -58,12 +62,13 @@ func Open(cfg Config) (*Port, error) {
 // Close closes serial port
 func (p *Port) Close() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.port == nil {
+	port := p.port
+	p.port = nil
+	p.mu.Unlock()
+	if port == nil {
 		return nil
 	}
-	err := p.port.Close()
-	p.port = nil
+	err := port.Close()
 	slog.Info("Serial port closed", "port", p.name)
 	return err
 }
@@ -71,21 +76,23 @@ func (p *Port) Close() error {
 // Write writes data
 func (p *Port) Write(data []byte) (int, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.port == nil {
+	port := p.port
+	p.mu.Unlock()
+	if port == nil {
 		return 0, fmt.Errorf("serial port %s not open", p.name)
 	}
-	return p.port.Write(data)
+	return port.Write(data)
 }
 
 // Read reads data
 func (p *Port) Read(buf []byte) (int, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.port == nil {
+	port := p.port
+	p.mu.Unlock()
+	if port == nil {
 		return 0, fmt.Errorf("serial port %s not open", p.name)
 	}
-	return p.port.Read(buf)
+	return port.Read(buf)
 }
 
 // SetReadTimeout sets read timeout

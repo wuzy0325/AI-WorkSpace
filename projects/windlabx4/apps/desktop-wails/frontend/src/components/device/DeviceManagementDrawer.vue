@@ -106,6 +106,7 @@ const deviceTypeOptions = computed(() => [
   { value: 'DAQ-P-1604Pre', label: 'DAQ-P-1604Pre' },
   { value: 'DAQ-T-1603', label: 'DAQ-T-1603' },
   { value: 'DAQ-T-1602', label: 'DAQ-T-1602' },
+  { value: 'PACE1000', label: 'PACE1000' },
   { value: 'WTN_PXI', label: 'WTN_PXI' },
   { value: 'DSA3217', label: 'DSA3217' },
 ])
@@ -121,12 +122,16 @@ const pressureUnitOptions = computed(() =>
 
 function isTcpType(t: DeviceType): boolean {
   // DAQ-P-1603 走 DLL FFI 路径，DLL 内部封装 TCP，对外仍属 TCP 类型
-  return t === 'DAQ-P-1604' || t === 'DAQ-P-1603' || t === 'DAQ-P-1604Pre' || t === 'DAQ-T-1603' || t === 'DAQ-T-1602' || t === 'WTN_PXI' || t === 'DSA3217'
+  return t === 'DAQ-P-1604' || t === 'DAQ-P-1603' || t === 'DAQ-P-1604Pre' || t === 'DAQ-T-1603' || t === 'DAQ-T-1602' || t === 'PACE1000' || t === 'WTN_PXI' || t === 'DSA3217'
 }
 
 function supportsTransportSwitch(t: DeviceType): boolean {
-  // DAQ-P-1603 由 DLL 管理通信，不支持切串口；DAQ-T-1602 仅支持 Modbus TCP
-  return t !== 'WTN_PXI' && t !== 'DAQ-P-1604' && t !== 'DAQ-P-1603' && t !== 'DAQ-P-1604Pre' && t !== 'DAQ-T-1602' && t !== 'DSA3217'
+  // DAQ-P-1603 由 DLL 管理通信，不支持切串口；DAQ-T-1602 仅支持 Modbus TCP；PACE1000 仅支持串口
+  return t !== 'WTN_PXI' && t !== 'DAQ-P-1604' && t !== 'DAQ-P-1603' && t !== 'DAQ-P-1604Pre' && t !== 'DAQ-T-1602' && t !== 'PACE1000' && t !== 'DSA3217'
+}
+
+function isPACE1000Type(t: DeviceType): boolean {
+  return t === 'PACE1000'
 }
 
 function isPortRequired(t: DeviceType): boolean {
@@ -253,6 +258,8 @@ function createDefaultChannels(type: DeviceType): ChannelConfig[] {
       return Array.from({ length: 16 }, (_, i) => ({
         index: i, name: `TC${i + 1}`, enabled: true, unit: 'degC', precision: 2,
       }))
+    case 'PACE1000':
+      return [{ index: 0, name: '大气压力', enabled: true, unit: 'Pa', precision: 1, rangeMin: 30000, rangeMax: 120000, calibrationEnabled: false }]
     case 'SIMULATED':
       return [
         ...Array.from({ length: 16 }, (_, i) => ({
@@ -302,6 +309,7 @@ function createDefaultChannels(type: DeviceType): ChannelConfig[] {
 function createBlankProfile(type: DeviceType): DeviceProfile {
   const id = globalThis.crypto.randomUUID()
   const channels = createDefaultChannels(type)
+  let transport: 'tcp' | 'serial' = 'tcp'
   let address = '127.0.0.1'
   let port = 0
   let samplingRate = 20
@@ -318,6 +326,10 @@ function createBlankProfile(type: DeviceType): DeviceProfile {
     address = '192.168.3.201'
     port = 502
   }
+  if (isPACE1000Type(type)) {
+    transport = 'serial'
+    samplingRate = 2
+  }
   if (type === 'DSA3217') {
     address = '192.168.1.254'
     port = 5000
@@ -332,8 +344,8 @@ function createBlankProfile(type: DeviceType): DeviceProfile {
     samplingRate = 100
   }
   return {
-    id, name: '', type, transport: 'tcp', address, localAddress: '', port,
-    serialPort: '', baudRate: 115200, samplingRate,
+    id, name: '', type, transport: isPACE1000Type(type) ? 'serial' : 'tcp', address, localAddress: '', port,
+    serialPort: '', baudRate: isPACE1000Type(type) ? 9600 : 115200, samplingRate,
     autoConnect: true, channels,
     daqT1603Config: type === 'DAQ-T-1603'
       ? { thermocoupleTypes: 'KKKKKKKKKKKKKKKK', channelMask: 'FFFF', samplingRate: 10, binaryFormat: false, averageCount: 4, triggerMode: 0, triggerEdge: 0, triggerCount: 0, showTimestamp: false, showSequence: false, openCircuitCheck: '0000' }
@@ -534,6 +546,13 @@ async function onTypeChanged(next: DeviceType) {
     draft.value.daqT1602Config = { typeCodes: Array(16).fill(2), sampleRateHz: 5 }
     draft.value.address = '192.168.3.201'
     draft.value.port = 502
+  } else if (next === 'PACE1000') {
+    draft.value.transport = 'serial'
+    draft.value.serialPort = ''
+    draft.value.baudRate = 9600
+    draft.value.samplingRate = 2
+    draft.value.address = ''
+    draft.value.port = 0
   } else if (next === 'DAQ-P-1604' || next === 'WTN_PXI') {
     draft.value.address = '192.168.3.101'
     draft.value.port = 9000
@@ -1266,14 +1285,14 @@ const scanError = ref<string | null>(null)
                     <div class="editor-unit-row">
                       <div class="editor-unit-select">
                         <UiSelect
-                          v-if="!isWtnPxiType(draft.type) && !isTempUnitFixed(draft.type)"
+                          v-if="!isWtnPxiType(draft.type) && !isTempUnitFixed(draft.type) && !isPACE1000Type(draft.type)"
                           :model-value="deviceUnit"
                           :options="pressureUnitOptions"
                           :disabled="isReadOnly"
                           @update:model-value="deviceUnit = String($event)"
                         />
                         <div v-else class="editor-input editor-input-readonly">
-                          {{ isWtnPxiType(draft.type) ? i18n.t.dev_wtnPxiFixedConfig : i18n.t.dev_daqT1603FixedUnit }}
+                          {{ isWtnPxiType(draft.type) ? i18n.t.dev_wtnPxiFixedConfig : isPACE1000Type(draft.type) ? 'Pa' : i18n.t.dev_daqT1603FixedUnit }}
                         </div>
                       </div>
                       <p class="editor-unit-hint">{{ i18n.t.dev_deviceUnitHint }}</p>
@@ -1397,9 +1416,10 @@ const scanError = ref<string | null>(null)
                       <UiInput v-model="draft.serialPort" :disabled="isReadOnly" placeholder="COM1" />
                       <div v-if="fieldErrors.serialPort" class="editor-field-error">● {{ fieldErrors.serialPort }}</div>
                     </div>
-                    <div class="editor-field col-5">
+                   <div class="editor-field col-5">
                       <label class="editor-label">{{ i18n.t.dev_baudRate }} *</label>
-                      <UiInputNumber v-model="draft.baudRate" class="w-full" :disabled="isReadOnly" />
+                      <UiInputNumber v-model="draft.baudRate" class="w-full" :disabled="isReadOnly || draft.type === 'PACE1000'" />
+                      <div v-if="draft.type === 'PACE1000'" class="editor-field-hint">PACE1000 固定 9600，无流控</div>
                       <div v-if="fieldErrors.baudRate" class="editor-field-error">● {{ fieldErrors.baudRate }}</div>
                     </div>
                   </template>
@@ -1556,21 +1576,21 @@ const scanError = ref<string | null>(null)
                     <tbody>
                       <tr v-for="row in channelRows" :key="row.channel.index">
                         <td class="text-center">
-                          <UiCheckbox v-model:checked="row.channel.enabled" :disabled="isReadOnly" />
+                          <UiCheckbox v-model:checked="row.channel.enabled" :disabled="isReadOnly || draft.type === 'PACE1000'" />
                         </td>
                         <td class="font-mono">{{ channelLabel(row.channel).padStart(2, '0') }}</td>
                         <td>
-                          <UiInput v-model="row.channel.name" :disabled="isReadOnly" />
+                          <UiInput v-model="row.channel.name" :disabled="isReadOnly || draft.type === 'PACE1000'" />
                         </td>
                         <td>
                           <div class="editor-ch-range">
-                            <UiInputNumber v-model="row.channel.rangeMin" class="w-full" :disabled="isReadOnly || row.originalIndex >= 16" />
+                            <UiInputNumber v-model="row.channel.rangeMin" class="w-full" :disabled="isReadOnly || draft.type === 'PACE1000' || row.originalIndex >= 16" />
                             <span>~</span>
-                            <UiInputNumber v-model="row.channel.rangeMax" class="w-full" :disabled="isReadOnly || row.originalIndex >= 16" />
+                            <UiInputNumber v-model="row.channel.rangeMax" class="w-full" :disabled="isReadOnly || draft.type === 'PACE1000' || row.originalIndex >= 16" />
                           </div>
                         </td>
                         <td>
-                          <UiInputNumber v-model="row.channel.precision" class="w-full" :min="0" :disabled="isReadOnly || row.originalIndex >= 16" />
+                          <UiInputNumber v-model="row.channel.precision" class="w-full" :min="0" :disabled="isReadOnly || draft.type === 'PACE1000' || row.originalIndex >= 16" />
                         </td>
                       </tr>
                     </tbody>

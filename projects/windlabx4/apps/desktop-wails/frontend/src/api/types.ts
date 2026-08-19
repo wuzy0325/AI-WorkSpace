@@ -1,4 +1,4 @@
-export type DeviceType = 'SIMULATED' | 'DAQ-P-1604' | 'DAQ-P-1603' | 'DAQ-T-1603' | 'DAQ-T-1602' | 'DAQ-P-1604Pre' | 'WTN_PXI' | 'DSA3217'
+export type DeviceType = 'SIMULATED' | 'DAQ-P-1604' | 'DAQ-P-1603' | 'DAQ-T-1603' | 'DAQ-T-1602' | 'PACE1000' | 'DAQ-P-1604Pre' | 'WTN_PXI' | 'DSA3217'
 
 /**
  * 通道传感器类型（仅 DAQ-P-1603 使用）。

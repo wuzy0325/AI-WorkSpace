@@ -31,6 +31,32 @@ func TestFileProfileStoreSavesAndLoadsProfiles(t *testing.T) {
 	}
 }
 
+func TestFileProfileStoreRoundTripsPACE1000SerialProfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profiles.json")
+	store := NewFileProfileStore(path)
+	profile := NewDefaultProfile("pace-1", device.DevicePACE1000)
+	profile.SerialPort = "COM7"
+
+	if err := store.SaveProfiles([]device.Profile{profile}); err != nil {
+		t.Fatalf("SaveProfiles returned error: %v", err)
+	}
+
+	profiles, err := NewFileProfileStore(path).LoadProfiles()
+	if err != nil {
+		t.Fatalf("LoadProfiles returned error: %v", err)
+	}
+	if len(profiles) != 1 {
+		t.Fatalf("expected one profile, got %d", len(profiles))
+	}
+	got := profiles[0]
+	if got.Type != device.DevicePACE1000 || got.Transport != "serial" || got.SerialPort != "COM7" || got.BaudRate != 9600 {
+		t.Fatalf("unexpected PACE1000 profile: %+v", got)
+	}
+	if len(got.Channels) != 1 || got.Channels[0].Unit != "Pa" {
+		t.Fatalf("unexpected PACE1000 channels: %+v", got.Channels)
+	}
+}
+
 func TestFileProfileStoreLoadsEmptyListWhenFileMissing(t *testing.T) {
 	store := NewFileProfileStore(filepath.Join(t.TempDir(), "missing", "profiles.json"))
 

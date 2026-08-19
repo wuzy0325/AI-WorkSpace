@@ -39,6 +39,49 @@ func TestDefaultSimulatedProfileHasEnabledChannels(t *testing.T) {
 	}
 }
 
+func TestDefaultPACE1000ProfileHasSerialAtmosphericPressureChannel(t *testing.T) {
+	profile := NewDefaultProfile("pace-1", device.DevicePACE1000)
+
+	if profile.Type != device.DevicePACE1000 {
+		t.Fatalf("expected PACE1000 type, got %q", profile.Type)
+	}
+	if profile.Transport != "serial" || profile.BaudRate != 9600 {
+		t.Fatalf("expected serial 9600 profile, got transport=%q baud=%d", profile.Transport, profile.BaudRate)
+	}
+	if profile.SamplingRate != 2 {
+		t.Fatalf("expected 2Hz sampling, got %d", profile.SamplingRate)
+	}
+	if len(profile.Channels) != 1 {
+		t.Fatalf("expected one channel, got %d", len(profile.Channels))
+	}
+	channel := profile.Channels[0]
+	if channel.Index != 0 || channel.Name != "大气压力" || channel.Unit != "Pa" {
+		t.Fatalf("unexpected channel identity: %+v", channel)
+	}
+	if channel.Precision != 1 || channel.RangeMin != 30000 || channel.RangeMax != 120000 {
+		t.Fatalf("unexpected channel range/precision: %+v", channel)
+	}
+	if channel.CalibrationEnabled {
+		t.Fatal("PACE1000 atmospheric pressure must not be calibration-enabled")
+	}
+}
+
+func TestNormalizePACE1000PreservesSerialPortAndDisablesCalibration(t *testing.T) {
+	profile := device.Profile{ID: "pace-1", Type: device.DevicePACE1000, SerialPort: "COM9"}
+
+	normalized := NormalizeProfile(profile)
+
+	if normalized.SerialPort != "COM9" || normalized.Transport != "serial" || normalized.BaudRate != 9600 {
+		t.Fatalf("unexpected normalized transport: %+v", normalized)
+	}
+	if normalized.SamplingRate != 2 || len(normalized.Channels) != 1 {
+		t.Fatalf("unexpected normalized sampling/channels: %+v", normalized)
+	}
+	if normalized.Channels[0].CalibrationEnabled {
+		t.Fatal("PACE1000 calibration must remain disabled after normalization")
+	}
+}
+
 func TestDefaultDaqT1602ProfileHasTemperatureChannels(t *testing.T) {
 	profile := NewDefaultProfile("temp-t1602", device.DeviceDaqT1602)
 
@@ -368,6 +411,7 @@ func TestNormalizeProfilePreservesDaqT1603ConfigValues(t *testing.T) {
 //   - 将 TareOffset 换算为 CalibrationOffset（kPa → Pa）
 //   - 强制 CalibrationEnabled = true（用户显式校零优先于"CH01/CH02 默认关闭"规则）
 //   - 清空 TareOffset，补齐 CalibrationUnit / CalibrationAt
+//
 // 回归症状：若迁移逻辑把"默认关闭"放在 TareOffset 迁移之前且不重新置 true，
 // CalibrationApplier 会因 CalibrationEnabled=false 跳过该通道，用户历史校零静默失效。
 func TestMigrateProfile_DaqP1603_PreservesTareOffsetOnFirstChannels(t *testing.T) {

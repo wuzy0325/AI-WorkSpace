@@ -83,6 +83,7 @@ const (
 	DeviceTypeDAQP1604Pre = device.DeviceDAQP1604Pre
 	DeviceTypeDaqT1603    = device.DeviceDaqT1603
 	DeviceTypeDaqT1602    = device.DeviceDaqT1602
+	DeviceTypePACE1000    = device.DevicePACE1000
 	DeviceTypeWTNPXI      = device.DeviceWTNPXI
 	DeviceTypeDSA3217     = device.DeviceDSA3217
 )

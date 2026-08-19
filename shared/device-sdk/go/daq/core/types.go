@@ -16,6 +16,8 @@ const (
 	// DeviceDaqT1602 DAQ-T-1602 温度扫描阀：Modbus TCP（端口 502），
 	// 机内 2 张独立采集卡（Unit ID 1/2），每卡 8 通道，合并对外 16 通道。
 	DeviceDaqT1602 Type = "DAQ-T-1602"
+	// DevicePACE1000 PACE1000 单通道大气压力串口采集设备。
+	DevicePACE1000 Type = "PACE1000"
 )
 
 // ChannelSensorType 通道传感器类型枚举。
@@ -72,6 +74,8 @@ type Profile struct {
 	Transport      string                 `json:"transport,omitempty"`
 	Address        string                 `json:"address,omitempty"`
 	Port           int                    `json:"port,omitempty"`
+	SerialPort     string                 `json:"serialPort,omitempty"`
+	BaudRate       int                    `json:"baudRate,omitempty"`
 	SamplingRate   int                    `json:"samplingRate"`
 	Channels       []ChannelConfig        `json:"channels"`
 	DaqT1603Config DaqT1603HardwareConfig `json:"daqT1603Config,omitempty"`
