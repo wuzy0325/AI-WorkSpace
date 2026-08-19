@@ -342,8 +342,8 @@ function createBlankProfile(type: DeviceType): DeviceProfile {
     daqT1602Config: type === 'DAQ-T-1602'
       ? { typeCodes: Array(16).fill(2), sampleRateHz: 5 }
       : undefined,
-    // DAQ-P-1604 默认开启硬件时间戳（更精确），与 daq-p1604 项目对齐；用户可在"基本信息"中关闭回退到系统时间。
-    daqP1604UseDeviceTimestamp: type === 'DAQ-P-1604' ? true : undefined,
+    // DAQ-P-1604 默认使用主机时间，兼容不返回时间戳字段的旧固件；用户可在"基本信息"中手动开启硬件时间戳。
+    daqP1604UseDeviceTimestamp: type === 'DAQ-P-1604' ? false : undefined,
   }
 }
 
@@ -509,19 +509,21 @@ async function onTypeChanged(next: DeviceType) {
   draft.value.type = next
   draft.value.transport = next === 'WTN_PXI' ? 'tcp' : (draft.value.transport ?? 'tcp')
   draft.value.channels = createDefaultChannels(next)
-  deviceUnit.value = normalizeDeviceUnit(next, deviceUnit.value)
+  deviceUnit.value = normalizeDeviceUnit(next, getDeviceUnitFromChannels(draft.value.channels))
   const range = getDeviceRangeFromChannels(draft.value.channels)
   deviceRangeMin.value = range?.min ?? null
   deviceRangeMax.value = range?.max ?? null
   devicePrecision.value = getDevicePrecisionFromChannels(draft.value.channels)
   applyDeviceUnitToChannels(deviceUnit.value)
   if (next === 'DAQ-P-1604') {
+    draft.value.daqP1604UseDeviceTimestamp = false
     enableAtmospheric.value = false
     if (draft.value.channels.length > 16) {
       draft.value.channels[16] = { ...draft.value.channels[16], enabled: false }
       draft.value.channels[17] = { ...draft.value.channels[17], enabled: false }
     }
   } else {
+    draft.value.daqP1604UseDeviceTimestamp = undefined
     enableAtmospheric.value = draft.value.channels[16]?.enabled !== false
   }
   if (next === 'DAQ-T-1603') {

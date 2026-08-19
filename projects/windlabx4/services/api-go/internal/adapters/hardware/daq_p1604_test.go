@@ -1,6 +1,8 @@
 package hardware
 
 import (
+	"encoding/binary"
+	"math"
 	"net"
 	"strings"
 	"sync"
@@ -11,6 +13,65 @@ import (
 	sharedproto "shared.local/device-sdk/go/protocol"
 	"windlabx4/services/api-go/internal/core/device"
 )
+
+func TestDAQP1604ProcessPayloadFallsBackForLegacyFrameWithoutTimestamp(t *testing.T) {
+	useDeviceTimestamp := true
+	d := NewDAQP1604(device.Profile{
+		ID:                         "p1604-legacy-frame",
+		Name:                       "legacy-firmware",
+		Type:                       device.DeviceDAQP1604,
+		DaqP1604UseDeviceTimestamp: &useDeviceTimestamp,
+	})
+
+	var got device.DataPayload
+	d.SetDataSink(func(payload device.DataPayload) { got = payload })
+
+	frame := make([]byte, 77)
+	frame[0] = 0x01
+	for i := 0; i < 18; i++ {
+		binary.BigEndian.PutUint32(frame[5+i*4:], math.Float32bits(float32(i+1)))
+	}
+
+	d.processPayload(frame)
+
+	if len(got.Channels) != 18 {
+		t.Fatalf("channels = %d, want 18", len(got.Channels))
+	}
+	if got.Channels[0] != 16 || got.Channels[15] != 1 {
+		t.Fatalf("pressure channels = [%v, ..., %v], want [16, ..., 1]", got.Channels[0], got.Channels[15])
+	}
+	if got.Channels[16] != 17 || got.Channels[17] != 18 {
+		t.Fatalf("atmospheric channels = [%v, %v], want [17, 18]", got.Channels[16], got.Channels[17])
+	}
+	if got.DeviceTimestamp != 0 {
+		t.Fatalf("device timestamp = %d, want host timestamp fallback", got.DeviceTimestamp)
+	}
+}
+
+func TestDAQP1604ProcessPayloadDoesNotAcceptMalformedLegacyFrame(t *testing.T) {
+	useDeviceTimestamp := true
+	d := NewDAQP1604(device.Profile{
+		ID:                         "p1604-malformed-legacy-frame",
+		Type:                       device.DeviceDAQP1604,
+		DaqP1604UseDeviceTimestamp: &useDeviceTimestamp,
+	})
+
+	var sinkCalled bool
+	d.SetDataSink(func(device.DataPayload) { sinkCalled = true })
+
+	frame := make([]byte, 77)
+	d.processPayload(frame)
+
+	d.mu.RLock()
+	frameErrors := d.frameErrors
+	d.mu.RUnlock()
+	if sinkCalled {
+		t.Fatal("malformed legacy frame should not reach data sink")
+	}
+	if frameErrors != 1 {
+		t.Fatalf("frame errors = %d, want 1", frameErrors)
+	}
+}
 
 func TestRunDAQP1604HandshakeTimesOutAndClosesConn(t *testing.T) {
 	server, client := net.Pipe()

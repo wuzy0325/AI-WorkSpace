@@ -870,6 +870,11 @@ func (d *DAQP1604) processPayload(data []byte) {
 
 	// DAQ-P-1604 始终请求大气数据（0800），所以 hasAtmosphericData = true。
 	channels, deviceTimestampMs, _, err := sharedproto.ParseStreamFrameEx(data, useDeviceTs, true)
+	// 部分旧固件会 ACK 0x0400 时间戳配置，但仍返回不含时间戳的 77 字节旧帧。
+	// 这类帧已由长度前缀正确分帧，可安全回退到主机接收时间解析。
+	if err != nil && useDeviceTs && len(data) == sharedproto.StreamFrameHeaderSize+18*4 {
+		channels, deviceTimestampMs, _, err = sharedproto.ParseStreamFrameEx(data, false, true)
+	}
 	if err != nil {
 		d.mu.Lock()
 		d.frameErrors++
