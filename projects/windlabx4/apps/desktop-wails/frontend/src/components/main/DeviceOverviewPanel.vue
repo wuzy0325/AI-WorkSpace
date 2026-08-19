@@ -31,7 +31,6 @@ function getDeviceTheme(index: number) {
 interface OverviewChannelItem {
   key: string
   channelIndex: number
-  label: string
   name: string
   formattedValue: string
   unit: string
@@ -57,7 +56,9 @@ interface OverviewDeviceGroup {
 function channelDisplayName(deviceId: string, channelIndex: number): string {
   const profile = deviceStore.profiles?.find((item) => item.id === deviceId)
   const channels = Array.isArray(profile?.channels) ? profile.channels : []
-  const name = channels[channelIndex]?.name?.trim()
+  // 按通道 index 精确匹配，避免 profile.channels 数组顺序与通道索引不一致时错位取名
+  const channel = channels.find((ch) => ch.index === channelIndex)
+  const name = channel?.name?.trim()
   if (!name) return `CH${channelIndex + 1}`
   return name
 }
@@ -160,7 +161,6 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
       return {
         key: `${profile.id}-${channelIndex}`,
         channelIndex,
-        label: `CH_${String(channelIndex + 1).padStart(2, '0')}`,
         name: channelDisplayName(profile.id, channelIndex),
         formattedValue: deviceStore.formatValue(profile.id, channelIndex, rawValue),
         unit: channelUnit(
@@ -282,7 +282,7 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
                 <span class="overview-channel-micro__unit">{{ channel.unit }}</span>
               </div>
               <div class="overview-channel-micro__meta">
-                <span class="overview-channel-micro__ch">{{ channel.label }}</span>
+                <span class="overview-channel-micro__ch" :title="channel.name">{{ channel.name }}</span>
                 <span class="overview-channel-micro__dot" :class="channel.tone === 'warning' ? 'bg-amber-500' : 'bg-emerald-500'" />
               </div>
             </div>
@@ -513,6 +513,9 @@ const overviewGroups = computed<OverviewDeviceGroup[]>(() =>
   font-weight: 700;
   color: var(--text-muted);
   letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .overview-channel-micro__dot {

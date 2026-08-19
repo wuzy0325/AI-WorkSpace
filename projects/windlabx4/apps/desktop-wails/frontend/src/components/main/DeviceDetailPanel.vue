@@ -261,6 +261,7 @@ const channelCards = computed<ChannelCardData[]>(() => {
     const isThisChannelCalibrating = isSingleChannelCalib && opChannelIndex === index
     cards.push({
       index,
+      name: profile.value?.channels.find((channel) => channel.index === index)?.name?.trim() || `CH${index + 1}`,
       rawValue,
       formattedValue: formatChannel(index, rawValue),
       unit: channelUnit(index),

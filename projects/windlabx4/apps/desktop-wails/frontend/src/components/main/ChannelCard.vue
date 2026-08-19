@@ -5,6 +5,8 @@ import { useI18nStore } from '@stores/i18nStore'
 /** 单个通道卡片的预计算数据，由 DeviceDetailPanel 的 channelCards computed 产出。 */
 export interface ChannelCardData {
   index: number
+  /** 通道显示名（如 WTN_PXI 的"球罐压力"），缺省回退为 CH<index+1> */
+  name: string
   // null 表示无有效测量值（如 T1602 未接入热电偶通道），卡片显示 formattedValue 为 "--"
   rawValue: number | null
   formattedValue: string
@@ -51,7 +53,7 @@ function onCalibrate(): void {
       'channel-card--compact': compact
     }"
     :style="card.style"
-    :title="compact ? `CH_${String(card.index + 1).padStart(2, '0')} · ${card.formattedValue} ${card.unit}` : undefined"
+    :title="compact ? `${card.name} · ${card.formattedValue} ${card.unit}` : undefined"
   >
     <!-- 混合模式：极简单行卡片，仅保留通道名 + 数值 + 单位，
          最大化把纵向空间让给实时波形图。
@@ -59,7 +61,7 @@ function onCalibrate(): void {
          字体：CH_XX / 数值 均使用 Inter（--font-family-data），对齐 Cursor DAQ 混合画面；
               数值额外叠加 tabular-nums + tracking-tight，让数字紧凑且纵向对齐。 -->
     <template v-if="compact">
-      <span class="channel-card__compact-tag">CH_{{ String(card.index + 1).padStart(2, '0') }}</span>
+      <span class="channel-card__compact-tag" :title="card.name">{{ card.name }}</span>
       <span class="channel-card__compact-value">{{ card.formattedValue }}</span>
       <span class="channel-card__compact-unit">{{ card.unit }}</span>
     </template>
@@ -73,7 +75,7 @@ function onCalibrate(): void {
             class="channel-card__tare-badge"
             :title="i18n.t.tareOffsetApplied || '已应用校零偏移'"
           />
-          <span class="channel-card__tag mono-font">CH_{{ String(card.index + 1).padStart(2, '0') }}</span>
+          <span class="channel-card__tag mono-font" :title="card.name">{{ card.name }}</span>
         </div>
         <div class="channel-card__id">
           <span class="channel-card__dot" :style="{ background: card.color }" />
@@ -202,6 +204,12 @@ function onCalibrate(): void {
   color: var(--text-secondary);
   letter-spacing: 0.1em;
   white-space: nowrap;
+}
+
+.channel-card__tag {
+  max-width: 7em;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .channel-card__id {
@@ -373,6 +381,9 @@ function onCalibrate(): void {
   letter-spacing: 0.05em;
   white-space: nowrap;
   flex-shrink: 0;
+  max-width: 8em;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .channel-card__compact-value {
