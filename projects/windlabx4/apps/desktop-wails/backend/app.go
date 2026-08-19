@@ -1398,6 +1398,18 @@ func (a *App) CalibrationPreviewFiveHole(dto types.FiveHolePointLayoutDTO) Gener
 	return GenericResponse{Success: true, Data: points}
 }
 
+// CalibrationImportFiveHolePoints validates imported beta/alpha point-file content.
+func (a *App) CalibrationImportFiveHolePoints(content string) GenericResponse {
+	if a == nil || a.appContext == nil || a.appContext.CalibrationMgr == nil {
+		return GenericResponse{Success: false, Error: "校准管理器未初始化"}
+	}
+	points, err := a.appContext.CalibrationMgr.ImportFiveHolePoints(content)
+	if err != nil {
+		return GenericResponse{Success: false, Error: err.Error()}
+	}
+	return GenericResponse{Success: true, Data: points}
+}
+
 func (a *App) CalibrationStatus() types.CalibrationStatus {
 	if a == nil || a.appContext == nil || a.appContext.CalibrationMgr == nil {
 		return types.CalibrationStatus{}

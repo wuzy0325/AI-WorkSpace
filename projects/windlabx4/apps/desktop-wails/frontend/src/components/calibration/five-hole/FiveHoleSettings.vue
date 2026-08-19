@@ -11,6 +11,7 @@ import { buildCalibrationCsvName, joinCalibrationPath, splitCalibrationSavePath 
 import { calibrationApi } from '@api/calibrationApi'
 import type {
   CalibrationConfig,
+  CalibrationPoint,
   ProbeChannelConfig,
   MotionAxisConfig,
   ChannelRef,
@@ -24,6 +25,11 @@ import {
 } from '@shared/calibrationPrecision'
 import { getProbeChannelDisplayName } from '@shared/calibrationChannelI18n'
 import { generateFiveHoleSnakePoints } from './motionCalibrationUtils'
+import {
+  clearImportedFiveHolePoints,
+  getImportedFiveHolePoints,
+  setImportedFiveHolePoints,
+} from './importedFiveHolePoints'
 import MotionSafetyPanel from '@components/shared/MotionSafetyPanel.vue'
 import UiAlert from '@components/ui/UiAlert.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
@@ -50,6 +56,7 @@ import {
   Wind,
   Gauge,
   Zap,
+  Upload,
 } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 import { reportAllSettledFailures } from '@utils/allSettledReport'
@@ -85,6 +92,13 @@ const pointLayout = ref({
   betaStep: 5,
   serpentine: false,
 })
+
+const importedSession = getImportedFiveHolePoints()
+const pointMode = ref<'grid' | 'import'>(importedSession ? 'import' : 'grid')
+const importedPointFileName = ref(importedSession?.fileName ?? '')
+const importedPoints = ref<CalibrationPoint[]>(importedSession?.points ?? [])
+const pointFileInput = ref<HTMLInputElement | null>(null)
+const isImportingPoints = ref(false)
 
 // 浮点容差：alphaMax-alphaMin 与整数倍 alphaStep 比较时容忍 1e-9 的累加误差
 const FLOAT_EPSILON = 1e-9
@@ -130,7 +144,9 @@ function validatePointLayout(): { valid: boolean; count: number; errors: string[
 
 const pointLayoutValidation = computed(() => validatePointLayout())
 
-const pointCount = computed(() => pointLayoutValidation.value.count)
+const pointCount = computed(() => pointMode.value === 'import'
+  ? importedPoints.value.length
+  : pointLayoutValidation.value.count)
 
 const dwellTimeMs = ref(2000)
 const samplesPerPoint = ref(10)
@@ -227,6 +243,12 @@ const totalRequiredChannelCount = REQUIRED_CHANNEL_ROLES.length
 
 // 整数迭代生成预览点，避免浮点累加误差；与 pointLayoutValidation.count 共享同一真源
 const previewDots = computed<{ cx: number; cy: number }[]>(() => {
+  if (pointMode.value === 'import') {
+    return importedPoints.value.map((point) => ({
+      cx: 20 + ((point.coordinates['α'] + 30) / 60) * 160,
+      cy: 180 - ((point.coordinates['β'] + 30) / 60) * 160,
+    }))
+  }
   if (!pointLayoutValidation.value.valid) return []
   const { alphaMin, alphaMax, alphaStep, betaMin, betaMax, betaStep } = pointLayout.value
   const xRange = alphaMax - alphaMin
@@ -252,8 +274,11 @@ const currentStepErrors = computed<string[]>(() => {
     if (calibrationName.value.trim() === '') errors.push(t.value.enterConfigName || '请输入配置名称')
     if (savePath.value.trim() === '') errors.push(t.value.fh_pleaseSelectCsvPath)
     if (saveFileName.value.trim() === '') errors.push(t.value.fh_pleaseInputCsvFileName)
-    // 点位布局相关错误统一由 validatePointLayout 提供
-    errors.push(...pointLayoutValidation.value.errors)
+    if (pointMode.value === 'import') {
+      if (importedPoints.value.length === 0) errors.push('请先导入布点文件')
+    } else {
+      errors.push(...pointLayoutValidation.value.errors)
+    }
     if (dwellTimeMs.value < 100) errors.push(t.value.dwellTimeMin || '驻留时间至少100ms')
     if (samplesPerPoint.value < 1) errors.push(t.value.samplesMin || '采样次数至少为1')
     return errors
@@ -296,6 +321,34 @@ async function pickSavePath() {
   }
 }
 
+function selectPointFile(): void {
+  pointFileInput.value?.click()
+}
+
+async function importPointFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+
+  isImportingPoints.value = true
+  try {
+    const points = await calibrationApi.importFiveHolePoints(await file.text())
+    importedPoints.value = points
+    importedPointFileName.value = file.name
+    pointMode.value = 'import'
+    feedbackStore.pushToast(`已导入 ${points.length} 个校准点`, 'success')
+  } catch (err) {
+    feedbackStore.pushToast('布点文件导入失败: ' + (err instanceof Error ? err.message : String(err)), 'error')
+  } finally {
+    isImportingPoints.value = false
+  }
+}
+
+function setPointMode(mode: 'grid' | 'import'): void {
+  pointMode.value = mode
+}
+
 // calibrationName 变化时同步刷新默认 saveFileName：仅当用户未手动修改（仍为空或等于上一默认值）时覆盖，
 // 避免覆盖用户手动输入的文件名。复用共享工具保证清洗规则与遍历测试画面一致。
 // 注意：Vue 3 watch 默认 pre 模式异步触发，onMounted 中 calibrationName 兜底设值后
@@ -332,7 +385,7 @@ async function saveConfig() {
     // 保存前显式校验点位布局：UiInputNumber 在清空-输入中间态会 emit null，
     // 此时 isStepValid 在 step 2 仍为 true（见 line 252），保存按钮可点，
     // 必须在此拦截避免脏值落盘。
-    if (!pointLayoutValidation.value.valid) {
+    if (pointMode.value === 'grid' && !pointLayoutValidation.value.valid) {
       feedbackStore.pushToast('点位布局参数无效: ' + pointLayoutValidation.value.errors.join('；'), 'warning')
       return
     }
@@ -375,7 +428,13 @@ async function saveConfig() {
     const normalizedConfig = applyCalibrationPrecisionDefaults(config)
     const res = await calibrationApi.saveConfig('five-hole', normalizedConfig)
     if (!res.success) throw new Error(res.error || t.value.fh_saveFailed)
-    emit('saved', normalizedConfig)
+    if (pointMode.value === 'import') {
+      setImportedFiveHolePoints(importedPointFileName.value, importedPoints.value)
+      emit('saved', { ...normalizedConfig, points: importedPoints.value })
+    } else {
+      clearImportedFiveHolePoints()
+      emit('saved', normalizedConfig)
+    }
     emit('close')
   } catch (err) {
     feedbackStore.pushToast(t.value.fh_saveFailedColon + (err instanceof Error ? err.message : String(err)), 'error')
@@ -565,7 +624,11 @@ function getChannelGroupLabel(groupKey: string): string {
               <span>点位布局</span>
             </div>
           </template>
-          <div class="layout-params">
+          <div class="point-mode-switch" role="group" aria-label="布点方式">
+            <button type="button" :class="{ active: pointMode === 'grid' }" @click="setPointMode('grid')">规则网格</button>
+            <button type="button" :class="{ active: pointMode === 'import' }" @click="setPointMode('import')">文件导入</button>
+          </div>
+          <div v-if="pointMode === 'grid'" class="layout-params">
             <div class="angle-block">
               <div class="angle-block-header">
                 <span class="angle-tag alpha-tag">α</span>
@@ -607,10 +670,29 @@ function getChannelGroupLabel(groupKey: string): string {
               </div>
             </div>
           </div>
-          <div class="layout-options">
+          <div v-if="pointMode === 'grid'" class="layout-options">
             <UiCheckbox v-model:checked="pointLayout.serpentine">
               蛇形走位（奇数行反向遍历 α，减少空行程）
             </UiCheckbox>
+          </div>
+          <div v-else class="point-import-area">
+            <input ref="pointFileInput" class="point-file-input" type="file" accept=".csv,.txt" @change="importPointFile" />
+            <div class="point-import-toolbar">
+              <div>
+                <div class="point-import-title">{{ importedPointFileName || '尚未导入布点文件' }}</div>
+                <div class="point-import-hint">第一列 β，第二列 α；支持 CSV 或空白分隔，可选 beta,alpha 表头</div>
+              </div>
+              <UiButton size="sm" variant="secondary" :loading="isImportingPoints" @click="selectPointFile">
+                <Upload :size="14" />选择文件…
+              </UiButton>
+            </div>
+            <div v-if="importedPoints.length" class="point-order-list">
+              <div v-for="point in importedPoints" :key="point.id" class="point-order-row">
+                <span class="point-sequence">#{{ point.id }}</span>
+                <span>β {{ point.coordinates['β'] }}°</span>
+                <span>α {{ point.coordinates['α'] }}°</span>
+              </div>
+            </div>
           </div>
         </UiPanel>
 
@@ -858,19 +940,23 @@ function getChannelGroupLabel(groupKey: string): string {
               <span class="summary-label">校准类型</span>
               <span class="summary-value">五孔探针</span>
             </div>
-            <div class="summary-row">
+            <div v-if="pointMode === 'grid'" class="summary-row">
               <span class="summary-label">α 范围</span>
               <span class="summary-value">{{ pointLayout.alphaMin }}° ~ {{ pointLayout.alphaMax }}° (步长 {{ pointLayout.alphaStep }}°)</span>
             </div>
-            <div class="summary-row">
+            <div v-if="pointMode === 'grid'" class="summary-row">
               <span class="summary-label">β 范围</span>
               <span class="summary-value">{{ pointLayout.betaMin }}° ~ {{ pointLayout.betaMax }}° (步长 {{ pointLayout.betaStep }}°)</span>
             </div>
-            <div class="summary-row">
+            <div v-if="pointMode === 'grid'" class="summary-row">
               <span class="summary-label">走位方式</span>
               <span class="summary-value" :class="pointLayout.serpentine ? 'accent-bold' : 'muted-text'">
                 {{ pointLayout.serpentine ? '蛇形（奇数行反向）' : '逐行 raster' }}
               </span>
+            </div>
+            <div v-else class="summary-row">
+              <span class="summary-label">布点文件</span>
+              <span class="summary-value">{{ importedPointFileName }}</span>
             </div>
             <div class="summary-row">
               <span class="summary-label">总点数</span>
@@ -1252,6 +1338,95 @@ function getChannelGroupLabel(groupKey: string): string {
   border-top: 1px solid var(--border-default);
   font-size: var(--text-xs);
   color: var(--text-secondary);
+}
+
+.point-mode-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: var(--space-2);
+  padding: var(--space-0-5);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel-strong);
+}
+
+.point-mode-switch button {
+  min-height: var(--density-control-height);
+  padding: 0 var(--density-control-pad-x);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.point-mode-switch button.active {
+  background: var(--bg-panel);
+  color: var(--accent-primary);
+  font-weight: 600;
+  box-shadow: var(--shadow-panel);
+}
+
+.point-file-input {
+  display: none;
+}
+
+.point-import-area {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.point-import-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--density-group-padding);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel-strong);
+}
+
+.point-import-title {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.point-import-hint {
+  margin-top: var(--space-0-5);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.point-order-list {
+  max-height: 136px;
+  overflow-y: auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-canvas);
+}
+
+.point-order-row {
+  display: grid;
+  grid-template-columns: 48px 1fr 1fr;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.point-order-row:last-child {
+  border-bottom: 0;
+}
+
+.point-sequence {
+  color: var(--text-muted);
 }
 
 .preview-header {

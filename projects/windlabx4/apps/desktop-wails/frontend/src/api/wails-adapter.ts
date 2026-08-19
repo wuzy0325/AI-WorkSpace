@@ -583,6 +583,9 @@ export const wailsApi = {
      */
     previewFiveHole: async (layout: FiveHolePointLayout): Promise<GenericResponse> => {
       return await callBindingGeneric('CalibrationPreviewFiveHole', layout);
+    },
+    importFiveHolePoints: async (content: string): Promise<GenericResponse> => {
+      return await callBindingGeneric('CalibrationImportFiveHolePoints', content);
     }
   },
 

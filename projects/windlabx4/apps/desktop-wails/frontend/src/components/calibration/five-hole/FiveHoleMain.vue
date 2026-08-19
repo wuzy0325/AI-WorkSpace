@@ -28,6 +28,7 @@ import {
 } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
 import MotionSafetyAlertCard from '@components/shared/MotionSafetyAlertCard.vue'
+import { getImportedFiveHolePoints } from './importedFiveHolePoints'
 
 const emit = defineEmits<{
   openSettings: []
@@ -63,9 +64,17 @@ const { t } = storeToRefs(useI18nStore())
 // 否则 currentConfig 仍是挂载时的旧值，canStartCalibration 不刷新，会一直提示"未配置"。
 // 与 ThreeHoleMain / TotalPressureMain / TotalTemperatureMain 保持一致，
 // 由 calibrationMainExpose.contract.test.ts 在编译期断言本暴露存在。
-defineExpose({
-  reloadSavedConfig: loadSavedConfig,
-})
+async function reloadSavedConfig(): Promise<void> {
+  await loadSavedConfig()
+  applyImportedPointOverride()
+}
+
+function applyImportedPointOverride(): void {
+  const imported = getImportedFiveHolePoints()
+  if (imported && currentConfig.value) currentConfig.value.points = imported.points
+}
+
+defineExpose({ reloadSavedConfig })
 
 // Tab 切换：与三孔一致提供 概览/图表/数据 三个视图，
 // 让校准员既能总览系数与曲线，也能放大查看单图表，也能查阅完整数据表。
@@ -100,6 +109,7 @@ function cleanupSubscriptions(): void {
 // 挂载后订阅采集快照
 watch(isLoading, (loading) => {
   if (loading) return
+  applyImportedPointOverride()
   cleanupSubscriptions()
   unsubscribeDaqSnapshot = deviceApi.onSnapshot((payload: DataPayload) => {
     latestSnapshots.value.set(payload.deviceId, payload)

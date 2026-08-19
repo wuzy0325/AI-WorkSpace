@@ -1,4 +1,4 @@
-import type { CalibrationConfig, CalibrationErrorCode, CalibrationType, LivePhysics, MotionSafetyFailure, SevenHoleConfig, SevenHolePreviewResult, SphereTankGateConfig } from '@shared/types/calibration';
+import type { CalibrationConfig, CalibrationErrorCode, CalibrationPoint, CalibrationType, LivePhysics, MotionSafetyFailure, SevenHoleConfig, SevenHolePreviewResult, SphereTankGateConfig } from '@shared/types/calibration';
 import { request } from '@api/http-client';
 import { isWailsAvailable, wailsApi } from '@api/wails-adapter';
 
@@ -327,6 +327,19 @@ export const calibrationApi = {
     return await request('/api/calibration/fivehole', {
       method: 'POST',
       body: JSON.stringify(layout),
+    });
+  },
+
+  importFiveHolePoints: async (content: string): Promise<CalibrationPoint[]> => {
+    if (isWailsAvailable()) {
+      const res = await wailsApi.calibration.importFiveHolePoints(content);
+      if (!res.Success) throw new Error(res.Error || '五孔布点文件导入失败');
+      if (!res.Data) throw new Error('五孔布点文件导入失败：后端未返回点位');
+      return res.Data as CalibrationPoint[];
+    }
+    return await request<CalibrationPoint[]>('/api/calibration/fivehole-points-import', {
+      method: 'POST',
+      body: JSON.stringify({ content }),
     });
   },
 

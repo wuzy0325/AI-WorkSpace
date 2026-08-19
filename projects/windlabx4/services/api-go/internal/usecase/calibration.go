@@ -80,9 +80,9 @@ type CalibrationManager struct {
 	store  ports.CalibrationResultStore
 
 	// 新增组件
-	eventPublisher       ports.CalibrationEventPublisher
-	runtime              ports.CalibrationRuntime
-	statusProvider       ports.DeviceStatusProvider
+	eventPublisher        ports.CalibrationEventPublisher
+	runtime               ports.CalibrationRuntime
+	statusProvider        ports.DeviceStatusProvider
 	acquisitionController ports.AcquisitionController
 
 	// 校准引擎与当前会话。
@@ -904,6 +904,11 @@ func (m *CalibrationManager) PreviewFiveHolePoints(layout calibration.FiveHolePo
 		return nil, fmt.Errorf("生成五孔点位失败: %w", err)
 	}
 	return points, nil
+}
+
+// ImportFiveHolePoints validates ordered beta/alpha pairs from an uploaded point file.
+func (m *CalibrationManager) ImportFiveHolePoints(content string) ([]calibration.FiveHoleSnakePoint, error) {
+	return calibration.ParseFiveHolePointFile(content)
 }
 
 // buildSevenHoleCsvSink 构建七孔 CSV 写入 sink（按 region+sector 路由）
@@ -2103,6 +2108,7 @@ func (f *fallbackRuntime) StopMotion() error {
 //   - 未启动的新命令：立即返回 ctx.Err()（watchdogTimeout≤0 分支）
 //   - 当前正在执行的命令：进入 case <-ctx.Done() 后仍需 r := <-done 等 watchdog
 //     Close conn 解除 Read 阻塞，最长 5 秒
+//
 // 因此最坏路径 = 3s 等首命令 ctx 取消 + 5s 等该命令 watchdog Close = 8s 内完成退出。
 func stopAllMotion(mgr ports.MotionManager) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

@@ -307,6 +307,8 @@ func NewRouter(deps Deps) http.Handler {
 			// 不再在 API 层直接调 core.GenerateFiveHoleSnakePoints——
 			// 与 sevenhole-preview 路由对称，HTTP/Wails 共用同一 usecase 入口。
 			handleFiveHolePreview(w, r, deps.CalibrationManager)
+		case "fivehole-points-import":
+			handleFiveHolePointImport(w, r, deps.CalibrationManager)
 		case "sevenhole-preview":
 			// 七孔点位预览（spec Task 12）：前端"配置向导"调整 α/β/θ/φ 范围与步长时
 			// 实时显示总点数与内/外区分布，让操作员在启动校准前确认点位规模。
@@ -1188,6 +1190,26 @@ func handleFiveHolePreview(w http.ResponseWriter, r *http.Request, mgr *usecase.
 		return
 	}
 	points, err := mgr.PreviewFiveHolePoints(body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, points)
+}
+
+func handleFiveHolePointImport(w http.ResponseWriter, r *http.Request, mgr *usecase.CalibrationManager) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	points, err := mgr.ImportFiveHolePoints(body.Content)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
