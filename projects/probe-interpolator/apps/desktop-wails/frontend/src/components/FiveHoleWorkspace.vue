@@ -885,7 +885,7 @@ function exportResults() {
 
 .data-table { width: 100%; border-collapse: collapse; font-size: 11px; }
 .data-table thead { background: #f8fafc; }
-.data-table th { padding: 6px 8px; text-align: center; font-weight: 700; color: #475569; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
+.data-table th { padding: 6px 8px; text-align: center; font-weight: 700; color: #475569; font-size: 10px; text-transform: none; letter-spacing: 0.3px; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
 .data-table td { padding: 5px 8px; text-align: center; border-bottom: 1px solid #f1f5f9; color: #334155; font-weight: 500; white-space: nowrap; }
 
 .data-row { transition: background 150ms ease; }

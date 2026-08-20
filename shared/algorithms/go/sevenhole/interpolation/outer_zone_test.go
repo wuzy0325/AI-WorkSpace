@@ -366,3 +366,93 @@ func TestOuterGeometryCounts_DynamicThetaCount(t *testing.T) {
 		})
 	}
 }
+
+func TestOuterZoneExtrapolatesThetaBeyondGrid(t *testing.T) {
+	const sector = 3
+	p := buildOuterTestInterpolator(t, sector, linearOuterMap(120))
+	ka, kb, _, _ := linearOuterMap(120)(48, 120)
+
+	got, thetaRaw, phi, ok, err := p.outerZoneExtrapolate(sector, ka, kb)
+	if err != nil {
+		t.Fatalf("outerZoneExtrapolate: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected theta extrapolation candidate")
+	}
+	if math.Abs(thetaRaw-48) > 1e-9 || math.Abs(phi-120) > 1e-9 {
+		t.Fatalf("extrapolated angles = (theta=%v, phi=%v), want (48, 120)", thetaRaw, phi)
+	}
+	if math.Abs(got.a-48) > 1e-9 {
+		t.Errorf("clamped theta = %v, want 48", got.a)
+	}
+	_, _, wantCpt, wantCps := linearOuterMap(120)(48, 120)
+	if math.Abs(got.cpt-wantCpt) > 1e-9 || math.Abs(got.cps-wantCps) > 1e-9 {
+		t.Errorf("extrapolated coefficients = (%v,%v), want (%v,%v)", got.cpt, got.cps, wantCpt, wantCps)
+	}
+}
+
+func TestOuterZoneExtrapolatesCurvedCalibrationGrid(t *testing.T) {
+	const sector = 3
+	curved := func(theta, phi float64) (ka, kb, cpt, cps float64) {
+		s := phi - 120
+		ka = 0.03*theta + 0.01*s + 0.001*(theta-40)*s
+		kb = -0.01*theta - 0.02*s + 0.0007*(theta-40)*s
+		cpt = 0.8 + 0.01*theta - 0.005*s
+		cps = -0.3 + 0.004*theta + 0.002*s
+		return ka, kb, cpt, cps
+	}
+	p := buildOuterTestInterpolator(t, sector, curved)
+	sec := p.outer[sector-1]
+	ip := 5
+	a := sec.points[sec.thetaCount-2][ip]
+	b := sec.points[sec.thetaCount-2][ip+1]
+	c := sec.points[sec.thetaCount-1][ip]
+	d := sec.points[sec.thetaCount-1][ip+1]
+	ka, kb := affineOuterDirection(a, b, c, d, 10, -2.5)
+
+	got, thetaRaw, phi, ok, err := p.outerZoneExtrapolate(sector, ka, kb)
+	if err != nil {
+		t.Fatalf("outerZoneExtrapolate: %v", err)
+	}
+	if !ok {
+		t.Fatal("curved calibration grid must still accept a theta-side extrapolation candidate")
+	}
+	if thetaRaw <= 45 || math.Abs(got.a-50) > 1e-9 || phi < 115 || phi > 120 {
+		t.Errorf("curved-grid angles = (raw=%v, clamped=%v, phi=%v), want theta outside grid and phi in [115,120]", thetaRaw, got.a, phi)
+	}
+}
+
+func affineOuterDirection(a, b, c, d gridPoint, thetaOffset, phiOffset float64) (float64, float64) {
+	u := thetaOffset / gridStep
+	v := phiOffset / -gridStep
+	return a.ka + u*(c.ka-a.ka) + v*(b.ka-a.ka),
+		a.kb + u*(c.kb-a.kb) + v*(b.kb-a.kb)
+}
+
+func TestOuterZoneExtrapolationRejectsPhiSideOverflow(t *testing.T) {
+	const sector = 3
+	p := buildOuterTestInterpolator(t, sector, linearOuterMap(120))
+	ka, kb, _, _ := linearOuterMap(120)(43, 155)
+
+	_, _, _, ok, err := p.outerZoneExtrapolate(sector, ka, kb)
+	if err != nil {
+		t.Fatalf("outerZoneExtrapolate: %v", err)
+	}
+	if ok {
+		t.Fatal("phi-side overflow must not be treated as theta extrapolation")
+	}
+}
+
+func TestOuterZoneExtrapolationUsesDynamicThetaLimit(t *testing.T) {
+	const sector = 3
+	p := buildOuterTestInterpolatorTheta(t, sector, 7, linearOuterMap(120))
+	ka, kb, _, _ := linearOuterMap(120)(70, 120)
+
+	got, thetaRaw, _, ok, err := p.outerZoneExtrapolate(sector, ka, kb)
+	if err != nil || !ok {
+		t.Fatalf("outerZoneExtrapolate = ok:%v err:%v", ok, err)
+	}
+	if math.Abs(thetaRaw-70) > 1e-9 || math.Abs(got.a-65) > 1e-9 {
+		t.Fatalf("dynamic theta = raw %v clamped %v, want 70 and 65", thetaRaw, got.a)
+	}
+}

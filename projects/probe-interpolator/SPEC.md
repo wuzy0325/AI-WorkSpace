@@ -109,7 +109,7 @@ projects/probe-interpolator/
 **输出**：`Alpha Beta Theta Phi MachNumber Velocity DynamicPressure P0 Ps IsValid Warning`
 **重要语义**：7 孔结果中 **Alpha = 侧滑角、Beta = 迎角**，与 5 孔结果中 Alpha=迎角、Beta=侧滑角的语义**反转**。前端 UI 标签必须按 7 孔语义显示，不能直接复用 5 孔的"Alpha=迎角"文案。
 **大小角度模式**：算法包自动判定（基于 P1-P6 最大压力孔位置 + 多边形射线法），前端不需要让用户选择模式，但结果区要显示"本次使用小角度/大角度扇区 N"信息。
-**theta/phi 字段**：算法包 `InterpolationResult` 返回 PRB 网格原始角度坐标 `Theta`/`Phi`（deg）——内区（小角度）模式下与 `Alpha`/`Beta` 同值；外区（大角度）模式下是探头坐标系下的俯仰角与方位角，`Alpha`/`Beta` 是经 `convertThetaPhiToAlphaBeta` 投影到风洞坐标系后的角度。前端结果表格与 CSV 导出均展示 θ、Ψ 列，便于工程师诊断大角度模式下的探头真实气流偏角。
+**theta/phi 字段**：算法包 `InterpolationResult` 返回 PRB 网格原始角度坐标 `Theta`/`Phi`（deg）——内区（小角度）模式下与 `Alpha`/`Beta` 同值；外区（大角度）模式下是探头坐标系下的俯仰角与滚转角，`Alpha`/`Beta` 是经 `convertThetaPhiToAlphaBeta` 投影到风洞坐标系后的角度。前端结果表格与 CSV 导出均展示 θ、Ψ 列，便于工程师诊断大角度模式下的探头真实气流偏角。
 
 ## UI Design
 

@@ -75,7 +75,11 @@ const newP7 = ref(0)
 const activeTab = ref<'input' | 'results'>('input')
 
 // ==================== 计算属性 ====================
-const validResultsCount = computed(() => results.value.filter((r) => r !== null && r.isValid).length)
+// 状态分类：有效（在校准 PRB 角度范围内）/ 参考（外推，超出校准范围）/ 无效（计算失败）。
+// 判定依据：result.isValid 表示能否算出结果；result.warning 非空（"外推点: ..."）表示
+// 该结果经外推得到、角度已超出校准 PRB 范围，仅作参考。
+const validResultsCount = computed(() => results.value.filter((r) => r !== null && r.isValid && !r.warning).length)
+const referenceResultsCount = computed(() => results.value.filter((r) => r !== null && r.isValid && r.warning).length)
 const invalidResultsCount = computed(() => results.value.filter((r) => r !== null && !r.isValid).length)
 const hasResults = computed(() => results.value.length > 0 && results.value.some((r) => r !== null))
 
@@ -86,6 +90,15 @@ const fmtNum = (
   r: SevenHoleInterpolationResult | null,
   sel: (r: SevenHoleInterpolationResult) => number,
 ): string => formatResultNum(r, sel)
+
+// resultStatus 分类单行结果的状态：'valid'（在校准 PRB 角度范围内）/ 'reference'（外推，超出校准范围）
+// / 'invalid'（计算失败）/ 'none'（未计算）。'reference' 与 'valid' 都算可显示，区别在于是否超出校准范围。
+function resultStatus(r: SevenHoleInterpolationResult | null): 'valid' | 'reference' | 'invalid' | 'none' {
+  if (!r) return 'none'
+  if (!r.isValid) return 'invalid'
+  // 算法侧仅在外推路径（角度超出校准 PRB 范围）为有效结果写入 warning，见 outer_extrapolation.go。
+  return r.warning ? 'reference' : 'valid'
+}
 
 async function openHelp() {
   if (!isWailsAvailable()) {
@@ -198,9 +211,13 @@ async function calculateAll() {
     const [resp, res] = await api.batchCalculate(inputs.value)
     // 无论整体成功失败都更新结果：后端支持部分失败，让用户看到有效行 + 失败行的 Warning。
     results.value = res
-    const valid = res.filter((r) => r && r.isValid).length
+    const valid = res.filter((r) => r && r.isValid && !r.warning).length
+    const reference = res.filter((r) => r && r.isValid && r.warning).length
+    const failed = res.length - valid - reference
     if (!resp.success) {
-      setStatus(`部分行计算失败：有效 ${valid}/${res.length} 条，首条错误: ${resp.error}`, 'warning')
+      setStatus(`部分行计算失败：有效 ${valid} 条、参考 ${reference} 条、无效 ${failed} 条，首条错误: ${resp.error}`, 'warning')
+    } else if (reference > 0 || failed > 0) {
+      setStatus(`计算完成：${valid} 条有效、${reference} 条参考（超出校准范围）、${failed} 条无效`, reference > 0 ? 'warning' : 'success')
     } else {
       setStatus(`计算完成！有效结果: ${valid}/${res.length} 条`, 'success')
     }
@@ -220,12 +237,12 @@ function exportResults() {
     return
   }
 
-  // 7 孔结果字段：α(侧滑角)、β(迎角)、θ(俯仰角)、Ψ(方位角)、Ma、V、P0(总压)、Ps(静压)。
+  // 7 孔结果字段：α(侧滑角)、β(迎角)、θ(俯仰角)、Ψ(滚转角)、Ma、V、P0(总压)、Ps(静压)。
   // 注意：与 5 孔不同，7 孔结果无 Vx/Vy/Vz 速度分量，且 α/β 语义反转（SPEC §2.2）。
   // CSV 表头明确标注 α/β/θ/Ψ 的物理含义，避免与 5 孔导出文件混淆。
   // α/β 与算法包字段直接对应：α 列绑定 result.alpha（sideslip）、β 列绑定 result.beta（AOA）。
   // θ/Ψ 是 PRB 网格原始角度坐标：内区小角度下 θ=α、Ψ=β，外区大角度下是探头坐标系角度。
-  const headers = ['序号', 'α(°) 侧滑角', 'β(°) 迎角', 'θ(°) 俯仰角', 'Ψ(°) 方位角', 'Ma', 'V(m/s)', '总压 P0(Pa)', '静压 Ps(Pa)', '状态']
+  const headers = ['序号', 'α(°) 侧滑角', 'β(°) 迎角', 'θ(°) 俯仰角', 'Ψ(°) 滚转角', 'Ma', 'V(m/s)', '总压 P0(Pa)', '静压 Ps(Pa)', '状态']
   const rows = results.value.map((r, idx) => [
     idx + 1,
     fmtNum(r, (x) => x.alpha),
@@ -236,7 +253,7 @@ function exportResults() {
     fmtNum(r, (x) => x.velocity),
     fmtNum(r, (x) => x.P0),
     fmtNum(r, (x) => x.Ps),
-    r ? (r.isValid ? '有效' : '无效: ' + r.warning) : '-',
+    r ? (r.isValid ? (r.warning ? '参考' : '有效') : '无效: ' + r.warning) : '-',
   ].map(escapeCsvField))
 
   const csvContent = [headers.map(escapeCsvField).join(','), ...rows.map((row) => row.join(','))].join('\n')
@@ -358,7 +375,7 @@ function exportResults() {
           </svg>
           计算结果
           <span v-if="hasResults" class="badge" :class="{ success: validResultsCount > 0, error: invalidResultsCount > 0 }">
-            {{ validResultsCount }}/{{ results.length }}
+            {{ validResultsCount + referenceResultsCount }}/{{ results.length }}
           </span>
         </button>
       </div>
@@ -570,6 +587,10 @@ function exportResults() {
                 <span class="stat-value">{{ validResultsCount }}</span>
                 <span class="stat-label">有效</span>
               </div>
+              <div class="stat-card" v-if="referenceResultsCount > 0">
+                <span class="stat-value">{{ referenceResultsCount }}</span>
+                <span class="stat-label">参考</span>
+              </div>
               <div class="stat-card error" v-if="invalidResultsCount > 0">
                 <span class="stat-value">{{ invalidResultsCount }}</span>
                 <span class="stat-label">无效</span>
@@ -593,7 +614,7 @@ function exportResults() {
                   <th>α(°) 侧滑角</th>
                   <th>β(°) 迎角</th>
                   <th>θ(°) 俯仰角</th>
-                  <th>Ψ(°) 方位角</th>
+                  <th>Ψ(°) 滚转角</th>
                   <th>Ma</th>
                   <th>V(m/s)</th>
                   <th>总压 P0(Pa)</th>
@@ -602,7 +623,7 @@ function exportResults() {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="(r, idx) in results" :key="idx" class="data-row" :class="{ invalid: r && !r.isValid }">
+                <tr v-for="(r, idx) in results" :key="idx" class="data-row" :class="{ invalid: resultStatus(r) === 'invalid', reference: resultStatus(r) === 'reference' }">
                   <td class="col-num">{{ idx + 1 }}</td>
                   <td>{{ fmtNum(r, x => x.alpha) }}</td>
                   <td>{{ fmtNum(r, x => x.beta) }}</td>
@@ -613,11 +634,15 @@ function exportResults() {
                   <td>{{ fmtNum(r, x => x.P0) }}</td>
                   <td>{{ fmtNum(r, x => x.Ps) }}</td>
                   <td class="col-status">
-                    <span v-if="r && r.isValid" class="status-badge success">
+                    <span v-if="resultStatus(r) === 'valid'" class="status-badge success">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
                       有效
                     </span>
-                    <span v-else-if="r && !r.isValid" class="status-badge error" :title="r.warning">
+                    <span v-else-if="resultStatus(r) === 'reference'" class="status-badge reference" :title="r?.warning">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
+                      参考
+                    </span>
+                    <span v-else-if="resultStatus(r) === 'invalid'" class="status-badge error" :title="r?.warning">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                       无效
                     </span>

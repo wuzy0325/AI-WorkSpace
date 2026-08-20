@@ -177,6 +177,38 @@ func TestCalculateOuterEndToEnd(t *testing.T) {
 	}
 }
 
+func TestCalculateOuterThetaExtrapolation(t *testing.T) {
+	p := buildInnerTestInterpolator(t, func(a, b float64) (ka, kb, cpt, cps float64) {
+		ka, kb, cpt, cps = linearInnerMap(a, b)
+		return ka + 100, kb + 100, cpt, cps
+	})
+	for sector := 1; sector <= outerSectorCount; sector++ {
+		loadOuterSector(t, p, sector, linearOuterMap(float64(sector-1)*60))
+	}
+	// Sector 3 target: theta=70, phi=120 gives ka=2.1 and kb=-0.7.
+	// Choose pressures with sector-3 side average=100 and denominator=900.
+	in := InterpolationInput{
+		P1: 100, P2: -215, P3: 1000, P4: 415, P5: 100, P6: 100,
+		P7: -890, PAtm: 101325, TAtm: 20,
+	}
+	res, err := p.Calculate(in)
+	if err != nil {
+		t.Fatalf("Calculate: %v", err)
+	}
+	if !res.IsValid {
+		t.Fatalf("extrapolated result must be valid, warning=%q", res.Warning)
+	}
+	if !strings.Contains(res.Warning, "外推点") || !strings.Contains(res.Warning, "50.0") {
+		t.Fatalf("warning must identify extrapolation and clamp, got %q", res.Warning)
+	}
+	if math.Abs(res.Theta-70) > 1e-9 || math.Abs(res.Phi-120) > 1e-9 {
+		t.Errorf("raw angles = (%v,%v), want (70,120)", res.Theta, res.Phi)
+	}
+	if res.TotalPressure <= res.StaticPressure || res.Velocity <= 0 || res.MachNumber <= 0 {
+		t.Errorf("invalid extrapolated physical result: %+v", res)
+	}
+}
+
 // TestCalculateOutOfGrid verifies the no-extrapolation decision (spec
 // section 4): both candidate sectors miss -> IsValid=false + warning, no
 // numeric output.
@@ -202,8 +234,8 @@ func TestCalculateOutOfGrid(t *testing.T) {
 	if res.IsValid {
 		t.Fatal("out-of-grid must be IsValid=false")
 	}
-	if !strings.Contains(res.Warning, "不支持外推") {
-		t.Errorf("warning %q must state no extrapolation", res.Warning)
+	if !strings.Contains(res.Warning, "无法确认 theta 外边界") {
+		t.Errorf("warning %q must state theta extrapolation direction is unconfirmed", res.Warning)
 	}
 	if res.Alpha != 0 || res.Beta != 0 || res.TotalPressure != 0 || res.StaticPressure != 0 {
 		t.Errorf("out-of-grid must not carry numeric output: %+v", res)

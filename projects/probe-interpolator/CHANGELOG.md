@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.4.1] - 2026-08-19
+
+### Fixed
+
+- **结果表头希腊字母被 CSS 大写成拉丁字母外观**：`.data-table th` 的 `text-transform: uppercase` 会把 `α` 渲染成与 `A` 几乎相同的 `Α`、`β` 渲染成与 `B` 几乎相同的 `Β`（`θ`→`Θ`），但复制/导出仍取原始字符，造成“看着是 A/B，拷贝出来是 α/β”的观感矛盾。三孔/五孔/七孔结果表统一取消表头大写转换，显示与复制内容一致。
+
+### Compatibility
+
+- 配置文件格式：兼容。
+- 数据文件格式：兼容（无字段变更）。
+- API 契约：兼容。
+
+### Verification
+
+- `npm run typecheck` / `npm run build`: passed
+- `go test ./...`（backend）: passed
+- `task release`: passed
+- `makensis`: passed
+- `task archive-release`: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名。
+- 内嵌 exe 的 ProductVersion 资源为空（wails3 v3.0.0-alpha2.106 既有行为），installer 的 ProductVersion 为 `0.4.1`。
+
+## [0.4.0] - 2026-08-19
+
+### Added
+
+- **七孔外区 θ 角度外推**（`shared/algorithms/go/sevenhole/interpolation`，新文件 `outer_extrapolation.go`）：外区两候选扇区均未命中时，用第一候选扇区最外层 θ 单元（θ∈[θMax-5, θMax]）4 角点仿射反演 `(ka,kb)→(θ,φ)`，θ 可超过校准上限 45°；计算用 θ 钳制到 θMax+5°，展示保留 θ_raw。外推结果 `IsValid=true` + 非空 Warning（标注外推点、上限、计算 θ），UI 提示用户自行判断有效性。
+- **内区命中但 Pt<Ps 的回退**：内区多边形命中但解析出 `Pt<Ps`（物理异常）时不再直接中止，继续尝试外区两候选扇区与外推路径，全部失败才返回内区原始错误（不静默取绝对值）。
+- 实测效果：`102原始.csv`（85 m/s PRB）61 行全部可算，越界行 theta_raw 46°~70° 并带外推 Warning。
+
+### Compatibility
+
+- 配置/数据文件格式：兼容。
+- API 契约：兼容（`InterpolationResult` 无字段变更）；越界行为由"无效"变为"可显示 + Warning"，属预期变更。
+- 正常网格内路径：数值零回归（golden 435 点对拍不变）。
+- golden 测试：越界样本按 spec §3.3 分类更新（θ 外边界越界 → 外推结果断言，其余保持 IsValid=false）。
+
+### Verification
+
+- `go test ./...`（shared/algorithms/go/sevenhole/interpolation，含 golden 对拍与新增外推用例）: passed
+- `go test ./backend/ -run SevenHole`（probe-interpolator）: passed
+- `npm run typecheck` / `npm run build`: passed
+- `task release`: passed
+- `makensis`: passed
+- `task archive-release`: passed
+
+### Known Issues
+
+- 安装包未进行 Authenticode 数字签名。
+- 内嵌 exe 的 ProductVersion 资源为空（wails3 v3.0.0-alpha2.106 既有行为），installer 的 ProductVersion 为 `0.4.0`。
+- 外推结果（θ>45°）无校准数据支撑，误差随 θ 增大而增大；以 Warning 标注，有效性由用户自行判断。
+
 ## [0.3.0] - 2026-08-05
 
 ### Fixed

@@ -133,10 +133,11 @@ func solveOuterPtPs(in InterpolationInput, n int, cpt, cps float64) (pt, ps floa
 
 // Calculate runs one seven-hole interpolation (Python cal_ab orchestration,
 // SKILL.md section 4): inner-zone try first, then the two candidate outer
-// sectors in descending-pressure order. Out-of-grid inputs return
-// IsValid=false with a warning (no extrapolation, spec section 4); guard
-// violations return errors. Panics are recovered into errors (aligned with
-// the five-hole PrbInterpolator.Calculate).
+// sectors in descending-pressure order. Confirmed theta-side out-of-grid
+// inputs use the first sector's bounded extrapolation; other out-of-grid
+// inputs return IsValid=false with a warning. Guard violations return errors.
+// Panics are recovered into errors (aligned with the five-hole
+// PrbInterpolator.Calculate).
 func (p *SevenHolePrbInterpolator) Calculate(input InterpolationInput) (result InterpolationResult, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -150,70 +151,131 @@ func (p *SevenHolePrbInterpolator) Calculate(input InterpolationInput) (result I
 	if !p.IsLoaded() {
 		return InterpolationResult{}, fmt.Errorf("七孔PRB校准数据未加载")
 	}
+	return p.calculateLoaded(input)
+}
 
+func (p *SevenHolePrbInterpolator) calculateLoaded(input InterpolationInput) (InterpolationResult, error) {
 	first, second := maxPressureHoles(input)
-
-	// A pressure row used to build a candidate outer calibration node must round-trip
-	// through that exact node even when its inner coefficients also fall in the
-	// overlapping small-angle polygon. The gridEps match is deliberately much
-	// tighter than interpolation fallbacks, so ordinary nearby measurements
-	// retain the established inner-first routing and continuous interpolation.
-	if sector, gp, ok := p.findExactOuterCalibrationNode(input, first, second); ok {
-		pt, ps, err := solveOuterPtPs(input, sector, gp.cpt, gp.cps)
+	if result, ok, err := p.calculateExactOuterNode(input, first, second); err != nil || ok {
+		return result, err
+	}
+	// 内区命中但物理结果非法（如 Pt<Ps）时，不直接中止，而是继续尝试外区
+	// 与外推路径——实测数据中这类行可能只是内区系数落在多边形内、但压力
+	// 分布已超小角度量程，外区/外推反而能给出可展示的结果。
+	var innerErr error
+	if result, ok, err := p.calculateInner(input); ok {
 		if err != nil {
-			return InterpolationResult{}, err
+			innerErr = err
+		} else {
+			return result, nil
 		}
-		alpha, beta := convertThetaPhiToAlphaBeta(gp.a, gp.b)
-		return assembleResult(input, alpha, beta, gp.a, gp.b, pt, ps)
+	}
+	var outerErr error
+	if result, ok, err := p.calculateOuter(input, first, second); err != nil {
+		outerErr = err
+	} else if ok {
+		return result, nil
 	}
 
-	// Inner-zone try (Python cal_ab branch order: inner first).
+	if result, ok, err := p.outerZoneExtrapolatePath(input, first); err != nil {
+		if innerErr != nil {
+			return InterpolationResult{}, innerErr
+		}
+		if outerErr != nil {
+			return InterpolationResult{}, outerErr
+		}
+		return InterpolationResult{}, err
+	} else if ok {
+		return result, nil
+	}
+
+	if innerErr != nil {
+		return InterpolationResult{}, innerErr
+	}
+	if outerErr != nil {
+		return InterpolationResult{}, outerErr
+	}
+	return InterpolationResult{
+		IsValid: false,
+		Warning: "压力系数超出七孔PRB校准网格范围，无法确认 theta 外边界外推方向",
+	}, nil
+}
+
+func (p *SevenHolePrbInterpolator) calculateExactOuterNode(input InterpolationInput, first, second int) (InterpolationResult, bool, error) {
+	sector, gp, ok := p.findExactOuterCalibrationNode(input, first, second)
+	if !ok {
+		return InterpolationResult{}, false, nil
+	}
+	pt, ps, err := solveOuterPtPs(input, sector, gp.cpt, gp.cps)
+	if err != nil {
+		return InterpolationResult{}, true, err
+	}
+	alpha, beta := convertThetaPhiToAlphaBeta(gp.a, gp.b)
+	result, err := assembleResult(input, alpha, beta, gp.a, gp.b, pt, ps)
+	return result, true, err
+}
+
+func (p *SevenHolePrbInterpolator) calculateInner(input InterpolationInput) (InterpolationResult, bool, error) {
 	ka, kb, err := innerKaKb(input)
 	if err != nil {
-		return InterpolationResult{}, err
+		return InterpolationResult{}, false, err
 	}
 	zc, inZone, err := p.innerZoneInterpolate(ka, kb)
+	if err != nil || !inZone {
+		return InterpolationResult{}, inZone, err
+	}
+	pt, ps, err := solveInnerPtPs(input, zc.cpt, zc.cps)
 	if err != nil {
-		return InterpolationResult{}, err
+		return InterpolationResult{}, true, err
 	}
-	if inZone {
-		pt, ps, err := solveInnerPtPs(input, zc.cpt, zc.cps)
-		if err != nil {
-			return InterpolationResult{}, err
-		}
-		// 内区网格坐标 (a,b) 即 (alpha,beta)，theta/phi 与之同值。
-		return assembleResult(input, zc.a, zc.b, zc.a, zc.b, pt, ps)
-	}
+	result, err := assembleResult(input, zc.a, zc.b, zc.a, zc.b, pt, ps)
+	return result, true, err
+}
 
-	// Large-angle mode: try the largest-pressure hole's sector first, then
-	// the second-largest (Python first/second candidate logic).
+func (p *SevenHolePrbInterpolator) calculateOuter(input InterpolationInput, first, second int) (InterpolationResult, bool, error) {
 	for _, sector := range [2]int{first, second} {
-		kaO, kbO, err := outerKaKb(input, sector)
+		ka, kb, err := outerKaKb(input, sector)
 		if err != nil {
-			return InterpolationResult{}, err
+			return InterpolationResult{}, false, err
 		}
-		zc, hit, err := p.outerZoneTrySector(sector, kaO, kbO)
+		zc, hit, err := p.outerZoneTrySector(sector, ka, kb)
 		if err != nil {
-			return InterpolationResult{}, err
+			return InterpolationResult{}, false, err
 		}
 		if !hit {
 			continue
 		}
 		pt, ps, err := solveOuterPtPs(input, sector, zc.cpt, zc.cps)
 		if err != nil {
-			return InterpolationResult{}, err
+			return InterpolationResult{}, true, err
 		}
-		// zc.a/zc.b are grid coordinates (theta,phi); transform to output
-		// angles (Python big_ab_convert, SKILL.md section 3.7).
-		// 保留原始 (theta,phi) 供前端展示，Alpha/Beta 是投影后的风洞坐标系角度。
 		alpha, beta := convertThetaPhiToAlphaBeta(zc.a, zc.b)
-		return assembleResult(input, alpha, beta, zc.a, zc.b, pt, ps)
+		result, err := assembleResult(input, alpha, beta, zc.a, zc.b, pt, ps)
+		return result, true, err
 	}
+	return InterpolationResult{}, false, nil
+}
 
-	return InterpolationResult{
-		IsValid: false,
-		Warning: "压力系数超出七孔PRB校准网格范围，不支持外推",
-	}, nil
+func (p *SevenHolePrbInterpolator) outerZoneExtrapolatePath(input InterpolationInput, sector int) (InterpolationResult, bool, error) {
+	ka, kb, err := outerKaKb(input, sector)
+	if err != nil {
+		return InterpolationResult{}, false, err
+	}
+	zc, thetaRaw, phi, ok, err := p.outerZoneExtrapolate(sector, ka, kb)
+	if err != nil || !ok {
+		return InterpolationResult{}, ok, err
+	}
+	pt, ps, err := solveOuterPtPs(input, sector, zc.cpt, zc.cps)
+	if err != nil {
+		return InterpolationResult{}, false, err
+	}
+	alpha, beta := convertThetaPhiToAlphaBeta(zc.a, phi)
+	result, err := assembleResult(input, alpha, beta, thetaRaw, phi, pt, ps)
+	if err != nil {
+		return InterpolationResult{}, false, err
+	}
+	result.Warning = fmt.Sprintf("外推点: theta=%.1f° 超出当前扇区校准上限 %.1f°，计算 theta 使用 %.1f°；结果超出校准范围，有效性请用户自行判断", thetaRaw, outerThetaMax(p.outer[sector-1]), zc.a)
+	return result, true, nil
 }
 
 func (p *SevenHolePrbInterpolator) findExactOuterCalibrationNode(input InterpolationInput, first, second int) (int, gridPoint, bool) {
