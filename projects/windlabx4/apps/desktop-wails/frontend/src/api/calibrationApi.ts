@@ -1,4 +1,4 @@
-import type { CalibrationConfig, CalibrationErrorCode, CalibrationPoint, CalibrationType, LivePhysics, MotionSafetyFailure, SevenHoleConfig, SevenHolePreviewResult, SphereTankGateConfig } from '@shared/types/calibration';
+import type { CalibrationConfig, CalibrationErrorCode, CalibrationPoint, CalibrationType, FiveHoleCoefficients, LivePhysics, MotionSafetyFailure, SevenHoleConfig, SevenHolePreviewResult, SphereTankGateConfig } from '@shared/types/calibration';
 import { request } from '@api/http-client';
 import { isWailsAvailable, wailsApi } from '@api/wails-adapter';
 
@@ -49,6 +49,7 @@ export interface CalibrationStatus {
    * 关键不变量：前端不得用 truthiness 判断 `livePhysics.machNumber`——0 是有效零。
    */
   livePhysics?: LivePhysics;
+  liveFiveHoleCoefficients?: FiveHoleCoefficients;
   results?: CalibrationPointResult[];
 }
 

@@ -16,9 +16,13 @@ import (
 // 并通过 ok 标志模拟设备离线（GetLatestData 返回 false → channelReader 返回 found=false）。
 type physicsTestReader struct {
 	payloads map[string]device.DataPayload
+	reads    map[string]int
 }
 
 func (r *physicsTestReader) GetLatestData(deviceID string) (device.DataPayload, bool) {
+	if r.reads != nil {
+		r.reads[deviceID]++
+	}
 	p, ok := r.payloads[deviceID]
 	return p, ok
 }
@@ -74,6 +78,15 @@ func TestCalibrationStatusPhysics_FiveHole_NonZero(t *testing.T) {
 	}
 	if status.LivePhysics.Velocity == nil || *status.LivePhysics.Velocity <= 0 {
 		t.Errorf("Velocity 期望 > 0, 实际 %v", status.LivePhysics.Velocity)
+	}
+	if status.LiveFiveHoleCoefficients == nil {
+		t.Fatal("五孔运行态应返回实时系数")
+	}
+	if got := status.LiveFiveHoleCoefficients.Kalpha; got != 0 {
+		t.Errorf("对称左右孔压力下 Kalpha 期望 0, 实际 %v", got)
+	}
+	if got := status.LiveFiveHoleCoefficients.Kbeta; got != 0 {
+		t.Errorf("对称上下孔压力下 Kbeta 期望 0, 实际 %v", got)
 	}
 }
 
@@ -250,12 +263,12 @@ func TestCalibrationStatusPhysics_TotalPressure_NonZero(t *testing.T) {
 	reader := &physicsTestReader{
 		payloads: map[string]device.DataPayload{
 			"dev-1": buildPayload(map[int]float64{
-				0: 101325,        // pAtm
-				1: 20,            // tAtm
-				2: 5000,          // pTunnelTotal (gauge)
-				3: 0,             // pTunnelStatic (gauge)
-				4: 0,             // tTunnel (未配置，回退 tAtm)
-				5: 5050,          // pProbeTotal
+				0: 101325, // pAtm
+				1: 20,     // tAtm
+				2: 5000,   // pTunnelTotal (gauge)
+				3: 0,      // pTunnelStatic (gauge)
+				4: 0,      // tTunnel (未配置，回退 tAtm)
+				5: 5050,   // pProbeTotal
 			}),
 		},
 	}
@@ -584,7 +597,53 @@ func TestCalibrationStatusPhysics_TerminalStatesSkipLivePhysics(t *testing.T) {
 				t.Errorf("终态 %s 下 LivePhysics 应为 nil（避免 stale 残留）, 实际 %+v",
 					state, status.LivePhysics)
 			}
+			if status.LiveFiveHoleCoefficients != nil {
+				t.Errorf("终态 %s 下实时五孔系数应为 nil, 实际 %+v",
+					state, status.LiveFiveHoleCoefficients)
+			}
 		})
+	}
+}
+
+func TestCalibrationStatusFiveHoleUsesOneDeviceSnapshot(t *testing.T) {
+	reader := &physicsTestReader{
+		payloads: map[string]device.DataPayload{
+			"dev-1": buildPayload(map[int]float64{
+				0: 100, 1: 200, 2: 100, 3: 100, 4: 100,
+				5: 101325, 6: 20, 7: 80, 8: 15,
+			}),
+		},
+		reads: map[string]int{},
+	}
+	manager := NewCalibrationManager(reader, nil, nil, nil)
+	manager.currentConfig = fiveHolePhysicsTestConfig("cal-single-snapshot")
+	manager.currentStatus.State = calibration.StateRunning
+
+	status := manager.Status()
+	if status.LivePhysics == nil || status.LiveFiveHoleCoefficients == nil {
+		t.Fatalf("status should include physics and coefficients, got %+v", status)
+	}
+	if got := reader.reads["dev-1"]; got != 1 {
+		t.Fatalf("status should read one device snapshot, got %d reads", got)
+	}
+}
+
+func TestCalibrationStatusFiveHoleRejectsMissingChannelIndex(t *testing.T) {
+	reader := &physicsTestReader{
+		payloads: map[string]device.DataPayload{
+			"dev-1": buildPayload(map[int]float64{
+				0: 100, 1: 200, 2: 100, 3: 100,
+				5: 101325, 6: 20, 7: 80, 8: 15,
+			}),
+		},
+	}
+	manager := NewCalibrationManager(reader, nil, nil, nil)
+	manager.currentConfig = fiveHolePhysicsTestConfig("cal-missing-index")
+	manager.currentStatus.State = calibration.StateRunning
+
+	status := manager.Status()
+	if status.LiveFiveHoleCoefficients != nil {
+		t.Fatalf("missing P5 channel index should suppress live coefficients, got %+v", status.LiveFiveHoleCoefficients)
 	}
 }
 

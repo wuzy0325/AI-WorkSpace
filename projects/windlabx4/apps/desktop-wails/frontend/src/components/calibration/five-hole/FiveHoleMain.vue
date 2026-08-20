@@ -838,8 +838,9 @@ const csvSavePath = computed(() => currentConfig.value?.savePath ?? '')
 // 配置摘要：五孔特有 α/β 双轴布局
 const fiveHoleLayout = computed(() => currentConfig.value?.fiveHoleLayout)
 
-// 最新系数：取最后一条五孔数据点
+// Prefer the current backend sample, then fall back to the last completed point after stopping.
 const latestCoefficients = computed(() => {
+  if (calibrationStore.liveFiveHoleCoefficients) return calibrationStore.liveFiveHoleCoefficients
   const points = calibrationStore.dataPoints
   if (!points.length) return null
   const lastPoint = points[points.length - 1]

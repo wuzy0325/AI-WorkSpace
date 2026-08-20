@@ -504,6 +504,36 @@ describe('calibrationStore', () => {
       expect(store.isPaused).toBe(false)
     })
 
+    it('clears live five-hole coefficients when calibration reaches a terminal state', async () => {
+      const store = useCalibrationStore()
+      vi.mocked(calibrationApi.status)
+        .mockResolvedValueOnce({
+          taskId: 'cal-coefficients',
+          type: 'five-hole',
+          state: 'running',
+          currentPoint: 1,
+          totalPoints: 2,
+          completedPoints: 0,
+          progress: 0,
+          liveFiveHoleCoefficients: { Kalpha: 1, Kbeta: 2, CPT: 3, CPS: 4 },
+        } as any)
+        .mockResolvedValueOnce({
+          taskId: 'cal-coefficients',
+          type: 'five-hole',
+          state: 'completed',
+          currentPoint: 2,
+          totalPoints: 2,
+          completedPoints: 2,
+          progress: 100,
+        } as any)
+
+      await store.recoveryFromBackend()
+      expect(store.liveFiveHoleCoefficients).toEqual({ Kalpha: 1, Kbeta: 2, CPT: 3, CPS: 4 })
+
+      await store.recoveryFromBackend()
+      expect(store.liveFiveHoleCoefficients).toBeNull()
+    })
+
     // 测试前置：mock calibrationApi.status 返回 idle 状态
     // 期待结果：status.status === 'idle'，isRunning=false，isPaused=false
     it('syncs idle state from backend status', async () => {

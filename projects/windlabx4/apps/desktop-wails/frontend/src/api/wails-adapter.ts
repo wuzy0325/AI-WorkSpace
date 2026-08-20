@@ -149,6 +149,13 @@ export interface CalibrationStatus {
     machNumber?: number;
     velocity?: number;
   };
+  liveFiveHoleCoefficients?: {
+    Kalpha: number;
+    Kbeta: number;
+    CPT: number;
+    CPS: number;
+    machNumber?: number;
+  };
 }
 
 // SevenHoleConfig 与 shared/types/calibration.SevenHoleConfig 对齐，

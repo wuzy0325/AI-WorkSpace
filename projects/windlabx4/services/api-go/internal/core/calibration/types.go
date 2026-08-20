@@ -190,6 +190,9 @@ type Status struct {
 	// 从 m.reader 即时计算，不持久化到 currentStatus（避免 stale 残留与 writer 污染）。
 	// 类型不支持（总温）或未启动校准时为 nil；通道齐全但读取失败时为 &LivePhysics{nil, nil}。
 	LivePhysics *LivePhysics `json:"livePhysics,omitempty"`
+	// LiveFiveHoleCoefficients contains instantaneous coefficients for the current five-hole sample.
+	// It is display-only and is never persisted to currentStatus or final point data.
+	LiveFiveHoleCoefficients *FiveHoleCoefficients `json:"liveFiveHoleCoefficients,omitempty"`
 	// LastErrorCode 结构化错误码（新增，运动安全故障时写入对应的 traversal.ErrorCode）。
 	// 前端根据此字段展示对应级别的告警（急停类红色 / 普通停止类橙色 / 超时类黄色）。
 	// 非运动安全错误（采集失败/保存失败等）写入对应业务错误码或空串。

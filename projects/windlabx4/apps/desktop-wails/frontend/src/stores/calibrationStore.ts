@@ -103,6 +103,7 @@ export const useCalibrationStore = defineStore('calibration', () => {
   const dataPoints = ref<CalibrationAnyDataPoint[]>([])
   const realtimePressures = ref<RealtimePressures | null>(null)
   const calculatedPhysics = ref<CalculatedPhysics | null>(null)
+  const liveFiveHoleCoefficients = ref<FiveHoleCoefficients | null>(null)
   const timeInfo = ref<TimeInfo | null>(null)
   // 七孔探针实时分区状态（spec Task 19）：
   //   - currentRegion: "inner"（内区，7 区）或 "outer"（外区，1~6 区）
@@ -427,6 +428,7 @@ export const useCalibrationStore = defineStore('calibration', () => {
     // 否则故障恢复后卡片不会自动消失（后端在故障恢复时会清空 MotionSafetyFailure）。
     const lastErrorCode = calStatus.lastErrorCode ?? calStatus.LastErrorCode ?? undefined
     const motionSafetyFailure = calStatus.motionSafetyFailure ?? calStatus.MotionSafetyFailure ?? null
+    const backendLiveFiveHoleCoefficients = calStatus.liveFiveHoleCoefficients ?? calStatus.LiveFiveHoleCoefficients
     const mappedState = mapCalibrationState(state)
 
     if (!status.value) {
@@ -521,6 +523,12 @@ export const useCalibrationStore = defineStore('calibration', () => {
           velocity: backendLivePhysics.velocity,
         }
       }
+
+    }
+    if (backendLiveFiveHoleCoefficients && typeof backendLiveFiveHoleCoefficients === 'object') {
+      liveFiveHoleCoefficients.value = backendLiveFiveHoleCoefficients
+    } else {
+      liveFiveHoleCoefficients.value = null
     }
     // 注意：后端 livePhysics=nil 时不主动清空 calculatedPhysics——
     // 前端 applyPressureUpdate 仍会基于压力流算出值，让 idle/终态也能显示。
@@ -666,6 +674,7 @@ export const useCalibrationStore = defineStore('calibration', () => {
     dataPoints.value = []
     realtimePressures.value = null
     calculatedPhysics.value = null
+    liveFiveHoleCoefficients.value = null
     timeInfo.value = null
     // 七孔探针实时分区状态清空（spec Task 19）
     // 启动新任务前必须清空，避免上一趟的分区状态残留导致 UI 显示错误的"外区 n 区"
@@ -821,6 +830,7 @@ export const useCalibrationStore = defineStore('calibration', () => {
     dataPoints.value = []
     realtimePressures.value = null
     calculatedPhysics.value = null
+    liveFiveHoleCoefficients.value = null
     timeInfo.value = null
   }
 
@@ -832,6 +842,7 @@ export const useCalibrationStore = defineStore('calibration', () => {
     dataPoints,
     realtimePressures,
     calculatedPhysics,
+    liveFiveHoleCoefficients,
     timeInfo,
     // 七孔探针实时分区状态（spec Task 19）
     currentRegion,

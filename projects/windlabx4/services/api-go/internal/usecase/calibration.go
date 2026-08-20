@@ -1167,11 +1167,26 @@ func (m *CalibrationManager) Status() calibration.Status {
 	//   - idle 态也不组装：前端 calibrationStore.calculateAtmosphericPhysics 已本地算出 Ma/V，
 	//     后端无需在 idle 态提供 livePhysics，避免依赖 currentConfig 在 idle 态的不可靠性。
 	if status.State == calibration.StateRunning || status.State == calibration.StatePaused {
-		if lp := m.resolveLivePhysics(config); lp != nil {
-			status.LivePhysics = lp
-		}
+		status.LivePhysics, status.LiveFiveHoleCoefficients = m.resolveLiveStatus(config)
 	}
 	return status
+}
+
+func (m *CalibrationManager) resolveLiveStatus(config calibration.Config) (*calibration.LivePhysics, *calibration.FiveHoleCoefficients) {
+	if calibration.CalibrationType(config.Type) != calibration.TypeFiveHole {
+		return m.resolveLivePhysics(config), nil
+	}
+	if len(config.ProbeChannels) == 0 {
+		return nil, nil
+	}
+
+	raw, err := calibration.ReadProbeChannelsToFiveHoleRaw(config.ProbeChannels, m.makeSnapshotChannelReader())
+	if err != nil {
+		return &calibration.LivePhysics{}, nil
+	}
+	coefficients := calibration.CalculateFiveHoleCoefficients(raw)
+	physics := computeLivePhysicsFromGauge(raw.PAtm, raw.TAtm, raw.PTotal, raw.PStatic, raw.TTunnel)
+	return physics, &coefficients
 }
 
 // resolveLivePhysics 基于当前 config 的探针通道配置和 reader 实时数据，
@@ -1424,7 +1439,35 @@ func (m *CalibrationManager) makeChannelReader() calibration.ChannelValueReader 
 		if !ok {
 			return 0, false
 		}
-		return valuesForChannelIndex(payload, channelIndex), true
+		return valuesForChannelIndex(payload, channelIndex)
+	}
+}
+
+func (m *CalibrationManager) makeSnapshotChannelReader() calibration.ChannelValueReader {
+	if m.runtime != nil {
+		return m.makeChannelReader()
+	}
+
+	payloads := make(map[string]device.DataPayload)
+	missing := make(map[string]bool)
+	return func(deviceID string, channelIndex int) (float64, bool) {
+		payload, ok := payloads[deviceID]
+		if !ok && !missing[deviceID] {
+			if m.reader == nil {
+				missing[deviceID] = true
+				return 0, false
+			}
+			payload, ok = m.reader.GetLatestData(deviceID)
+			if !ok {
+				missing[deviceID] = true
+				return 0, false
+			}
+			payloads[deviceID] = payload
+		}
+		if missing[deviceID] {
+			return 0, false
+		}
+		return valuesForChannelIndex(payload, channelIndex)
 	}
 }
 
@@ -1655,13 +1698,13 @@ func (m *CalibrationManager) handleCalibrationMotionSafetyFailure(runtime calibr
 }
 
 // valuesForChannelIndex 从数据载荷中提取指定通道索引的值
-func valuesForChannelIndex(payload device.DataPayload, channelIndex int) float64 {
+func valuesForChannelIndex(payload device.DataPayload, channelIndex int) (float64, bool) {
 	for i, idx := range payload.ChannelIndices {
 		if idx == channelIndex && i < len(payload.Channels) {
-			return payload.Channels[i]
+			return payload.Channels[i], true
 		}
 	}
-	return 0
+	return 0, false
 }
 
 // ==================== 适配器类型 ====================
@@ -1806,7 +1849,7 @@ func (f *fallbackRuntime) GetChannelValue(deviceID string, channelIndex int) (fl
 	if !ok {
 		return 0, false
 	}
-	return valuesForChannelIndex(payload, channelIndex), true
+	return valuesForChannelIndex(payload, channelIndex)
 }
 
 func (f *fallbackRuntime) GetLatestTimestamp(deviceID string) (int64, bool) {

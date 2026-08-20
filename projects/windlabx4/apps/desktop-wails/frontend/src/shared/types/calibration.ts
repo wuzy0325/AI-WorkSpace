@@ -508,6 +508,8 @@ export interface CalibrationTaskStatus {
    * 字段值为 0：有效零流量（Pt == Ps），UI 必须显示格式化的 0 而非 "--"。
    */
   livePhysics?: LivePhysics
+  /** Instantaneous five-hole coefficients for display; not a completed point result. */
+  liveFiveHoleCoefficients?: FiveHoleCoefficients
   /**
    * 结构化错误码（与后端 core/calibration.Status.LastErrorCode 对齐）。
    *
