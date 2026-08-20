@@ -69,8 +69,10 @@ tasks:
       不能用 rsrc 单独生成 rsrc.syso，否则会与 wails_windows_amd64.syso 中的 .rsrc 段冲突，
       触发链接错误 "too many .rsrc sections"。
     cmds:
-      # 确保 build/windows 目录存在；若模板文件缺失则补齐 build-assets
-      - powershell -Command "New-Item -ItemType Directory -Force -Path build/windows | Out-Null; if (-not (Test-Path build/windows/info.json) -or -not (Test-Path build/windows/wails.exe.manifest)) { wails3 generate build-assets }"
+      # Wails generate build-assets writes appicon.png/windows/* beside this Taskfile.
+      # Normalize those generated files into build/ because the remaining commands
+      # and installer scripts consume the build/ paths.
+      - powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path build/windows | Out-Null; if (-not (Test-Path -LiteralPath 'appicon.png') -or -not (Test-Path -LiteralPath 'windows/info.json') -or -not (Test-Path -LiteralPath 'windows/wails.exe.manifest')) { wails3 generate build-assets }; if (Test-Path -LiteralPath 'appicon.png') { Copy-Item -LiteralPath 'appicon.png' -Destination 'build/appicon.png' -Force }; if (Test-Path -LiteralPath 'windows/info.json') { Copy-Item -LiteralPath 'windows/info.json' -Destination 'build/windows/info.json' -Force }; if (Test-Path -LiteralPath 'windows/wails.exe.manifest') { Copy-Item -LiteralPath 'windows/wails.exe.manifest' -Destination 'build/windows/wails.exe.manifest' -Force }; if (-not (Test-Path -LiteralPath 'build/appicon.png') -or -not (Test-Path -LiteralPath 'build/windows/info.json') -or -not (Test-Path -LiteralPath 'build/windows/wails.exe.manifest')) { throw 'Wails build assets are missing after generation' }"
       # 由源 appicon.png 生成多尺寸 icon.ico（256/128/64/48/32/16）
       # WindLabX4 的 appicon.png 在 build/ 下（与其他项目根目录不同）
       - wails3 generate icons -input build/appicon.png -windowsfilename build/windows/icon.ico
