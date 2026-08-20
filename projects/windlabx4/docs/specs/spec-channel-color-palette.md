@@ -14,7 +14,7 @@ WindLabX4 设备详情面板的 DAQ-P-1603 设备波形图和数值卡片缺乏�
 1. DAQ-P-1603 16 通道全压力场景下，[`buildChannelColorMap`](../../apps/desktop-wails/frontend/src/utils/channelColors.ts#L89-L114) 返回的 Map 中 16 个颜色值**互不重复**。
 2. 压力色板覆盖 16 档冷色族（蓝/青/绿/紫 4 个色相 × 2 明度 × 2 个变体），保证相邻通道色相不同、隔 8 位明度不同。
 3. 温度色板精简到 4 档暖色族（橙/红/黄/玫红），温度通道在压力曲线中视觉上极其醒目。
-4. 非 DAQ-P-1603 设备完全不受影响：仍走 [`CHANNEL_COLORS`](../../apps/desktop-wails/frontend/src/utils/channelColors.ts#L62-L71) 8 色循环。
+4. 非 DAQ-P-1603 设备（DAQ-P-1604 / SIMULATED 等）走 [`CHANNEL_COLORS`](../../apps/desktop-wails/frontend/src/utils/channelColors.ts#L62-L71) 通用色板：现升级为 18 色高区分度色板（参考 WISPA），按物理 channel index 取色，18 通道零循环。
 5. 现有下游消费者零改动：[`RealtimeChart.vue:144`](../../apps/desktop-wails/frontend/src/components/device/RealtimeChart.vue#L144)、[`DeviceDetailPanel.vue:60-64`](../../apps/desktop-wails/frontend/src/components/main/DeviceDetailPanel.vue#L60-L64)、[`ChartSelector.vue`](../../apps/desktop-wails/frontend/src/components/main/ChartSelector.vue) 仅读 Map，签名不变。
 6. 温度色板第一档仍是 `#f97316`（橙色），与原方案一致，保留用户视觉记忆。
 7. `npm run typecheck` + `npm run test` + `npm run build` 全绿，新增单元测试行覆盖率 ≥ 95%。
@@ -224,7 +224,7 @@ describe('buildChannelColorMap - DAQ-P-1603 压力色板', () => {
 |---|--------|----------|
 | 1 | 16 通道全压力零循环 | 单元测试 `new Set(colors).size === 16` |
 | 2 | 温度首档保持橙色 | 单元测试 `TEMPERATURE_PALETTE[0] === '#f97316'` |
-| 3 | 非 P-1603 不受影响 | 单元测试 DAQ-P-1604 仍走 8 色循环 |
+| 3 | 非 P-1603 通用色板升级 | 单元测试 DAQ-P-1604 18 通道零循环、互不重色 |
 | 4 | 下游零改动 | git diff 显示仅 `channelColors.ts` + 测试文件被修改 |
 | 5 | 类型检查通过 | `npm run typecheck` 退出码 0 |
 | 6 | 测试全绿 | `npm run test` 退出码 0，覆盖率 ≥ 95% |
@@ -237,3 +237,19 @@ describe('buildChannelColorMap - DAQ-P-1603 压力色板', () => {
 
 2. **温度色板扩展性**：当前 4 档假设温度通道不超过 4 个。如果未来出现 5+ 温度通道（罕见），会循环到第一档（橙色）。是否需要预先扩到 8 档？
    - 倾向：保持 4 档，避免 over-engineering。实际触发再扩。
+
+## 变更记录（2026-08-20）：参考 WISPA 提升非 P-1603 通用色板区分度
+
+**问题**：非 DAQ-P-1603 设备（如 DAQ-P-1604 共 18 通道、SIMULATED）原走 8 色 `CHANNEL_COLORS` 循环。
+16-18 通道时必然循环重复，且旧 8 色中青/蓝、紫/玫红相近，细线难区分——与用户反馈"波形图各通道颜色类似、不好区分"一致。
+
+**改动**：
+- 将通用 `CHANNEL_COLORS` 由 8 色替换为 **18 色高区分度色板**（设计来自 WISPA v3：色相 17° 步进 + 三档明度 + 交错排序）。
+  前 16 色均匀铺满色轮（避开 25°~95° 黄/橙/琥珀警戒区），两两 RGB 距离 ≥ 54、相邻通道 ≥ 160；
+  CH17/CH18 用中性冷灰/暖灰区分大气辅助通道。
+- 非 DAQ-P-1603 分支改为**按物理 channel index 取色**（`CHANNEL_COLORS[ch.index % len]`），
+  保证同一通道在任何通道组合下颜色恒定（与 WISPA `channelColor()` 一致），并作为未自定义时的稳定兜底。
+- 覆盖 DAQ-P-1604 的 18 通道零循环，彻底解决颜色相似难区分。
+- DAQ-P-1603 的 SensorType 分色系方案（压力蓝/温度橙）**保持不变**，符合本 spec 成功标准且保留用户视觉记忆。
+
+**验证**：`channelColors.test.ts` 新增/更新非 P-1603 用例（18 通道零循环、按物理 index 取色、index 不连续恒定）。

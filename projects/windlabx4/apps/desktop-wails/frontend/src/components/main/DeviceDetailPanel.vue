@@ -67,7 +67,8 @@ const estimatedPoints = computed(() =>
 
 // 通道颜色映射：与 RealtimeChart 共享同一份 buildChannelColorMap 逻辑，
 // 保证 ChartSelector 通道卡片颜色与实时曲线颜色完全一致。
-// DAQ-P-1603 按 SensorType 着色（压力蓝、温度橙），其他设备沿用 8 色循环。
+// DAQ-P-1603 按 SensorType 着色（压力蓝、温度橙）；
+// 其他设备走 18 色通用色板（按物理 channel index 取色，18 通道零循环）。
 const channelColorMap = computed(() => {
   const p = profile.value
   if (!p) return new Map<number, string>()

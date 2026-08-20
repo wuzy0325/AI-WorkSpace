@@ -58,16 +58,26 @@ export const TEMPERATURE_PALETTE = [
   '#ec4899', // 玫红
 ] as const
 
-/** 通用 8 色循环（非 DAQ-P-1603 设备使用） */
+/**
+ * 通用 18 色默认波形配色（非 DAQ-P-1603 设备使用，如 DAQ-P-1604 / SIMULATED）。
+ *
+ * 设计（参考 WISPA，v3：色相 17° 步进 + 三档明度 + 交错排序）：
+ *   - 前 16 色按「色相 × 明度」两维生成，保证细线在白底下两两可区分：
+ *       16 个色相从 100° 起以 17° 步进均匀铺满色轮（避开 25°~95° 黄/橙/琥珀警戒色区，
+ *       防止与警告状态混淆），并循环搭配 亮/中/深 三档明度与饱和度；
+ *       再按交错顺序（0,8,1,9,…）分配到通道，使相邻通道色相错开约半轮。
+ *       实测 RGB 距离：全 18 色最小约 37（CH16 冷灰与 CH17 暖灰之间），
+ *       远好于旧 8 色板中多款青/蓝、紫/玫红近色并存的情况。
+ *   - CH17 大气压力 / CH18 大气温度用中性灰（冷灰/暖灰），与前面彩色通道区分。
+ *   - DAQ-P-1604 共 18 通道（CH01~16 压力、CH17 大气压力、CH18 大气温度），
+ *     18 色零循环，彻底解决旧 8 色循环在 16+ 通道时颜色相似难区分的问题。
+ */
 export const CHANNEL_COLORS = [
-  '#3b82f6',
-  '#10b981',
-  '#f59e0b',
-  '#a855f7',
-  '#f43f5e',
-  '#06b6d4',
-  '#f97316',
-  '#6366f1',
+  '#6df42a', '#212783', '#27c11f', '#562af4',
+  '#218337', '#701fc1', '#2af492', '#6d2183',
+  '#1fc1a1', '#f42ae6', '#217a83', '#c11f88',
+  '#2aaaf4', '#832145', '#1f58c1', '#f42a3b',
+  '#64748b', '#78716c',
 ] as const
 
 /** 颜色映射输入：通道 index + 可选 sensorType */
@@ -107,8 +117,11 @@ export function buildChannelColorMap(
     return map
   }
 
-  channels.forEach((ch, i) => {
-    map.set(ch.index, CHANNEL_COLORS[i % CHANNEL_COLORS.length])
+  // 非 DAQ-P-1603 设备（DAQ-P-1604 / SIMULATED 等）：
+  // 按物理通道 index 取色，保证同一通道在任何通道组合下颜色恒定，
+  // 并作为未自定义时的稳定兜底。范围 0..17，18 色零循环。
+  channels.forEach((ch) => {
+    map.set(ch.index, CHANNEL_COLORS[ch.index % CHANNEL_COLORS.length])
   })
   return map
 }

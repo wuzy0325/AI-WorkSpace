@@ -151,22 +151,28 @@ describe('buildChannelColorMap - DAQ-P-1603 混合场景', () => {
 })
 
 describe('buildChannelColorMap - 非 DAQ-P-1603 设备', () => {
-  it('DAQ-P-1604 走 CHANNEL_COLORS 8 色循环，不受本次改动影响', () => {
-    const channels: ChannelColorInput[] = Array.from({ length: 8 }, (_, i) => ({ index: i }))
+  it('DAQ-P-1604 按物理 channel index 取色（18 色高区分度色板，零循环）', () => {
+    // DAQ-P-1604 共 18 通道：CH01~16 压力、CH17 大气压力、CH18 大气温度
+    const channels: ChannelColorInput[] = Array.from({ length: 18 }, (_, i) => ({ index: i }))
     const map = buildChannelColorMap('DAQ-P-1604', channels)
-    expect(map.size).toBe(8)
+    expect(map.size).toBe(18)
+    // 按物理 index 取色，与色板索引一一对应
     expect(map.get(0)).toBe(CHANNEL_COLORS[0])
-    expect(map.get(7)).toBe(CHANNEL_COLORS[7])
+    expect(map.get(17)).toBe(CHANNEL_COLORS[17])
+    // 18 色全部互不重复，解决旧 8 色循环在 16+ 通道时颜色相似难区分的问题
+    const colors = Array.from(map.values())
+    expect(new Set(colors).size).toBe(18)
   })
 
-  it('SIMULATED 设备也走 8 色循环', () => {
+  it('SIMULATED 设备同样按物理 channel index 取色', () => {
     const channels: ChannelColorInput[] = Array.from({ length: 4 }, (_, i) => ({ index: i }))
     const map = buildChannelColorMap('SIMULATED', channels)
     expect(map.get(0)).toBe(CHANNEL_COLORS[0])
+    expect(map.get(3)).toBe(CHANNEL_COLORS[3])
   })
 
-  it('非 DAQ-P-1603 设备 sensorType 不影响颜色（沿用 8 色循环）', () => {
-    // 即使带了 sensorType='temperature'，非 P-1603 设备也不分色系
+  it('非 DAQ-P-1603 设备 sensorType 不影响颜色（沿用通用色板，不分色系）', () => {
+    // 即使带了 sensorType='temperature'，非 P-1603 设备也按物理 index 取色
     const channels: ChannelColorInput[] = [
       { index: 0, sensorType: 'temperature' },
       { index: 1, sensorType: 'pressure' },
@@ -174,6 +180,19 @@ describe('buildChannelColorMap - 非 DAQ-P-1603 设备', () => {
     const map = buildChannelColorMap('DAQ-P-1604', channels)
     expect(map.get(0)).toBe(CHANNEL_COLORS[0])
     expect(map.get(1)).toBe(CHANNEL_COLORS[1])
+  })
+
+  it('通道 index 不连续时仍按物理 index 取色（与出现顺序无关）', () => {
+    // 参考 WISPA：同一通道在任何通道组合下颜色恒定
+    const channels: ChannelColorInput[] = [
+      { index: 5 },
+      { index: 10 },
+      { index: 17 },
+    ]
+    const map = buildChannelColorMap('SIMULATED', channels)
+    expect(map.get(5)).toBe(CHANNEL_COLORS[5])
+    expect(map.get(10)).toBe(CHANNEL_COLORS[10])
+    expect(map.get(17)).toBe(CHANNEL_COLORS[17])
   })
 })
 
