@@ -9,7 +9,10 @@ import { useI18nStore } from '@stores/i18nStore'
 import { useCalibrationWorkflow } from '@composables/useCalibrationWorkflow'
 import type { CalibrationConfig, TotalTemperatureCalibrationPoint } from '@shared/types/calibration'
 import { getProbeChannelPrecision } from '@shared/calibrationPrecision'
+import { findChannelValue } from '@shared/calibrationSnapshotValue'
 import { isTotalTemperatureDataPoint } from '@shared/calibrationDataGuards'
+import { deviceApi } from '@api/deviceApi'
+import type { DataPayload } from '@api/types'
 import UiButton from '@components/ui/UiButton.vue'
 import MotionSafetyAlertCard from '@components/shared/MotionSafetyAlertCard.vue'
 import {
@@ -46,6 +49,7 @@ const showChannelPanel = ref(true)
 const activeTab = ref<'overview' | 'chart' | 'data'>('overview')
 const recoveryCanvas = ref<HTMLCanvasElement | null>(null)
 const chartUpdateTimer = ref<ReturnType<typeof setInterval> | null>(null)
+const latestSnapshots = ref<Map<string, DataPayload>>(new Map())
 
 const currentConfig = computed(() => workflow.currentConfig.value)
 const progressInfo = computed(() => workflow.progressInfo.value)
@@ -59,12 +63,29 @@ const currentMach = computed(() => {
 })
 
 const latestCoefficients = computed(() => {
+  if (typeof calibrationStore.realtimeCoefficients === 'number') return { recoveryFactor: calibrationStore.realtimeCoefficients }
   const points = calibrationStore.dataPoints
   if (!points.length) return null
   const lastPoint = points[points.length - 1]
   if (isTotalTemperatureDataPoint(lastPoint)) return { recoveryFactor: lastPoint.recoveryCoefficient }
   return null
 })
+
+let unsubscribeDaqSnapshot: (() => void) | null = null
+
+function updateRealtimeCoefficient(config: CalibrationConfig, snapshots: DataPayload[]): void {
+  let testProbeTemp: number | undefined
+  let standardProbeTemp: number | undefined
+  for (const channel of config.probeChannels) {
+    if (!channel.enabled) continue
+    const value = findChannelValue(snapshots, channel.channel.deviceId, channel.channel.channelIndex)
+    if (value === null) continue
+    if (channel.role === 'totalTemperature.tTotal') testProbeTemp = value
+    if (channel.role === 'totalTemperature.tStatic') standardProbeTemp = value
+  }
+  if (testProbeTemp === undefined || standardProbeTemp === undefined || !Number.isFinite(testProbeTemp) || !Number.isFinite(standardProbeTemp)) return
+  void calibrationStore.updateRealtimeCoefficients('total-temperature', { TestProbeTemp: testProbeTemp, StandardProbeTemp: standardProbeTemp })
+}
 
 const latestRawData = computed(() => {
   const points = calibrationStore.dataPoints
@@ -263,10 +284,16 @@ onMounted(async () => {
   } finally {
     isLoading.value = false
   }
+  unsubscribeDaqSnapshot = deviceApi.onSnapshot((payload: DataPayload) => {
+    latestSnapshots.value.set(payload.deviceId, payload)
+    if (!currentConfig.value || currentConfig.value.type !== 'total-temperature') return
+    updateRealtimeCoefficient(currentConfig.value, Array.from(latestSnapshots.value.values()))
+  })
 })
 
 onUnmounted(() => {
   stopChartUpdate()
+  unsubscribeDaqSnapshot?.()
 })
 </script>
 

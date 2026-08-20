@@ -1,4 +1,4 @@
-import type { CalibrationConfig, CalibrationErrorCode, CalibrationPoint, CalibrationType, FiveHoleCoefficients, LivePhysics, MotionSafetyFailure, SevenHoleConfig, SevenHolePreviewResult, SphereTankGateConfig } from '@shared/types/calibration';
+import type { CalibrationConfig, CalibrationErrorCode, CalibrationPoint, CalibrationType, FiveHoleCoefficients, LivePhysics, MotionSafetyFailure, RealtimeCoefficientInput, RealtimeCoefficients, SevenHoleConfig, SevenHolePreviewResult, SphereTankGateConfig } from '@shared/types/calibration';
 import { request } from '@api/http-client';
 import { isWailsAvailable, wailsApi } from '@api/wails-adapter';
 
@@ -205,6 +205,13 @@ export const calibrationApi = {
     } else {
       return await request<CalibrationStatus>('/api/calibration/status');
     }
+  },
+
+  realtimeCoefficients: async (type: CalibrationType, input: RealtimeCoefficientInput): Promise<RealtimeCoefficients> => {
+    return request<RealtimeCoefficients>('/api/calibration/realtime-coefficients', {
+      method: 'POST',
+      body: JSON.stringify({ type, input }),
+    })
   },
 
   collect: async (): Promise<{ success: boolean }> => {

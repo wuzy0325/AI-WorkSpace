@@ -216,6 +216,41 @@ export interface FiveHoleCoefficients {
   machNumber?: number
 }
 
+/** One unaveraged DAQ snapshot used to preview coefficients without recording a calibration point. */
+export interface RealtimeCoefficientInput {
+  P1?: number
+  P2?: number
+  P3?: number
+  P4?: number
+  P5?: number
+  P6?: number
+  P7?: number
+  PAtm?: number
+  TAtm?: number
+  PTotal?: number
+  PStatic?: number
+  PTunnelTotal?: number
+  PTunnelStatic?: number
+  TTunnel?: number
+  PProbeTotal?: number
+  TestProbeTemp?: number
+  StandardProbeTemp?: number
+}
+
+export type RealtimeCoefficients =
+  | FiveHoleCoefficients
+  | ThreeHoleCoefficients
+  | TotalPressureCoefficients
+  | SevenHoleCoefficients
+  | RealtimeSevenHoleCoefficients
+  | number
+
+export interface RealtimeSevenHoleCoefficients {
+  coefficients: SevenHoleCoefficients
+  region: 'inner' | 'outer'
+  sector: number
+}
+
 /** 总压探针点位布局配置 */
 export interface TotalPressurePointLayout {
   alphaMin: number

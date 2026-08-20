@@ -118,6 +118,14 @@ watch(isLoading, (loading) => {
     const pressures = buildRealtimePressuresFromSnapshots(currentConfig.value, snapshots)
     if (pressures) {
       calibrationStore.updateRealtimePressures(pressures)
+      const requiredRoles = ['fiveHole.p1', 'fiveHole.p2', 'fiveHole.p3', 'fiveHole.p4', 'fiveHole.p5', 'fiveHole.pAtm']
+      const realtimeReady = requiredRoles.every((role) => currentConfig.value?.probeChannels.some((channel) => channel.enabled && channel.role === role && findChannelValue(snapshots, channel.channel.deviceId, channel.channel.channelIndex) !== null))
+      if (realtimeReady) {
+        void calibrationStore.updateRealtimeCoefficients('five-hole', {
+          P1: pressures.P1, P2: pressures.P2, P3: pressures.P3, P4: pressures.P4, P5: pressures.P5,
+          PAtm: pressures.Patm, TAtm: pressures.Tatm, PTotal: pressures.P0, PStatic: pressures.Ps,
+        })
+      }
     }
   })
   unsubscribeDeviceStatus = deviceStore.attachStatusListener()
@@ -841,6 +849,7 @@ const fiveHoleLayout = computed(() => currentConfig.value?.fiveHoleLayout)
 // Prefer the current backend sample, then fall back to the last completed point after stopping.
 const latestCoefficients = computed(() => {
   if (calibrationStore.liveFiveHoleCoefficients) return calibrationStore.liveFiveHoleCoefficients
+  if (calibrationStore.realtimeCoefficients && typeof calibrationStore.realtimeCoefficients !== 'number' && 'Kalpha' in calibrationStore.realtimeCoefficients && 'CPT' in calibrationStore.realtimeCoefficients) return calibrationStore.realtimeCoefficients
   const points = calibrationStore.dataPoints
   if (!points.length) return null
   const lastPoint = points[points.length - 1]
@@ -1132,9 +1141,8 @@ function getChannelUnit(role: string): string {
           <!-- 球罐门控状态条（固定底部）：一行显示，附"编辑"入口跳配置界面 -->
           <div class="flex-shrink-0 border-t border-[var(--border-default)] p-3">
             <div class="flex items-center gap-2 whitespace-nowrap rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2 text-xs">
-              <!-- 左侧：状态块（圆点 + 标题 · 状态词） -->
+              <!-- 左侧：状态块（标题 · 状态词） -->
               <div class="flex items-center gap-2 whitespace-nowrap">
-                <span class="h-2 w-2 rounded-full" :style="{ backgroundColor: sphereTankGate.isActive.value ? `var(--accent-success)` : `var(--text-muted)` }"></span>
                 <span class="text-[var(--text-muted)]">{{ t.fh_sphereTankGate }}</span>
                 <span class="text-[var(--text-muted)]">·</span>
                 <span class="font-medium" :style="{ color: sphereTankGate.isActive.value ? `var(--accent-success)` : `var(--text-muted)` }">

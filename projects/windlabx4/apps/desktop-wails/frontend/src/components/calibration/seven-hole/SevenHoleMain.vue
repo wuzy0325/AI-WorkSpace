@@ -137,6 +137,14 @@ watch(isLoading, (loading) => {
     const pressures = buildRealtimePressuresFromSnapshots(currentConfig.value, snapshots)
     if (pressures) {
       calibrationStore.updateRealtimePressures(pressures)
+      const requiredRoles = ['sevenHole.p1', 'sevenHole.p2', 'sevenHole.p3', 'sevenHole.p4', 'sevenHole.p5', 'sevenHole.p6', 'sevenHole.p7', 'sevenHole.pAtm']
+      const realtimeReady = requiredRoles.every((role) => currentConfig.value?.probeChannels.some((channel) => channel.enabled && channel.role === role && findChannelValue(snapshots, channel.channel.deviceId, channel.channel.channelIndex) !== null))
+      if (realtimeReady) {
+        void calibrationStore.updateRealtimeCoefficients('seven-hole', {
+          P1: pressures.P1, P2: pressures.P2, P3: pressures.P3, P4: pressures.P4, P5: pressures.P5, P6: pressures.P6, P7: pressures.P7,
+          PAtm: pressures.Patm, TAtm: pressures.Tatm, PTotal: pressures.P0, PStatic: pressures.Ps,
+        })
+      }
     }
   })
   unsubscribeDeviceStatus = deviceStore.attachStatusListener()
@@ -324,6 +332,11 @@ const canSave = computed(() => calibrationStore.completeEvent !== null || calibr
 
 // 实时气动参数（马赫数/速度）：calibrationStore.calculatedPhysics 基于实时压力计算
 const physics = computed(() => calibrationStore.calculatedPhysics)
+const latestCoefficients = computed(() => {
+  const result = calibrationStore.realtimeCoefficients
+  if (result && typeof result !== 'number' && 'coefficients' in result && 'region' in result) return result
+  return null
+})
 
 // 当前点采样子进度：calibrationStore.status 透传后端 autoEngine.GetSampleProgress()
 const sampleProgress = computed(() => {
@@ -788,6 +801,27 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
+            <div v-if="latestCoefficients" class="border-b border-[var(--border-default)] p-3">
+              <div class="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
+                <Gauge class="h-4 w-4 text-[var(--accent-primary)]" />
+                {{ t.shm_latestCoefficients }}
+              </div>
+              <div class="grid grid-cols-2 gap-1.5">
+                <template v-if="latestCoefficients.region === 'inner'">
+                  <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-2 py-1"><span class="text-xs text-[var(--text-muted)]">Kα</span><span class="font-mono text-sm font-bold">{{ latestCoefficients.coefficients.Kalpha.toFixed(4) }}</span></div>
+                  <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-2 py-1"><span class="text-xs text-[var(--text-muted)]">Kβ</span><span class="font-mono text-sm font-bold">{{ latestCoefficients.coefficients.Kbeta.toFixed(4) }}</span></div>
+                  <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-2 py-1"><span class="text-xs text-[var(--text-muted)]">K0</span><span class="font-mono text-sm font-bold">{{ latestCoefficients.coefficients.K0.toFixed(4) }}</span></div>
+                  <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-2 py-1"><span class="text-xs text-[var(--text-muted)]">Ks</span><span class="font-mono text-sm font-bold">{{ latestCoefficients.coefficients.Ks.toFixed(4) }}</span></div>
+                </template>
+                <template v-else>
+                  <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-2 py-1"><span class="text-xs text-[var(--text-muted)]">Kθ</span><span class="font-mono text-sm font-bold">{{ latestCoefficients.coefficients.Ktheta.toFixed(4) }}</span></div>
+                  <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-2 py-1"><span class="text-xs text-[var(--text-muted)]">Kφ</span><span class="font-mono text-sm font-bold">{{ latestCoefficients.coefficients.Kphi.toFixed(4) }}</span></div>
+                  <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-2 py-1"><span class="text-xs text-[var(--text-muted)]">K0</span><span class="font-mono text-sm font-bold">{{ latestCoefficients.coefficients.K0Outer.toFixed(4) }}</span></div>
+                  <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-2 py-1"><span class="text-xs text-[var(--text-muted)]">Ks</span><span class="font-mono text-sm font-bold">{{ latestCoefficients.coefficients.KsOuter.toFixed(4) }}</span></div>
+                </template>
+              </div>
+            </div>
+
             <!-- 其他通道：PAtm/TAtm/PTotal/PStatic/TunnelTemp，可折叠 -->
             <div class="p-3">
               <button
@@ -818,9 +852,8 @@ onBeforeUnmount(() => {
           <!-- 球罐门控状态条（固定底部）：一行显示，附"编辑"入口跳配置界面 -->
           <div class="flex-shrink-0 border-t border-[var(--border-default)] p-3">
             <div class="flex items-center gap-2 whitespace-nowrap rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2 text-xs">
-              <!-- 左侧：状态块（圆点 + 标题 · 状态词） -->
+              <!-- 左侧：状态块（标题 · 状态词） -->
               <div class="flex items-center gap-2 whitespace-nowrap">
-                <span class="h-2 w-2 rounded-full" :style="{ backgroundColor: sphereTankGate.isActive.value ? `var(--accent-success)` : `var(--text-muted)` }"></span>
                 <span class="text-[var(--text-muted)]">{{ t.shm_sphereTankGate }}</span>
                 <span class="text-[var(--text-muted)]">·</span>
                 <span class="font-medium" :style="{ color: sphereTankGate.isActive.value ? `var(--accent-success)` : `var(--text-muted)` }">

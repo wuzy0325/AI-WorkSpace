@@ -236,6 +236,7 @@ const actualAlpha = computed(() => {
 const isMoving = computed(() => liveAxisPositions.value.some((a) => a.moving))
 
 const latestCoefficients = computed(() => {
+  if (calibrationStore.realtimeCoefficients && typeof calibrationStore.realtimeCoefficients !== 'number' && 'error' in calibrationStore.realtimeCoefficients) return calibrationStore.realtimeCoefficients
   const points = calibrationStore.dataPoints
   if (!points.length) return null
   const lastPoint = points[points.length - 1]
@@ -420,6 +421,14 @@ watch(isLoading, (loading) => {
     const pressures = buildRealtimePressuresFromSnapshots(currentConfig.value, snapshots)
     if (pressures) {
       calibrationStore.updateRealtimePressures(pressures)
+      const requiredRoles = ['totalPressure.pAtm', 'totalPressure.pTunnelTotal', 'totalPressure.pTunnelStatic', 'totalPressure.pProbeTotal']
+      const realtimeReady = requiredRoles.every((role) => currentConfig.value?.probeChannels.some((channel) => channel.enabled && channel.role === role && findChannelValue(snapshots, channel.channel.deviceId, channel.channel.channelIndex) !== null))
+      if (realtimeReady) {
+        void calibrationStore.updateRealtimeCoefficients('total-pressure', {
+          PAtm: pressures.Patm, TAtm: pressures.Tatm, PTunnelTotal: pressures.P0,
+          PTunnelStatic: pressures.Ps, TTunnel: pressures.Ttunnel, PProbeTotal: pressures.PprobeTotal,
+        })
+      }
     }
   })
   unsubscribeDeviceStatus = deviceStore.attachStatusListener()
@@ -665,9 +674,8 @@ onUnmounted(() => {
         <!-- 球罐门控状态条（固定底部）：一行显示，不占独立卡片；附"编辑"入口跳配置界面 -->
         <div class="flex-shrink-0 border-t border-[var(--border-default)] p-3">
           <div class="flex items-center gap-2 whitespace-nowrap rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2 text-xs">
-            <!-- 左侧：状态块（圆点 + 标题 · 状态词） -->
+            <!-- 左侧：状态块（标题 · 状态词） -->
             <div class="flex items-center gap-2 whitespace-nowrap">
-              <span class="h-2 w-2 rounded-full" :style="{ backgroundColor: sphereTankGate.isActive.value ? `var(--accent-success)` : `var(--text-muted)` }"></span>
               <span class="text-[var(--text-muted)]">{{ t.tp_sphereTankGate }}</span>
               <span class="text-[var(--text-muted)]">·</span>
               <span class="font-medium" :style="{ color: sphereTankGate.isActive.value ? `var(--accent-success)` : `var(--text-muted)` }">

@@ -8,6 +8,8 @@ import type {
   CalibrationDataPoint,
   CalibrationAnyDataPoint,
   FiveHoleCoefficients,
+  RealtimeCoefficientInput,
+  RealtimeCoefficients,
 } from '@shared/types/calibration'
 import { calibrationApi } from '@api/calibrationApi'
 import { wailsApi, isWailsAvailable } from '@api/wails-adapter'
@@ -104,6 +106,7 @@ export const useCalibrationStore = defineStore('calibration', () => {
   const realtimePressures = ref<RealtimePressures | null>(null)
   const calculatedPhysics = ref<CalculatedPhysics | null>(null)
   const liveFiveHoleCoefficients = ref<FiveHoleCoefficients | null>(null)
+  const realtimeCoefficients = ref<RealtimeCoefficients | null>(null)
   const timeInfo = ref<TimeInfo | null>(null)
   // 七孔探针实时分区状态（spec Task 19）：
   //   - currentRegion: "inner"（内区，7 区）或 "outer"（外区，1~6 区）
@@ -162,6 +165,11 @@ export const useCalibrationStore = defineStore('calibration', () => {
   let lastPressureUpdateAt = 0
   let pendingPressureUpdate: RealtimePressures | null = null
   let pressureThrottleTimer: ReturnType<typeof setTimeout> | null = null
+  let coefficientRequestInFlight = false
+  let coefficientRequestGeneration = 0
+  let lastCoefficientRequestAt = 0
+  let pendingCoefficientRequest: { type: CalibrationType; input: RealtimeCoefficientInput } | null = null
+  let coefficientRetryTimer: ReturnType<typeof setTimeout> | null = null
 
   function cancelPressureThrottle(): void {
     if (pressureThrottleTimer !== null) {
@@ -218,6 +226,56 @@ export const useCalibrationStore = defineStore('calibration', () => {
   function updateRealtimePressures(pressures: RealtimePressures) {
     pendingPressureUpdate = pressures
     flushPendingPressureIfReady()
+  }
+
+  async function updateRealtimeCoefficients(type: CalibrationType, input: RealtimeCoefficientInput) {
+    const now = Date.now()
+    if (now - lastCoefficientRequestAt < uiRefreshIntervalMs.value) {
+      pendingCoefficientRequest = { type, input }
+      schedulePendingCoefficientRequest(uiRefreshIntervalMs.value - (now - lastCoefficientRequestAt))
+      return
+    }
+    if (coefficientRequestInFlight) {
+      pendingCoefficientRequest = { type, input }
+      return
+    }
+    coefficientRequestInFlight = true
+    lastCoefficientRequestAt = now
+    const generation = ++coefficientRequestGeneration
+    try {
+      const result = await calibrationApi.realtimeCoefficients(type, input)
+      if (generation === coefficientRequestGeneration) realtimeCoefficients.value = result
+    } catch (error) {
+      // A partial device snapshot is normal while channels are connecting; retain the last valid preview.
+      console.debug('实时系数预览失败:', error)
+    } finally {
+      const isCurrentRequest = generation === coefficientRequestGeneration
+      coefficientRequestInFlight = false
+      if (isCurrentRequest && pendingCoefficientRequest !== null) {
+        const pending = pendingCoefficientRequest
+        pendingCoefficientRequest = null
+        schedulePendingCoefficientRequest(Math.max(0, uiRefreshIntervalMs.value - (Date.now() - lastCoefficientRequestAt)), pending)
+      }
+    }
+  }
+
+  function schedulePendingCoefficientRequest(delayMs: number, pending = pendingCoefficientRequest): void {
+    if (pending === null || coefficientRetryTimer !== null) return
+    coefficientRetryTimer = setTimeout(() => {
+      coefficientRetryTimer = null
+      if (pending !== null) void updateRealtimeCoefficients(pending.type, pending.input)
+    }, Math.max(0, delayMs))
+  }
+
+  function invalidateCoefficientRequest(): void {
+    coefficientRequestGeneration++
+    coefficientRequestInFlight = false
+    pendingCoefficientRequest = null
+    if (coefficientRetryTimer !== null) {
+      clearTimeout(coefficientRetryTimer)
+      coefficientRetryTimer = null
+    }
+    lastCoefficientRequestAt = 0
   }
 
   // updateRegion 更新七孔探针实时分区状态（spec Task 19 / Task 23）
@@ -675,6 +733,8 @@ export const useCalibrationStore = defineStore('calibration', () => {
     realtimePressures.value = null
     calculatedPhysics.value = null
     liveFiveHoleCoefficients.value = null
+    realtimeCoefficients.value = null
+    invalidateCoefficientRequest()
     timeInfo.value = null
     // 七孔探针实时分区状态清空（spec Task 19）
     // 启动新任务前必须清空，避免上一趟的分区状态残留导致 UI 显示错误的"外区 n 区"
@@ -831,6 +891,8 @@ export const useCalibrationStore = defineStore('calibration', () => {
     realtimePressures.value = null
     calculatedPhysics.value = null
     liveFiveHoleCoefficients.value = null
+    realtimeCoefficients.value = null
+    invalidateCoefficientRequest()
     timeInfo.value = null
   }
 
@@ -843,6 +905,7 @@ export const useCalibrationStore = defineStore('calibration', () => {
     realtimePressures,
     calculatedPhysics,
     liveFiveHoleCoefficients,
+    realtimeCoefficients,
     timeInfo,
     // 七孔探针实时分区状态（spec Task 19）
     currentRegion,
@@ -857,6 +920,7 @@ export const useCalibrationStore = defineStore('calibration', () => {
     lastRecoveryAt,
     setUiRefreshHz,
     updateRealtimePressures,
+    updateRealtimeCoefficients,
     acquireView,
     releaseView,
     recoveryFromBackend,

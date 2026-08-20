@@ -1636,6 +1636,7 @@ const zh: Record<string, string> = {
   shm_zeroHint: '将所有压力通道归零',
   // 左侧栏数据区
   shm_keyData: '关键数据',
+  shm_latestCoefficients: '最新系数',
   shm_otherChannels: '其他通道',
   shm_p7Center: 'P7 (中心)',
   shm_machMa: '马赫数 Ma',
@@ -3409,6 +3410,7 @@ const en: Record<string, string> = {
   shm_zeroHint: 'Zero all pressure channels',
   // Left sidebar data area
   shm_keyData: 'Key Data',
+  shm_latestCoefficients: 'Latest Coefficients',
   shm_otherChannels: 'Other Channels',
   shm_p7Center: 'P7 (Center)',
   shm_machMa: 'Mach Number (Ma)',

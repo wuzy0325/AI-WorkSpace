@@ -247,6 +247,25 @@ func NewRouter(deps Deps) http.Handler {
 				return
 			}
 			writeJSON(w, http.StatusOK, deps.CalibrationManager.Status())
+		case "realtime-coefficients":
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			var body struct {
+				Type  calibration.CalibrationType          `json:"type"`
+				Input calibration.RealtimeCoefficientInput `json:"input"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			result, err := deps.CalibrationManager.CalculateRealtimeCoefficients(body.Type, body.Input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, result)
 		case "collect":
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
