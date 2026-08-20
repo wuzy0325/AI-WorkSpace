@@ -55,7 +55,8 @@ func TestTraversalCsvWriterWritesRowsAndReportsOutputPath(t *testing.T) {
 		t.Fatalf("expected traversal CSV header, got %q", text)
 	}
 	// Calculated 未填(calc==nil):Alpha~Mach + CalcStatus 共 6 列写空,与旧行为一致
-	if !strings.Contains(text, "1,2026-06-24 10:30:00,1.000000,2.000000,0.000000,0.000000,11.500000,33.250000,,,,,,,4,1000,2026-06-24 10:29:58,2026-06-24 10:30:00") {
+	// 时间戳精确到毫秒（.000），与采集 CSV 一致。
+	if !strings.Contains(text, "1,2026-06-24 10:30:00.000,1.000000,2.000000,0.000000,0.000000,11.500000,33.250000,,,,,,,4,1000,2026-06-24 10:29:58.000,2026-06-24 10:30:00.000") {
 		t.Fatalf("expected traversal CSV row, got %q", text)
 	}
 }

@@ -619,8 +619,8 @@ func (w *TraversalCsvWriter) buildRow(p traversal.PointResult) []string {
 		row = append(row, strconv.Itoa(p.PointIndex+1))
 	}
 	if w.options.SaveTimestamp {
-		// 截断到秒级：与采集 CSV 时间戳格式对齐，避免展示错误的时间细分。
-		ts := time.UnixMilli(p.Timestamp).Format("2006-01-02 15:04:05")
+		// 毫秒精度：与采集 CSV 数据行时间戳格式对齐（'YYYY-MM-DD HH:MM:SS.mmm）。
+		ts := time.UnixMilli(p.Timestamp).Format("2006-01-02 15:04:05.000")
 		row = append(row, ts)
 	}
 	// 4 轴列：表头固定 X/Y/Z/U（物理轴名），数据按 motionAxes 把逻辑坐标映射到对应物理轴列。
@@ -662,7 +662,7 @@ func (w *TraversalCsvWriter) buildRow(p traversal.PointResult) []string {
 		}
 		row = append(row, strconv.Itoa(p.SampleCount), strconv.Itoa(p.DwellTimeElapsed))
 		// StartedAt/CompletedAt：单点总耗时契约（见 buildHeader 注释）
-		// 与 Timestamp 同为秒级字符串。0 值写空字符串（兼容旧数据或异常路径未赋值的场景），
+		// 与 Timestamp 同为毫秒级字符串。0 值写空字符串（兼容旧数据或异常路径未赋值的场景），
 		// 避免显示"1970-01-01 08:00:00"误导用户
 		row = append(row, formatUnixMilli(p.StartedAt), formatUnixMilli(p.CompletedAt))
 	}
@@ -753,13 +753,13 @@ func formatFloat(v float64) string {
 	return strconv.FormatFloat(v, 'f', 6, 64)
 }
 
-// formatUnixMilli 格式化 UnixMilli 时间戳为 CSV 单元格字符串（秒级，与 Timestamp 列一致）。
+// formatUnixMilli 格式化 UnixMilli 时间戳为 CSV 单元格字符串（毫秒级，与 Timestamp 列一致）。
 // 0 值输出空字符串：兼容旧数据或异常路径未赋值场景，避免显示"1970-01-01 08:00:00"误导用户。
 func formatUnixMilli(ms int64) string {
 	if ms <= 0 {
 		return ""
 	}
-	return time.UnixMilli(ms).Format("2006-01-02 15:04:05")
+	return time.UnixMilli(ms).Format("2006-01-02 15:04:05.000")
 }
 
 // buildLabelEntries 构建通道→标签的稳定排序列表
