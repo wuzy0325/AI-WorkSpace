@@ -376,20 +376,25 @@ onUnmounted(() => {
         </div>
 
         <div class="border-b border-[var(--border-default)] p-4">
-          <div class="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
-            <Activity class="h-4 w-4 text-[var(--accent-primary)]" />
-            {{ t.tt_sphereTankGate }}
-          </div>
-          <div class="flex items-center justify-between rounded-lg bg-[var(--bg-panel-strong)] p-3">
-            <div>
-              <div class="text-xs text-[var(--text-muted)]">{{ t.status }}</div>
-              <div class="text-sm font-medium" :class="sphereTankGate.isActive.value ? 'text-emerald-500' : 'text-[var(--text-muted)]'">
+          <!-- 球罐门控状态条：一行显示，不显示等待时间（总温无球罐压力通道） -->
+          <div class="flex items-center gap-2 whitespace-nowrap rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2 text-xs">
+            <div class="flex items-center gap-2 whitespace-nowrap">
+              <Activity class="h-4 w-4 text-[var(--accent-primary)]" />
+              <span class="text-sm font-medium text-[var(--text-primary)]">{{ t.tt_sphereTankGate }}</span>
+              <span class="text-[var(--text-muted)]">·</span>
+              <span class="font-medium" :class="sphereTankGate.isActive.value ? 'text-emerald-500' : 'text-[var(--text-muted)]'">
                 {{ sphereTankGate.isActive.value ? t.tt_activated : sphereTankGate.statusText.value }}
-              </div>
+              </span>
             </div>
-            <div class="text-right">
-              <div class="text-xs text-[var(--text-muted)]">{{ t.tt_waitTime }}</div>
-              <div class="font-mono text-sm text-[var(--text-primary)]">{{ sphereTankGate.waitTimeSec.value }}s</div>
+            <!-- 左右视觉分隔 -->
+            <span class="text-[var(--text-muted)]">|</span>
+            <!-- 球罐当前稳定时间实时显示：仅展示，不参与判定；
+                 无数据时显示固定宽度占位"--.--"避免布局抖动，单位 s 紧随数字避免"没配置"错觉 -->
+            <div class="flex items-center gap-1 whitespace-nowrap">
+              <span class="text-[var(--text-muted)]">{{ t.wf_sphereStableTimeLabel }}</span>
+              <span class="font-mono font-bold text-[var(--text-primary)] tabular-nums">
+                {{ sphereTankGate.stableTimeSec.value !== null ? sphereTankGate.stableTimeSec.value.toFixed(2) : '--.--' }}{{ t.wf_sphereStableTimeUnit }}
+              </span>
             </div>
           </div>
         </div>

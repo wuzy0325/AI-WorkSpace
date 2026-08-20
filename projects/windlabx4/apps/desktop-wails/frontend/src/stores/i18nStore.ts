@@ -1041,6 +1041,9 @@ const zh: Record<string, string> = {
   wf_spherePressureDevice: '压力通道设备',
   wf_spherePressureUnit: 'kPa',
   wf_spherePressureHint: '仅用于实时显示当前球罐压力值，不参与闸门判定',
+  // 球罐稳定时间：实时显示当前稳定通道读数，所有探针校准模块共用
+  wf_sphereStableTimeLabel: '稳定时间',
+  wf_sphereStableTimeUnit: 's',
   wf_motionOperationFailed: '运动控制失败',
 
   // 设置模块（set_ / stor_）
@@ -2813,6 +2816,9 @@ const en: Record<string, string> = {
   wf_spherePressureDevice: 'Pressure Channel Device',
   wf_spherePressureUnit: 'kPa',
   wf_spherePressureHint: 'Display-only: shows current sphere tank pressure; does not affect gate decision',
+  // Sphere tank stable time: real-time display of the stable channel reading; shared by all probe calibration modules
+  wf_sphereStableTimeLabel: 'Stable Time',
+  wf_sphereStableTimeUnit: 's',
   wf_motionOperationFailed: 'Motion control failed',
 
   // Settings & Storage (set_ / stor_)

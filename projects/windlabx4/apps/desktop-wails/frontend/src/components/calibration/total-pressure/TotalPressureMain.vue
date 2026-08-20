@@ -662,27 +662,35 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- 球罐门控状态条（固定底部）：压缩为一行，不占独立卡片；附"编辑"入口跳配置界面 -->
+        <!-- 球罐门控状态条（固定底部）：一行显示，不占独立卡片；附"编辑"入口跳配置界面 -->
         <div class="flex-shrink-0 border-t border-[var(--border-default)] p-3">
-          <div class="flex items-center justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
-            <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 whitespace-nowrap rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2 text-xs">
+            <!-- 左侧：状态块（圆点 + 标题 · 状态词） -->
+            <div class="flex items-center gap-2 whitespace-nowrap">
               <span class="h-2 w-2 rounded-full" :style="{ backgroundColor: sphereTankGate.isActive.value ? `var(--accent-success)` : `var(--text-muted)` }"></span>
-              <span class="text-xs text-[var(--text-muted)]">{{ t.tp_sphereTankGate }}</span>
-            </div>
-            <div class="flex items-center gap-3 text-xs">
+              <span class="text-[var(--text-muted)]">{{ t.tp_sphereTankGate }}</span>
+              <span class="text-[var(--text-muted)]">·</span>
               <span class="font-medium" :style="{ color: sphereTankGate.isActive.value ? `var(--accent-success)` : `var(--text-muted)` }">
                 {{ sphereTankGate.isActive.value ? t.tp_activated : sphereTankGate.statusText.value }}
               </span>
-              <span class="text-[var(--text-muted)]">|</span>
-              <span class="font-mono font-bold text-[var(--text-primary)]">{{ sphereTankGate.waitTimeSec.value }}s</span>
+            </div>
+            <!-- 左右视觉分隔 -->
+            <span class="text-[var(--text-muted)]">|</span>
+            <!-- 右侧：实时读数块（稳定时间 | 压力） -->
+            <div class="flex items-center gap-2 whitespace-nowrap">
+              <!-- 球罐当前稳定时间实时显示：仅展示，不参与判定；
+                   无数据时显示固定宽度占位"--.--"避免布局抖动，单位 s 紧随数字避免"没配置"错觉 -->
+              <span class="text-[var(--text-muted)]">{{ t.wf_sphereStableTimeLabel }}</span>
+              <span class="font-mono font-bold text-[var(--text-primary)] tabular-nums">
+                {{ sphereTankGate.stableTimeSec.value !== null ? sphereTankGate.stableTimeSec.value.toFixed(2) : '--.--' }}{{ t.wf_sphereStableTimeUnit }}
+              </span>
               <!-- 球罐压力实时显示：仅展示，不参与判定；
-                   无数据时显示固定宽度占位"--.--"避免布局抖动，单位 kPa 始终显示避免"没配置"错觉 -->
+                   无数据时显示固定宽度占位"--.--"避免布局抖动，单位 kPa 紧随数字避免"没配置"错觉 -->
               <span class="text-[var(--text-muted)]">|</span>
               <span class="text-[var(--text-muted)]">{{ t.wf_spherePressureLabel }}</span>
-              <span class="font-mono font-bold text-[var(--text-primary)] tabular-nums min-w-[56px] text-right">
-                {{ sphereTankGate.pressureValue.value !== null ? sphereTankGate.pressureValue.value.toFixed(2) : '--.--' }}
+              <span class="font-mono font-bold text-[var(--text-primary)] tabular-nums">
+                {{ sphereTankGate.pressureValue.value !== null ? sphereTankGate.pressureValue.value.toFixed(2) : '--.--' }}{{ t.wf_spherePressureUnit }}
               </span>
-              <span class="text-[var(--text-muted)]">{{ t.wf_spherePressureUnit }}</span>
             </div>
           </div>
         </div>
