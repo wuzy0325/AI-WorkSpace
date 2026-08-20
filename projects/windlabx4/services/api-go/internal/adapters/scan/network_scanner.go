@@ -88,8 +88,8 @@ func (s *NetworkScanner) Scan() ([]device.ScanResult, error) {
 
 	// 顺序执行每种设备类型的扫描，避免 Windows 上并发 UDP socket 的冲突
 	tasks := []scanTask{
-		{cmd: daqT1603DiscoveryCmd, port: daqT1603DiscoveryPort, parser: deviceDispatcher},
-		{cmd: daqP1604DiscoveryCmd, port: daqP1604DiscoveryPort, parser: deviceDispatcher},
+		{cmd: daqT1603DiscoveryCmd, port: daqT1603DiscoveryPort, parser: parseDaqT1603Response},
+		{cmd: daqP1604DiscoveryCmd, port: daqP1604DiscoveryPort, parser: parseDaqP1604Response},
 		{cmd: "\xFF\x01\x01\x02", port: daqP1064PreDiscoveryPort, parser: parseDaqP1604PreResponse},
 	}
 

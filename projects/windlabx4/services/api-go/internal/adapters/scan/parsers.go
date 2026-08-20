@@ -59,6 +59,11 @@ func isASCIIPrintable(data []byte) bool {
 func parseDaqP1604Response(data []byte, remoteAddr string) *device.ScanResult {
 	remoteHost := remoteHostFromAddr(remoteAddr)
 	msg := strings.TrimSpace(string(data))
+	var jsonData map[string]interface{}
+	if err := json.Unmarshal([]byte(msg), &jsonData); err == nil {
+		return parseDaqP1604Json(jsonData, remoteHost)
+	}
+
 	parts := strings.Split(msg, ",")
 	for i := range parts {
 		parts[i] = strings.TrimSpace(parts[i])
@@ -174,7 +179,25 @@ func parseDaqT1603Response(data []byte, remoteAddr string) *device.ScanResult {
 		return parseDaqT1603Json(jsonData, remoteHost)
 	}
 
-	return parseDaqP1604Response(data, remoteAddr)
+	parts := strings.Split(msg, ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	if len(parts) >= 8 {
+		return parseDaqT1603Csv(parts, remoteHost)
+	}
+	if strings.HasPrefix(msg, "DAQT1603") {
+		return &device.ScanResult{
+			ID:        scanResultID(scanDaqT1603Prefix, remoteHost, daqT1603DefaultPort, ""),
+			Name:      "Discovered DAQ-T-1603",
+			Type:      device.DeviceDaqT1603,
+			Available: true,
+			Address:   remoteHost,
+			Port:      daqT1603DefaultPort,
+		}
+	}
+
+	return nil
 }
 
 func remoteHostFromAddr(remoteAddr string) string {

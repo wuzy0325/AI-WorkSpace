@@ -358,6 +358,18 @@ func TestParseDaqP1604ResponseShort(t *testing.T) {
 	}
 }
 
+func TestParseDaqP1604ResponseJSON(t *testing.T) {
+	json := `{"ip":"192.168.3.131","port":9000,"model":"P1604","mac":"00-02-71-36-46-70"}`
+	result := parseDaqP1604Response([]byte(json), "192.168.3.131:7000")
+
+	if result == nil {
+		t.Fatal("expected parsed result")
+	}
+	if result.Type != device.DeviceDAQP1604 {
+		t.Fatalf("expected DAQ-P-1604 type, got %s", result.Type)
+	}
+}
+
 func TestParseDaqT1603ResponseCSV(t *testing.T) {
 	// 使用实际 T1603 设备的响应格式：parts[3] 为 "T1603"
 	csv := "192.168.1.101, AA-BB-CC-DD-EE-11, 0, T1603, v2.0, 1, 1, 9000"
@@ -377,6 +389,21 @@ func TestParseDaqT1603ResponseCSV(t *testing.T) {
 	}
 	if result.Port != 9000 {
 		t.Fatalf("expected port 9000, got %d", result.Port)
+	}
+}
+
+func TestParseDaqT1603ResponseCSVTempFirmware(t *testing.T) {
+	csv := "192.168.3.7, AC-8A-01-44-3B-DC-E2-C6, 0, SN-temp, 1.00, 0, 0, 9000"
+	result := parseDaqT1603Response([]byte(csv), "192.168.3.7:7000")
+
+	if result == nil {
+		t.Fatal("expected parsed result")
+	}
+	if result.Type != device.DeviceDaqT1603 {
+		t.Fatalf("expected DAQ-T-1603 type, got %s", result.Type)
+	}
+	if result.Address != "192.168.3.7" {
+		t.Fatalf("expected address 192.168.3.7, got %s", result.Address)
 	}
 }
 
