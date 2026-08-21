@@ -126,6 +126,56 @@ func TestResolvePathKeepsAbsolutePath(t *testing.T) {
 	}
 }
 
+// TestFileExistsRemoveFileResolveRelativePath 回归测试：覆盖检测/删除必须与
+// CalibrationStart 使用同一套路径归一（ResolvePath → %APPDATA%\windlabx4\<相对>）。
+//
+// 历史 bug：FileExists/RemoveFile 直接用原始相对路径 os.Stat/os.Remove（查 CWD），
+// 而后端 Start 写到 %APPDATA%\windlabx4\<相对>。导致覆盖确认后旧文件未被删除，
+// 追加模式 writer 续写旧文件，校准结果混入上一次的数据。
+func TestFileExistsRemoveFileResolveRelativePath(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("ResolvePath AppData 行为仅 Windows 适用")
+	}
+	appData := t.TempDir()
+	t.Setenv("APPDATA", appData)
+	app := &App{}
+
+	// 相对路径 → 应解析到 %APPDATA%\windlabx4\<相对>
+	rel := filepath.Join("data", "recordings", "total-pressure.csv")
+	resolved, err := app.ResolvePath(rel)
+	if err != nil {
+		t.Fatalf("resolve path failed: %v", err)
+	}
+	// 在解析后的位置创建文件（模拟后端 Start 写入的旧 CSV）
+	if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	if err := os.WriteFile(resolved, []byte("old,data\n"), 0o644); err != nil {
+		t.Fatalf("write resolved file failed: %v", err)
+	}
+
+	// 前端传的是原始相对路径，FileExists 必须命中解析后的文件
+	exists, err := app.FileExists(rel)
+	if err != nil || !exists {
+		t.Fatalf("FileExists(rel) should resolve to existing file, got exists=%v err=%v", exists, err)
+	}
+
+	// RemoveFile 必须删除解析后的文件，而非 CWD 下的相对路径
+	removed, err := app.RemoveFile(rel)
+	if err != nil || !removed {
+		t.Fatalf("RemoveFile(rel) should remove resolved file, got removed=%v err=%v", removed, err)
+	}
+	if _, statErr := os.Stat(resolved); !os.IsNotExist(statErr) {
+		t.Fatalf("resolved file should be gone after RemoveFile, stat err=%v", statErr)
+	}
+
+	// 删除后 FileExists 应返回 false
+	exists2, err := app.FileExists(rel)
+	if err != nil || exists2 {
+		t.Fatalf("FileExists after removal should be false, got exists=%v err=%v", exists2, err)
+	}
+}
+
 func TestStorageStartRecordingResolvesRelativeOutputDir(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("ResolvePath AppData 行为仅 Windows 适用")

@@ -94,7 +94,12 @@ func NewAppContext(configDir string) (*AppContext, error) {
 	calibrationMgr := usecase.NewCalibrationManager(hub, motionMgr, nil, calStore)
 	// csvWriter 实例同时实现 CalibrationCsvWriter（单 writer 场景）与
 	// CalibrationWriterFactory（七孔多 writer 场景）接口，故复用同一实例注入两端口。
-	csvWriterInstance := storage.NewCalibrationCsvWriter(calibration.Config{})
+	//
+	// 覆盖模式（Overwrite）：自动校准（五孔/三孔/总压）与总温在每次 Start 时
+	// 以截断方式初始化实时 CSV，杜绝"重复校准同名文件时在旧文件末尾续写、新旧数据混在一起"
+	// 的历史 bug。CalibrationManager.Start 的注释本就声明以覆盖模式初始化，此处对齐。
+	// NewWriter（七孔实时路由）用显式 truncate 参数，不受实例 truncate 字段影响。
+	csvWriterInstance := storage.NewCalibrationCsvWriterOverwrite(calibration.Config{})
 	calibrationMgr.SetCsvWriter(csvWriterInstance)
 	calibrationMgr.SetCsvWriterFactory(func(config calibration.Config) windaqports.CalibrationCsvWriter {
 		return storage.NewCalibrationCsvWriterOverwrite(config)

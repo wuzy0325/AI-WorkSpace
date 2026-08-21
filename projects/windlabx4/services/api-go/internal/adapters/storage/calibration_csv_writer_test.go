@@ -53,6 +53,60 @@ func TestCalibrationCsvWriterInitializeRefreshesSchemaFromConfig(t *testing.T) {
 	}
 }
 
+// TestCalibrationCsvWriterOverwriteTruncatesOnReinitialize 验证覆盖模式（Overwrite）下，
+// 对同一路径重复 Initialize 会截断旧文件，只保留本次写入的数据，绝不续写旧数据。
+//
+// 历史 bug 根因：自动校准（五孔/三孔/总压/七孔）的实时 CSV writer 以追加模式注入，
+// 配置名不改 → savePath 不变 → 重复校准时在旧文件末尾续写，新旧数据混在一起，
+// 出现"校准后结果仍是上一次数据"的误报。
+// 修复：注入的实时 writer 改为覆盖模式（NewCalibrationCsvWriterOverwrite），
+// 每次 Start 截断旧文件，保证结果始终为本次纯数据。
+func TestCalibrationCsvWriterOverwriteTruncatesOnReinitialize(t *testing.T) {
+	savePath := filepath.Join(t.TempDir(), "five-hole.csv")
+	config := calibration.Config{
+		TaskID:   "cal-1",
+		Type:     string(calibration.TypeFiveHole),
+		SavePath: savePath,
+	}
+
+	// 第一次 Initialize（覆盖模式，新文件）：写 BOM + 表头 + 1 个点
+	writer := NewCalibrationCsvWriterOverwrite(config)
+	if err := writer.Initialize(config); err != nil {
+		t.Fatalf("first Initialize returned error: %v", err)
+	}
+	if err := writer.AppendPoint(&calibration.FiveHoleDataPoint{PointID: 1}); err != nil {
+		t.Fatalf("first AppendPoint returned error: %v", err)
+	}
+	if err := writer.Flush(); err != nil {
+		t.Fatalf("first Flush returned error: %v", err)
+	}
+
+	// 再次 Initialize（覆盖模式）：必须截断旧文件，只写表头 + 新点，不含旧数据
+	writer2 := NewCalibrationCsvWriterOverwrite(config)
+	if err := writer2.Initialize(config); err != nil {
+		t.Fatalf("second Initialize returned error: %v", err)
+	}
+	if err := writer2.AppendPoint(&calibration.FiveHoleDataPoint{PointID: 2}); err != nil {
+		t.Fatalf("second AppendPoint returned error: %v", err)
+	}
+	if err := writer2.Flush(); err != nil {
+		t.Fatalf("second Flush returned error: %v", err)
+	}
+
+	raw, err := os.ReadFile(savePath)
+	if err != nil {
+		t.Fatalf("read csv: %v", err)
+	}
+	records, err := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(raw, utf8BOM))).ReadAll()
+	if err != nil {
+		t.Fatalf("read csv: %v", err)
+	}
+	// 覆盖模式第二次 Start：应仅含 1 行表头 + 1 行数据，旧数据被截断
+	if len(records) != 2 {
+		t.Fatalf("overwrite mode should truncate old rows: expected header+1 row, got %d rows", len(records))
+	}
+}
+
 // TestCalibrationCsvWriterAppendModeSkipsHeaderOnExistingFile 验证追加模式下，
 // 文件已存在且非空时 Initialize 不再写表头。
 //

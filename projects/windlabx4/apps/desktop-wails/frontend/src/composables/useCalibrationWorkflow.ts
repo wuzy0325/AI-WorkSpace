@@ -75,9 +75,12 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
       feedbackStore.pushToast(startDisabledReason.value || i18n.t.wf_pleaseCompletePreCheck, 'warning')
       return
     }
-    // CSV 文件覆盖检测：配置名不改时 savePath 与上次相同，后端追加模式 writer 会在
-    // 旧文件末尾续写（已修表头重复 bug），但两次校准数据混在一起容易混淆分析。
-    // 因此检测到文件已存在时弹窗让用户决定：覆盖（删旧文件后 Start）或取消（改路径再来）。
+    // CSV 文件覆盖提示：后端实时 CSV 写入器在 Start 时始终以覆盖（截断）模式打开，
+    // 即使旧文件存在也不会续写——重复校准同名文件只会保留本次数据。
+    // 因此这里仅做一次"将覆盖旧文件"的确认（好体验），不再依赖前端删文件来保证正确性：
+    //   - 删除失败（Wails 不可用 / 权限不足 / 路径被占用）不阻断启动，
+    //     后端截断写入同样保证结果为纯新数据；
+    //   - fileExists 用后端同一套 ResolvePath 归一，命中真实文件位置。
     const savePath = currentConfig.value.savePath?.trim()
     if (savePath) {
       try {
@@ -97,18 +100,16 @@ export function useCalibrationWorkflow(calibrationType: CalibrationType) {
             feedbackStore.pushToast(i18n.t.wf_startCancelled, 'info')
             return
           }
-          // 检查 removeFile 返回值：Wails 不可用或权限不足时返回 false，
-          // 若不阻断启动，后端会按追加模式续写，两次校准数据混在一起。
-          const removed = await storageStore.removeFile(savePath)
-          if (!removed) {
-            feedbackStore.pushToast(i18n.t.wf_removeOldCsvFailed, 'warning')
-            return
+          // 尽力删除旧文件，失败仅提示不阻断：后端截断写入兜底，保证结果纯净。
+          try {
+            await storageStore.removeFile(savePath)
+          } catch (err) {
+            console.warn('Failed to remove old CSV (backend will truncate on Start):', err)
           }
         }
       } catch (err) {
         console.error('Failed to check/remove CSV file:', err)
-        feedbackStore.pushToast(i18n.t.wf_checkCsvFailed + ': ' + (err instanceof Error ? err.message : String(err)), 'warning')
-        // 检测失败不阻断启动，让后端按追加模式处理
+        // 检测失败不阻断启动，后端 Start 截断写入保证结果纯净
       }
     }
     try {

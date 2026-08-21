@@ -1019,9 +1019,13 @@ func (m *CalibrationManager) routeSevenHoleWriter(config calibration.Config, bas
 	m.mu.RUnlock()
 
 	// 慢路径：未命中，创建新 writer（文件 I/O 在锁外执行）
+	// 用 NewWriterTruncate（覆盖模式）而非 NewWriter（追加）：每次 Start 的
+	// sevenHoleWriters 缓存会被重建，若文件名与上次相同（配置名/路径未改），
+	// 追加模式会在旧文件末尾续写、新旧数据混在一起（与单 writer 的 append bug 同类）。
+	// 覆盖模式保证重复校准同一路径时永远只保留本次数据。
 	path := basePath + sevenHoleFileSuffix(region, sector) + ".csv"
 	schema := calibration.NewSevenHoleCsvSchema(config, region, sector)
-	writer, err := m.sevenHoleWriterFactory.NewWriter(path, schema)
+	writer, err := m.sevenHoleWriterFactory.NewWriterTruncate(path, schema)
 	if err != nil {
 		return nil, fmt.Errorf("创建七孔 CSV writer 失败 (path=%s): %w", path, err)
 	}

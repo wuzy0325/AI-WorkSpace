@@ -929,11 +929,21 @@ func (a *App) PickFiles(title string, filters []application.FileFilter) ([]strin
 // FileExists 检查指定路径的文件是否存在。
 // 用于校准 Start 前检测 CSV 文件是否已存在，提示用户决定是否覆盖。
 // 路径不存在或指向目录时返回 false，不报错。
+//
+// 关键：必须先 ResolvePath 再 os.Stat——与 CalibrationStart 的路径归一保持一致。
+// 否则当配置中的 savePath 为相对路径时，前端检查的是 CWD 下的文件，
+// 而后端 Start 实际写到 %APPDATA%\windlabx4\<相对>，两者路径不一致，
+// 会导致覆盖检测与删除落空。后端实时 writer 为覆盖模式（每次 Start 截断旧文件），
+// 但覆盖确认仍应反映真实文件位置，故这里同样解析路径。
 func (a *App) FileExists(path string) (bool, error) {
 	if path == "" {
 		return false, nil
 	}
-	info, err := os.Stat(path)
+	resolved, err := a.ResolvePath(path)
+	if err != nil {
+		return false, err
+	}
+	info, err := os.Stat(resolved)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
@@ -944,14 +954,23 @@ func (a *App) FileExists(path string) (bool, error) {
 }
 
 // RemoveFile 删除指定路径的文件。
-// 用于校准 Start 前用户选择"覆盖"时清理旧 CSV 文件，
-// 让后续追加模式 writer 当作新文件写入（BOM + 表头）。
+// 用于校准 Start 前用户选择"覆盖"时清理旧 CSV 文件。
+// 后端实时 writer 为覆盖模式（每次 Start 截断旧文件），删除此处属"尽力而为"：
+// 即使删除失败，后端 Start 截断写入仍保证结果为本次纯数据。
 // 路径不存在视为已删除，不报错。
+//
+// 关键：必须先 ResolvePath 再 os.Remove——与 CalibrationStart 的路径归一保持一致。
+// 否则相对路径下删除的是 CWD 文件，而非后端实际写入的 %APPDATA%\windlabx4\<相对>，
+// 旧文件残留导致覆盖失败（见 FileExists 注释）。
 func (a *App) RemoveFile(path string) (bool, error) {
 	if path == "" {
 		return false, nil
 	}
-	if err := os.Remove(path); err != nil {
+	resolved, err := a.ResolvePath(path)
+	if err != nil {
+		return false, err
+	}
+	if err := os.Remove(resolved); err != nil {
 		if os.IsNotExist(err) {
 			return true, nil
 		}

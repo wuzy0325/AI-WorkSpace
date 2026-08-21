@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.17.1] - 2026-08-21
+
+### Added
+
+- **独立设备扫描 CLI 工具 `device-scan`**：从后端 `DeviceManager.ScanDevices()` 剥离，复用 `internal/adapters/scan.NetworkScanner`，一次性探测局域网 DAQ 设备（DAQ-P-1604 / DAQ-T-1603 / DAQ-P-1604Pre），支持表格打印、`-json` 与 `-out` 导出、`-timeout` 自定义超时。详见 `services/api-go/cmd/device-scan/README.md`。
+- **设备扫描图形工具 `device-scan-gui`**：双击直接启动的 Windows 原生窗口，选择网卡/子网后点「开始扫描」，表格展示扫描结果；复用同一套 `NetworkScanner` 扫描逻辑（walk 实现，无控制台窗口）。详见 `services/api-go/cmd/device-scan-gui/README.md`。
+
+### Internal
+
+- 新增 `services/api-go/cmd/device-scan/main.go`，纯 CLI 封装，不改动底层扫描逻辑；Windows 控制台 UTF-8 输出（仿 `wtnpxi-diag`）。
+- 新增 `services/api-go/cmd/device-scan-gui/`（walk 原生窗口，含 `app.manifest` + `rsrc.syso`，构建加 `-H windowsgui`），复用同一扫描逻辑。
+- `services/api-go/README.md` 增加「配套命令行工具集」小节，统一各工具的构建/测试命令。
+
+### Changed（扫描范围限定）
+
+- `device-scan` 新增 `-iface <网卡名>` 与 `-subnet <CIDR>` 参数，可限定扫描范围（互斥）；限定场景下不再发送受限广播 `255.255.255.255`。
+- `internal/adapters/scan` 新增 `WithTargets(...)` 选项与 `ScopedDiscoveryTargets(iface, subnet)` 辅助函数：纯增量，默认全网卡广播行为不变；`NetworkScanner` 仅在显式指定目标时覆盖默认集合。
+
+### Fixed
+
+- **校准结果混入上一次数据（重复校准同名 CSV 文件）**：根因是自动校准（五孔/三孔/总压/七孔）与总温的实时 CSV writer 以追加模式注入，配置名不改 → `savePath` 不变 → 重复校准在旧文件末尾续写，新旧数据混在一起，出现"覆盖提示确认后结果仍是上一次数据"的误报。修复：实时 writer 统一改为覆盖模式（`NewCalibrationCsvWriterOverwrite`），每次 `Start` 截断旧文件，保证结果始终为本次纯数据；七孔实时路由改用 `NewWriterTruncate`。
+- **覆盖检测/删除的路径与后端写入不一致**：`FileExists`/`RemoveFile` 直接用前端原始 `savePath` 做 `os.Stat`/`os.Remove`，而后端 `CalibrationStart` 会先 `ResolvePath`（相对路径解析到 `%APPDATA%\windlabx4\<相对>`），导致相对路径下删错文件、旧数据残留。修复：`FileExists`/`RemoveFile` 先 `ResolvePath` 再操作，与后端写入走同一套路径归一。
+- 前端覆盖弹窗不再依赖"删旧文件"保证正确性：`removeFile` 失败仅提示不阻断启动（后端 Start 截断兜底），并新增覆盖模式截断与路径归一的回归测试。
+
+### Verification
+
+- `go test ./internal/... ./pkg/...`（windlabx4 backend）: passed
+- `go test ./...`（desktop-wails backend）: passed
+- `npx vue-tsc --noEmit`（frontend）: passed
+
 ## [0.17.0] - 2026-08-19
 
 ### Added
