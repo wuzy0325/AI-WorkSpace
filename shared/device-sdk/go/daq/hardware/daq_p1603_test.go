@@ -266,7 +266,7 @@ func TestDAQP1603_BuildChannelScales_AllEnabled(t *testing.T) {
 		}
 	}
 
-	scales := buildChannelScales(chs)
+	scales := buildChannelScales(0, chs)
 	if len(scales) != 16 {
 		t.Fatalf("len(scales) = %d, want 16", len(scales))
 	}
@@ -290,7 +290,7 @@ func TestDAQP1603_BuildChannelScales_PartialEnabled(t *testing.T) {
 		{Index: 3, Enabled: true, RangeMin: 0, RangeMax: 100},
 	}
 
-	scales := buildChannelScales(chs)
+	scales := buildChannelScales(0, chs)
 	if len(scales) != 2 {
 		t.Fatalf("len(scales) = %d, want 2", len(scales))
 	}
@@ -302,6 +302,31 @@ func TestDAQP1603_BuildChannelScales_PartialEnabled(t *testing.T) {
 	}
 }
 
+// 测试前置：上层适配器已过滤 CH1/CH2，仅传入真实 Index 为 2..15 的启用通道。
+// 期待结果：buildChannelScales 保留配置 Index，不把压缩后的切片位置误当硬件通道号。
+func TestDAQP1603_BuildChannelScales_FilteredLeadingChannels(t *testing.T) {
+	chs := make([]core.ChannelConfig, 14)
+	for i := range chs {
+		chs[i] = core.ChannelConfig{
+			Index:    i + 2,
+			Enabled:  true,
+			RangeMin: -1000,
+			RangeMax: 1000,
+		}
+	}
+
+	scales := buildChannelScales(0, chs)
+	if len(scales) != 14 {
+		t.Fatalf("len(scales) = %d, want 14", len(scales))
+	}
+	if scales[0].origIndex != 2 {
+		t.Fatalf("first origIndex = %d, want 2 (CH3)", scales[0].origIndex)
+	}
+	if scales[13].origIndex != 15 {
+		t.Fatalf("last origIndex = %d, want 15 (CH16)", scales[13].origIndex)
+	}
+}
+
 // 测试前置：buildChannelScales 在通道 RangeMin==0 && RangeMax==0 时用 4-20mA 兜底。
 // 期待结果：scales[i].engMin == 4, scales[i].engMax == 20。
 func TestDAQP1603_BuildChannelScales_FallbackRange(t *testing.T) {
@@ -309,7 +334,7 @@ func TestDAQP1603_BuildChannelScales_FallbackRange(t *testing.T) {
 		{Index: 0, Enabled: true, RangeMin: 0, RangeMax: 0},
 	}
 
-	scales := buildChannelScales(chs)
+	scales := buildChannelScales(0, chs)
 	if len(scales) != 1 {
 		t.Fatalf("len(scales) = %d, want 1", len(scales))
 	}
@@ -321,6 +346,33 @@ func TestDAQP1603_BuildChannelScales_FallbackRange(t *testing.T) {
 	}
 }
 
+// 测试前置：禁用 CH1/CH2 后 profile 只含 Index 2..15（稀疏），SetTare/GetTare 按真实硬件号寻址。
+// 期待结果：对真实号 14（CH15）能正常写入/读回，不再按数组位置误判越界。
+func TestDAQP1603_Tare_SparseChannelIndex(t *testing.T) {
+	profile := makeP1603Profile("sparse", "192.168.1.1", 0)
+	chs := make([]core.ChannelConfig, 14)
+	for i := range chs {
+		chs[i] = core.ChannelConfig{Index: i + 2, Name: fmt.Sprintf("CH%d", i+3), Enabled: true}
+	}
+	profile.Channels = chs
+	d := NewDAQP1603(profile)
+
+	if err := d.SetTare(14, 483.7); err != nil {
+		t.Fatalf("SetTare(14) for CH15 failed: %v", err)
+	}
+	got, err := d.GetTare(14)
+	if err != nil {
+		t.Fatalf("GetTare(14) failed: %v", err)
+	}
+	if got != 483.7 {
+		t.Fatalf("GetTare(14) = %v, want 483.7", got)
+	}
+	// 已禁用的真实号（如 0=CH1）不应存在于 profile，应报错而非静默/越界。
+	if err := d.SetTare(0, 1.0); err == nil {
+		t.Fatal("SetTare(0) for disabled CH1 should fail (not in profile)")
+	}
+}
+
 // 测试前置：buildChannelScales 在 channels 长度 > 16 时按 WTNDAQ16H_AI_MAX_CHANNELS 截断。
 // 期待结果：len(scales) == 16（不会越界访问 CHParam[16]）。
 func TestDAQP1603_BuildChannelScales_TruncateAt16(t *testing.T) {
@@ -329,7 +381,7 @@ func TestDAQP1603_BuildChannelScales_TruncateAt16(t *testing.T) {
 		chs[i] = core.ChannelConfig{Index: i, Enabled: true, RangeMin: 0, RangeMax: 100}
 	}
 
-	scales := buildChannelScales(chs)
+	scales := buildChannelScales(0, chs)
 	if len(scales) != 16 {
 		t.Fatalf("len(scales) = %d, want 16 (truncated at MAX_CHANNELS)", len(scales))
 	}
@@ -674,13 +726,13 @@ func TestDAQP1603_CalcSampsPerChan(t *testing.T) {
 		userRate int
 		want     uint32
 	}{
-		{1, 1000},   // 1Hz → 1000 点取平均
-		{10, 100},   // 10Hz → 100 点
-		{20, 50},    // 20Hz → 50 点
-		{50, 20},    // 50Hz → 20 点
-		{100, 10},   // 100Hz → 10 点
-		{200, 5},    // 200Hz → 5 点
-		{500, 2},    // 500Hz → 2 点
+		{1, 1000}, // 1Hz → 1000 点取平均
+		{10, 100}, // 10Hz → 100 点
+		{20, 50},  // 20Hz → 50 点
+		{50, 20},  // 50Hz → 20 点
+		{100, 10}, // 100Hz → 10 点
+		{200, 5},  // 200Hz → 5 点
+		{500, 2},  // 500Hz → 2 点
 	}
 	for _, c := range cases {
 		profile := core.Profile{
