@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.17.2] - 2026-08-24
+
+### Fixed
+
+- **DAQ-P-1603 打压读数只有约一半（斜率错误约 2 倍）**：根因是 `shared/device-sdk` 的 `daq_p1603.go` `readLoop` 用 `code/65535*20` 换算电流（假设 0-20mA 量程单极性、码值 0=0mA），实际硬件为双极性 ±20mA、零点码值 32768，导致 0-20mA 双极性零点被当成 0，所有压力读数压缩到约一半。修复：改用 `GetVoltRangeInfo` 返回的权威参数，按 `current = (code-32768)*CodeWidth - OffsetVolt` 换算（不调用会崩溃的 `ScaleBinToVolt`）。真机（192.168.3.104）打压 -1000Pa 读数由约 -480Pa 修正为约 -1000Pa。详见 [postmortem](docs/postmortems/2026-08-24-daq-p1603-current-scaling.md)。
+- **DAQ-P-1603 禁用 CH1/CH2 后通道错位**：`SetTare`/`GetTare` 按数组下标访问通道，稀疏通道下会误判越界。修复：改为按 `ChannelConfig.Index`（真实硬件号）遍历查找。
+
+### Internal
+
+- `shared/device-sdk/go/daq/hardware/daq_p1603.go`：新增 `chanScale.codeWidth/offsetVolt`，`buildChannelScales` 通过 `GetVoltRangeInfo` 获取 0-20mA 量程权威码值参数（失败回退理论码宽 `20/32768`）；`readLoop` 换算改为 `(code-32768)*CodeWidth - OffsetVolt`。
+
+### Notes
+
+- **修复后需重新校零**：旧 `tareOffset`（如 483Pa）基于错误换算记录，须清掉重新校零。
+- 本次修复在 device-sdk 单源，WindLabX4 与 1604Cal 两端同时受益。
+
+### Verification
+
+- `go test ./daq/hardware`（TestDAQP1603）: passed
+- 真机（192.168.3.104）打压 -1000Pa：读数约 -1000Pa
+
 ## [0.17.1] - 2026-08-21
 
 ### Added

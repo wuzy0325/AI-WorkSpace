@@ -385,7 +385,11 @@ watch(config, (val) => emit('update:modelValue', { ...val }), { deep: true })
 ### 待 HIL 验证
 
 1. **DLL 部署路径**：`WTNDAQ16H_64.dll` 放在 `projects/windlabx4/apps/desktop-wails/` 根目录还是 `third_party/` 子目录？是否需要 go:embed？（建议：build 时复制到可执行文件同目录，不 embed）
-2. **单位换算**：DAQ-P-1603 输出原始 ADC 码值（U16），如何换算为压力/温度单位？是否需要校准系数表？厂商是否提供 `ScaleBinToVolt` 等同的换算 API？温度通道的换算公式是否与压力不同？
+2. **单位换算（已解决 2026-08-24，详见 [postmortem](../postmortems/2026-08-24-daq-p1603-current-scaling.md)）**：DAQ-P-1603 输出原始 ADC 码值（U16）。0-20mA 量程实为**双极性 ±20mA**，零点（0mA）对应码值 32768。换算公式：
+   ```
+   current = (u16Code - 32768) * CodeWidth - OffsetVolt   // CodeWidth/OffsetVolt 来自 GetVoltRangeInfo
+   ```
+   厂商 `ScaleBinToVolt` 为电压模式设计，电流模式下会崩溃，不能调用；应通过 `GetVoltRangeInfo` 拿权威参数后在 Go 端自算。温度通道与压力通道换算公式一致（区别在量程 RangeMin/Max），无需独立校准系数表。
 3. **触发模式**：示例代码同时启用了数字触发（DIO1 下降沿）和模拟触发。WindLabX4 默认场景是否需要触发？还是默认软件触发、UI 暴露触发配置？
 4. **500Hz 上限来源**：用户决策 D-2 为 500Hz，但 WTNDAQ16H SDK 头文件声明 500kSPS。需 HIL 确认：
    - 是 DAQ-P-1603 固件限制？
