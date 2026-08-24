@@ -29,14 +29,9 @@ export interface DaqT1603HardwareConfig {
   thermocoupleTypes: string
   channelMask: string
   samplingRate: number
-  binaryFormat: boolean
   averageCount: number
-  triggerMode: number
-  triggerEdge: number
-  triggerCount: number
   showTimestamp: boolean
   showSequence: boolean
-  openCircuitCheck: string
 }
 
 /**

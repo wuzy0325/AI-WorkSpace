@@ -21,8 +21,13 @@ func readConfiguredRawDeviceChannels(reader ChannelValueReader, layouts []RawDev
 func buildRawDeviceChannelHeaders(layouts []RawDeviceLayout) []string {
 	headers := make([]string, 0)
 	for _, layout := range layouts {
+		// 列头用设备显示名（profile.Name）更易读；历史布局未填 DeviceName 时回退设备 ID
+		deviceLabel := layout.DeviceName
+		if deviceLabel == "" {
+			deviceLabel = layout.DeviceID
+		}
 		for _, channel := range layout.Channels {
-			header := layout.DeviceID + "_CH" + formatInt(channel.Index+1)
+			header := deviceLabel + "_CH" + formatInt(channel.Index+1)
 			if channel.Unit != "" {
 				header += "(" + channel.Unit + ")"
 			}

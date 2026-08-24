@@ -308,14 +308,18 @@ func mapToSharedConfig(cfg device.DaqT1603HardwareConfig) sharedcore.DaqT1603Har
 		ThermocoupleTypes: cfg.ThermocoupleTypes,
 		ChannelMask:       cfg.ChannelMask,
 		SamplingRate:      cfg.SamplingRate,
-		BinaryFormat:      cfg.BinaryFormat,
-		AverageCount:      cfg.AverageCount,
-		TriggerMode:       cfg.TriggerMode,
-		TriggerEdge:       cfg.TriggerEdge,
-		TriggerCount:      cfg.TriggerCount,
-		ShowTimestamp:     cfg.ShowTimestamp,
-		ShowSequence:      cfg.ShowSequence,
-		OpenCircuitCheck:  cfg.OpenCircuitCheck,
+		// Protocol-level fields align with WISTA: not exposed to the user config UI,
+		// fixed to driver defaults here. Note the driver force-aligns BinaryFormat
+		// to the device actual BIN state on Apply (see DAQT1603.ApplyDaqT1603Config),
+		// so the value below only matters at first connect.
+		BinaryFormat:     true, // float32 LE binary frames
+		TriggerMode:      0,    // software trigger
+		TriggerEdge:      0,    // rising edge
+		TriggerCount:     0,
+		OpenCircuitCheck: "0000",
+		AverageCount:     cfg.AverageCount,
+		ShowTimestamp:    cfg.ShowTimestamp,
+		ShowSequence:     cfg.ShowSequence,
 	}
 }
 
@@ -324,14 +328,9 @@ func mapFromSharedConfig(cfg sharedcore.DaqT1603HardwareConfig) device.DaqT1603H
 		ThermocoupleTypes: cfg.ThermocoupleTypes,
 		ChannelMask:       cfg.ChannelMask,
 		SamplingRate:      cfg.SamplingRate,
-		BinaryFormat:      cfg.BinaryFormat,
 		AverageCount:      cfg.AverageCount,
-		TriggerMode:       cfg.TriggerMode,
-		TriggerEdge:       cfg.TriggerEdge,
-		TriggerCount:      cfg.TriggerCount,
 		ShowTimestamp:     cfg.ShowTimestamp,
 		ShowSequence:      cfg.ShowSequence,
-		OpenCircuitCheck:  cfg.OpenCircuitCheck,
 	}
 }
 

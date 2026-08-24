@@ -28,7 +28,7 @@ func buildCalibrationRawDeviceLayouts(probeChannels []calibration.ProbeChannel, 
 		}
 		channels := append([]device.ChannelConfig(nil), profile.Channels...)
 		sort.SliceStable(channels, func(i, j int) bool { return channels[i].Index < channels[j].Index })
-		layout := calibration.RawDeviceLayout{DeviceID: deviceID, Channels: make([]calibration.RawDeviceChannel, 0, len(channels))}
+		layout := calibration.RawDeviceLayout{DeviceID: deviceID, DeviceName: profile.Name, Channels: make([]calibration.RawDeviceChannel, 0, len(channels))}
 		for _, channel := range channels {
 			layout.Channels = append(layout.Channels, calibration.RawDeviceChannel{Index: channel.Index, Unit: channel.Unit})
 		}

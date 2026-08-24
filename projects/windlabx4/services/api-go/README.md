@@ -1,3 +1,42 @@
+# WindLabX4 配套命令行工具集
+
+本目录（`services/api-go`）下的 `cmd/` 提供若干独立 CLI 工具，可脱离整套 Wails
+桌面应用单独使用。
+
+| 工具 | 目录 | 说明 |
+|---|---|---|
+| **设备扫描（GUI，推荐）** | `cmd/device-scan-gui` | 图形化扫描局域网 DAQ 设备，详见 [cmd/device-scan-gui/README.md](cmd/device-scan-gui/README.md) |
+| **设备扫描（CLI）** | `cmd/device-scan` | 一次性探测局域网 DAQ 设备（IP/MAC/固件），详见 [cmd/device-scan/README.md](cmd/device-scan/README.md) |
+| WTN-PXI 诊断 CLI | `cmd/wtnpxi-diag` | 球罐采集协议调试，命令行，适合脚本/ssh |
+| WTN-PXI 诊断 GUI | `cmd/wtnpxi-gui` | 球罐采集协议调试，原生窗口，实时通道值 |
+
+> 现成的免安装 exe 已发布到 `projects/windlabx4/tools/bin/`（含 GUI 与 CLI 两个版本），
+> 可拷贝到任意 Windows x64 机器直接运行，无需 Go 环境。详见该目录下 `README.md`。
+
+## 从源码构建全部工具
+
+```powershell
+cd projects\WindLabX4\services\api-go
+
+# 设备扫描 GUI（无控制台窗口）
+go build -buildvcs=false -trimpath -ldflags "-s -w -H windowsgui" -o device-scan-gui.exe ./cmd/device-scan-gui
+
+# 设备扫描 CLI
+go build -buildvcs=false -trimpath -ldflags "-s -w" -o device-scan.exe ./cmd/device-scan
+
+# WTN-PXI 诊断 CLI / GUI
+go build -buildvcs=false -trimpath -ldflags "-s -w" -o wtnpxi-diag.exe ./cmd/wtnpxi-diag
+go build -buildvcs=false -trimpath -ldflags "-s -w -H windowsgui" -o wtnpxi-gui.exe ./cmd/wtnpxi-gui
+```
+
+测试：
+
+```powershell
+go test -buildvcs=false ./cmd/device-scan/... ./cmd/device-scan-gui/... ./cmd/wtnpxi-diag/... ./cmd/wtnpxi-gui/...
+```
+
+---
+
 # WTN-PXI 通讯协议调试工具
 
 WTN-PXI 球罐数据采集设备通讯协议调试工具，协议定义对齐

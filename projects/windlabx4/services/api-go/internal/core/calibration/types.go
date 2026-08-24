@@ -96,7 +96,10 @@ type RawDeviceChannel struct {
 
 type RawDeviceLayout struct {
 	DeviceID string
-	Channels []RawDeviceChannel
+	// DeviceName 设备显示名（profile.Name），用于 CSV 列头等人类可读场景；
+	// 为空时回退 DeviceID
+	DeviceName string
+	Channels   []RawDeviceChannel
 }
 
 // SevenHoleRealtimeCallback 七孔实时数据推送回调类型

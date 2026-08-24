@@ -41,7 +41,6 @@ func NewDefaultProfile(id string, deviceType device.Type) device.Profile {
 			ThermocoupleTypes: "KKKKKKKKKKKKKKKK",
 			ChannelMask:       "FFFF",
 			SamplingRate:      10,
-			BinaryFormat:      false,
 			AverageCount:      1,
 		}
 	case device.DeviceDaqT1602:

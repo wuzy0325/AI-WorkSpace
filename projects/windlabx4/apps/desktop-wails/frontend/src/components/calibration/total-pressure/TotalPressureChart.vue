@@ -33,6 +33,10 @@ const props = defineProps<{
   yPrecision?: number
   // Y 轴范围手动覆盖：null 表示自动模式（基于数据点 + 10% padding）
   yRangeOverride?: YRangeOverride | null
+  // 配置的测点 X 值序列：传入后横坐标固定为该序列的范围与刻度，
+  // 配置完成即可显示全部计划测点，不随已采集点数动态扩展；
+  // 未传或为空时回退为按已采集数据自适应（旧行为）。
+  plannedXValues?: number[]
 }>()
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -127,7 +131,11 @@ function draw(): void {
 
   const points = extractPoints()
 
-  if (points.length === 0) {
+  // 计划测点序列：仅保留有限数值，作为固定横坐标范围与刻度来源
+  const plannedX = (props.plannedXValues ?? []).filter((v) => typeof v === 'number' && Number.isFinite(v))
+
+  // 无数据且无配置点位时保持旧行为：只显示"暂无数据"
+  if (points.length === 0 && plannedX.length === 0) {
     ctx.fillStyle = colors.textMuted
     ctx.font = `13px ${CANVAS_FONT}`
     ctx.textAlign = 'center'
@@ -136,21 +144,38 @@ function draw(): void {
     return
   }
 
-  const xValues = points.map((p) => p.x)
-  const yValues = points.map((p) => p.y)
-  let xMin = Math.min(...xValues)
-  let xMax = Math.max(...xValues)
-  let yMin = Math.min(...yValues)
-  let yMax = Math.max(...yValues)
+  // 横坐标范围：有计划测点时按其 min/max 固定（不随采集进度增长）；
+  // 否则回退为按已采集数据自适应 + 10% padding（旧行为）
+  let xMin: number
+  let xMax: number
+  if (plannedX.length > 0) {
+    xMin = Math.min(...plannedX)
+    xMax = Math.max(...plannedX)
+    if (xMin === xMax) { xMin -= 1; xMax += 1 }
+  } else {
+    const xValues = points.map((p) => p.x)
+    xMin = Math.min(...xValues)
+    xMax = Math.max(...xValues)
+    if (xMin === xMax) { xMin -= 1; xMax += 1 }
+    const xPad0 = (xMax - xMin) * 0.1
+    xMin -= xPad0; xMax += xPad0
+  }
 
-  // 范围为零时扩展，避免除零
-  if (xMin === xMax) { xMin -= 1; xMax += 1 }
-  if (yMin === yMax) { yMin -= 1; yMax += 1 }
+  // 纵坐标范围：无数据但有配置点位时用占位域 [-1, 1]，保证坐标轴完整可绘
+  let yMin: number
+  let yMax: number
+  if (points.length > 0) {
+    const yValues = points.map((p) => p.y)
+    yMin = Math.min(...yValues)
+    yMax = Math.max(...yValues)
+    if (yMin === yMax) { yMin -= 1; yMax += 1 }
+  } else {
+    yMin = -1
+    yMax = 1
+  }
 
-  // 留 10% 边距，散点不贴边
-  const xPad = (xMax - xMin) * 0.1
+  // 纵向留 10% 边距，散点不贴边
   const yPad = (yMax - yMin) * 0.1
-  xMin -= xPad; xMax += xPad
   // Y 轴范围手动覆盖：用户在图表 Tab 输入 min/max 后传入，
   // 直接采用用户值，跳过 10% padding（用户已自行决定边界）。
   // 无效输入（min >= max 或非有限数）静默回退到自动模式，避免 UI 报错打断操作。
@@ -189,16 +214,23 @@ function draw(): void {
   ctx.lineTo(padLeft + plotW, padTop + plotH)
   ctx.stroke()
 
-  // X 轴刻度：每个数据点位置显示其 α 值，去重按升序排列
+  // X 轴刻度：优先显示配置的全部计划测点 α 值（配置后即完整可见）；
+  // 无配置点位时回退为已采集数据点位置。去重按升序排列，
+  // 并按像素间距抽稀，避免测点多时刻度文字重叠。
   if (showXLabels) {
-    const tickValues = [...new Set(points.map((p) => p.x))].sort((a, b) => a - b)
+    const tickSource = plannedX.length > 0 ? plannedX : points.map((p) => p.x)
+    const tickValues = [...new Set(tickSource)].sort((a, b) => a - b)
     ctx.fillStyle = colors.textMuted
     ctx.font = `11px ${CANVAS_FONT}`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'bottom'
+    const minTickGapPx = 28
+    let lastTickX = Number.NEGATIVE_INFINITY
     for (const val of tickValues) {
       const x = xScale(val)
+      if (x - lastTickX < minTickGapPx) continue
       ctx.fillText(val.toFixed(1), x, padTop + plotH - 2)
+      lastTickX = x
     }
   }
 
@@ -276,6 +308,11 @@ watch(() => props.yPrecision, () => {
   void nextTick(draw)
 })
 watch(() => props.yRangeOverride, () => {
+  void nextTick(draw)
+}, { deep: true })
+
+// 配置点位变化（加载/重载配置）时重绘：横坐标固定范围与刻度来自该序列
+watch(() => props.plannedXValues, () => {
   void nextTick(draw)
 }, { deep: true })
 

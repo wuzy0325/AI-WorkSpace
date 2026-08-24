@@ -466,7 +466,6 @@ func TestDeviceManagerDaqT1603ConfigPersistsProfileConfig(t *testing.T) {
 		ThermocoupleTypes: "KKKKKKKKKKKKKKKK",
 		ChannelMask:       "FFFF",
 		SamplingRate:      10,
-		BinaryFormat:      false,
 		AverageCount:      4,
 	}
 	if err := manager.ApplyDaqT1603Config("temp-1", config); err != nil {

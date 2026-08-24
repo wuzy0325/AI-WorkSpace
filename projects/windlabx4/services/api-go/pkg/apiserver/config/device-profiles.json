@@ -192,14 +192,9 @@
       "thermocoupleTypes": "",
       "channelMask": "",
       "samplingRate": 0,
-      "binaryFormat": false,
       "averageCount": 0,
-      "triggerMode": 0,
-      "triggerEdge": 0,
-      "triggerCount": 0,
       "showTimestamp": false,
-      "showSequence": false,
-      "openCircuitCheck": ""
+      "showSequence": false
     }
   }
 ]

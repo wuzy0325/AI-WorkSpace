@@ -4,10 +4,11 @@ import "testing"
 
 func TestProbeCsvSchemasAppendConfiguredRawDeviceChannels(t *testing.T) {
 	layouts := []RawDeviceLayout{
-		{DeviceID: "dev-b", Channels: []RawDeviceChannel{{Index: 1, Unit: "Pa"}, {Index: 3, Unit: "Pa"}}},
+		{DeviceID: "dev-b", DeviceName: "压力采集B", Channels: []RawDeviceChannel{{Index: 1, Unit: "Pa"}, {Index: 3, Unit: "Pa"}}},
 		{DeviceID: "dev-a", Channels: []RawDeviceChannel{{Index: 2, Unit: "degC"}}},
 	}
-	wantSuffix := []string{"dev-b_CH2(Pa)", "dev-b_CH4(Pa)", "dev-a_CH3(degC)"}
+	// 有 DeviceName 用设备名；未填时回退设备 ID
+	wantSuffix := []string{"压力采集B_CH2(Pa)", "压力采集B_CH4(Pa)", "dev-a_CH3(degC)"}
 
 	tests := []struct {
 		name   string

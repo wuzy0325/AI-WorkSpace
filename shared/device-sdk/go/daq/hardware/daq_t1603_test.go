@@ -61,10 +61,11 @@ func TestDAQT1603ApplyConfigSendsHardwareCommands(t *testing.T) {
 
 	device := NewDAQT1603(core.Profile{ID: "t1603-1", Type: core.DeviceDaqT1603})
 	device.conn = client
-	// 生产不变式：conn != nil 时 connectLocked 已完成 HEAD 协商并把结果写入
-	// d.config.ShowSequence；ApplyDaqT1603Config 以该值为准双向强制对齐。
-	// 本测试绕过 Connect 直连，需显式建立该不变式（模拟 HEAD=1 协商成功）。
-	device.config = core.DaqT1603HardwareConfig{ShowSequence: true}
+	// 生产不变式：conn != nil 时 connectLocked 已完成 BIN/HEAD 协商并把结果写入
+	// d.config.BinaryFormat / d.config.ShowSequence；ApplyDaqT1603Config 以该值
+	// 为准双向强制对齐。本测试绕过 Connect 直连，需显式建立该不变式
+	//（模拟 BIN=1、HEAD=1 协商成功）。
+	device.config = core.DaqT1603HardwareConfig{BinaryFormat: true, ShowSequence: true}
 	cfg := core.DaqT1603HardwareConfig{
 		ThermocoupleTypes: "KKKKKKKKKKKKKKKK",
 		SamplingRate:      20,
@@ -163,6 +164,69 @@ func TestDAQT1603ApplyConfigForcesShowSequenceToDeviceState(t *testing.T) {
 			}
 			if got.ShowSequence != tc.deviceShowSequence {
 				t.Fatalf("ShowSequence = %v, 应强制对齐为设备事实 %v", got.ShowSequence, tc.deviceShowSequence)
+			}
+		})
+	}
+}
+
+// ApplyDaqT1603Config 单向强制对齐 BinaryFormat 与设备实际 BIN 状态
+// （daq_t1603.go ApplyDaqT1603Config）：无论调用方传入何值，下发命令与最终
+// 配置都以 d.config.BinaryFormat（connect 协商事实）为准。
+// temp 固件对 @fe BIN 1 回 ACK 但不生效，若按传入 true 下发会让 frameReader
+// 按 64 字节二进制帧解析设备实际发送的 192 字节 ASCII 帧，造成解析错位
+// （踩坑史回归防护，见 ca8a7d3）。
+func TestDAQT1603ApplyConfigForcesBinaryFormatToDeviceState(t *testing.T) {
+	cases := []struct {
+		name               string
+		deviceBinaryFormat bool // d.config：connectLocked 协商出的设备事实
+		inputBinaryFormat  bool // 调用方传入值（与设备事实冲突）
+		wantCommand        string
+	}{
+		{"temp 固件 ASCII 拒绝传入的 true", false, true, "@fe BIN 0"},
+		{"设备支持二进制拒绝传入的 false", true, false, "@fe BIN 1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, server := net.Pipe()
+			defer client.Close()
+			defer server.Close()
+
+			commandsCh := make(chan []string, 1)
+			go func() {
+				commands := make([]string, 0)
+				for {
+					cmd, err := readWithTimeout(server, testReadTimeout)
+					if err != nil {
+						commandsCh <- commands
+						return
+					}
+					commands = append(commands, cmd)
+					_, _ = server.Write([]byte("A"))
+				}
+			}()
+
+			device := NewDAQT1603(core.Profile{ID: "t1603-1", Type: core.DeviceDaqT1603})
+			device.conn = client
+			// 与 TestDAQT1603ApplyConfigSendsHardwareCommands 相同：绕过 Connect 直连，
+			// 显式建立 conn != nil 时的生产不变式（BIN 协商结果已写入 d.config）。
+			device.config = core.DaqT1603HardwareConfig{BinaryFormat: tc.deviceBinaryFormat}
+			cfg := core.DaqT1603HardwareConfig{BinaryFormat: tc.inputBinaryFormat}
+
+			if err := device.ApplyDaqT1603Config(cfg); err != nil {
+				t.Fatalf("ApplyDaqT1603Config returned error: %v", err)
+			}
+			client.Close()
+
+			commands := <-commandsCh
+			if !slices.Contains(commands, tc.wantCommand) {
+				t.Fatalf("commands = %#v, 应包含 %q", commands, tc.wantCommand)
+			}
+			got, err := device.GetDaqT1603Config()
+			if err != nil {
+				t.Fatalf("GetDaqT1603Config returned error: %v", err)
+			}
+			if got.BinaryFormat != tc.deviceBinaryFormat {
+				t.Fatalf("BinaryFormat = %v, 应强制对齐为设备事实 %v", got.BinaryFormat, tc.deviceBinaryFormat)
 			}
 		})
 	}

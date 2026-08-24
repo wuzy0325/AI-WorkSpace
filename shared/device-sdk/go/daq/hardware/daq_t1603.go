@@ -893,15 +893,29 @@ func (d *DAQT1603) GetDaqT1603Config() (core.DaqT1603HardwareConfig, error) {
 }
 
 func (d *DAQT1603) ApplyDaqT1603Config(cfg core.DaqT1603HardwareConfig) error {
-	// apply 路径强制 ShowSequence 与设备实际 HEAD 状态双向对齐（d.config 由
-	// connectLocked 经 @fd HEAD 读回验证写入，conn != nil 时即为设备事实）：
-	//   - 设备 HEAD 生效时不允许传入 false 切回无序号帧，否则与连接时的 HEAD=1
-	//     协议边界不一致，帧长从 68 变 64 导致解析错位；
-	//   - 设备固件不支持 HEAD（temp，connect 时已回退 ShowSequence=false）时
-	//     也不允许传入 true：temp 固件对 @fe HEAD 1 回 ACK 但不生效，
-	//     frameReader 会按 68 字节序号帧解析设备实际发送的 64 字节帧，同样错位。
-	// 读取实际值与后续状态检查在同一把写锁内完成，避免 RUnlock→Lock 窗口（TOCTOU）。
+	// The apply path forces BinaryFormat to match the device's actual BIN state
+	// (d.config is written by connectLocked after verifying via @fd BIN, so when
+	// conn != nil it is the device truth):
+	//   - temp/unsupported firmware already fell back to BinaryFormat=false at
+	//     connect; allowing the caller to pass true would make applyHardwareConfig
+	//     send @fe BIN 1. temp firmware ACKs but does not switch, so after a
+	//     successful apply the local cfg.BinaryFormat=true would switch the
+	//     FrameReader to binary and misparse the 192-byte ASCII frames as 64-byte
+	//     binary frames (regression guard, see ca8a7d3).
+	//   - likewise, when the device truly supports binary, callers must not be
+	//     allowed to switch it back to ASCII via false.
+	// The apply path forces ShowSequence to match the device's actual HEAD state
+	// (d.config is written by connectLocked after verifying via @fd HEAD):
+	//   - when HEAD is effective, passing false is rejected so we never fall back
+	//     to non-sequence frames (frame length 68->64) and misparse;
+	//   - when the firmware does not support HEAD (temp, ShowSequence already
+	//     reverted to false at connect), passing true is rejected: temp firmware
+	//     ACKs @fe HEAD 1 without applying it, and the frameReader would parse the
+	//     actual 64-byte frames as 68-byte sequence frames, also misaligned.
+	// Reading the actual values and the state checks happen under the same write
+	// lock to avoid an RUnlock->Lock window (TOCTOU).
 	d.mu.Lock()
+	cfg.BinaryFormat = d.config.BinaryFormat
 	cfg.ShowSequence = d.config.ShowSequence
 	conn := d.conn
 	if conn != nil && d.acquiring {

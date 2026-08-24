@@ -16,9 +16,9 @@ func TestBuildCalibrationRawDeviceLayoutsUsesReferencedDeviceOrderAndAllProfileC
 		{DeviceID: "ignored-disabled", ChannelIndex: 0, Enabled: false},
 	}
 	profiles := []device.Profile{
-		{ID: "pressure", Channels: []device.ChannelConfig{{Index: 0, Unit: "Pa"}, {Index: 4, Unit: "Pa"}}},
-		{ID: "unreferenced", Channels: []device.ChannelConfig{{Index: 0, Unit: "Pa"}}},
-		{ID: "temp", Channels: []device.ChannelConfig{{Index: 2, Unit: "degC"}, {Index: 5, Unit: "degC"}, {Index: 9, Unit: "degC"}}},
+		{ID: "pressure", Name: "压力采集1", Channels: []device.ChannelConfig{{Index: 0, Unit: "Pa"}, {Index: 4, Unit: "Pa"}}},
+		{ID: "unreferenced", Name: "未引用设备", Channels: []device.ChannelConfig{{Index: 0, Unit: "Pa"}}},
+		{ID: "temp", Name: "温度采集1", Channels: []device.ChannelConfig{{Index: 2, Unit: "degC"}, {Index: 5, Unit: "degC"}, {Index: 9, Unit: "degC"}}},
 	}
 
 	got, err := buildCalibrationRawDeviceLayouts(probeChannels, profiles)
@@ -27,7 +27,8 @@ func TestBuildCalibrationRawDeviceLayoutsUsesReferencedDeviceOrderAndAllProfileC
 	}
 	want := []calibration.RawDeviceLayout{
 		{
-			DeviceID: "temp",
+			DeviceID:   "temp",
+			DeviceName: "温度采集1",
 			Channels: []calibration.RawDeviceChannel{
 				{Index: 2, Unit: "degC"},
 				{Index: 5, Unit: "degC"},
@@ -35,7 +36,8 @@ func TestBuildCalibrationRawDeviceLayoutsUsesReferencedDeviceOrderAndAllProfileC
 			},
 		},
 		{
-			DeviceID: "pressure",
+			DeviceID:   "pressure",
+			DeviceName: "压力采集1",
 			Channels: []calibration.RawDeviceChannel{
 				{Index: 0, Unit: "Pa"},
 				{Index: 4, Unit: "Pa"},

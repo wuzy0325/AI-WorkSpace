@@ -1264,20 +1264,6 @@ func validateDaqT1603Config(config device.DaqT1603HardwareConfig) error {
 	if config.AverageCount < 1 || config.AverageCount > 100 {
 		return fmt.Errorf("averageCount must be between 1 and 100")
 	}
-	if config.TriggerMode != 0 && config.TriggerMode != 2 {
-		return fmt.Errorf("triggerMode must be 0 (software) or 2 (hardware)")
-	}
-	if config.TriggerEdge < 0 || config.TriggerEdge > 2 {
-		return fmt.Errorf("triggerEdge must be 0 (rising), 1 (falling), or 2 (change)")
-	}
-	if config.TriggerCount < 0 {
-		return fmt.Errorf("triggerCount must be non-negative")
-	}
-	if config.OpenCircuitCheck != "" {
-		if _, err := strconv.ParseUint(config.OpenCircuitCheck, 16, 16); err != nil {
-			return fmt.Errorf("openCircuitCheck must be a hex mask in 0000-FFFF range")
-		}
-	}
 	return nil
 }
 

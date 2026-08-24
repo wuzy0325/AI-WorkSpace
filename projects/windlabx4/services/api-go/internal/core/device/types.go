@@ -169,14 +169,9 @@ type DaqT1603HardwareConfig struct {
 	ThermocoupleTypes string `json:"thermocoupleTypes"` // 16 chars, one per channel
 	ChannelMask       string `json:"channelMask"`       // hex 0000-FFFF
 	SamplingRate      int    `json:"samplingRate"`      // Hz
-	BinaryFormat      bool   `json:"binaryFormat"`      // true=float32 LE, false=ASCII text
 	AverageCount      int    `json:"averageCount"`      // 1-100
-	TriggerMode       int    `json:"triggerMode"`       // 0=software, 2=hardware
-	TriggerEdge       int    `json:"triggerEdge"`       // 0=rising, 1=falling, 2=change
-	TriggerCount      int    `json:"triggerCount"`
 	ShowTimestamp     bool   `json:"showTimestamp"`
 	ShowSequence      bool   `json:"showSequence"`
-	OpenCircuitCheck  string `json:"openCircuitCheck"` // hex mask
 }
 
 // DaqT1602HardwareConfig DAQ-T-1602 硬件配置（镜像 shared SDK daq/core.DaqT1602HardwareConfig）。

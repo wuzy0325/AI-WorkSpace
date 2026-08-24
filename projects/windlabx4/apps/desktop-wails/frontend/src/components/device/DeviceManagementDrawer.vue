@@ -348,7 +348,7 @@ function createBlankProfile(type: DeviceType): DeviceProfile {
     serialPort: '', baudRate: isPACE1000Type(type) ? 9600 : 115200, samplingRate,
     autoConnect: true, channels,
     daqT1603Config: type === 'DAQ-T-1603'
-      ? { thermocoupleTypes: 'KKKKKKKKKKKKKKKK', channelMask: 'FFFF', samplingRate: 10, binaryFormat: false, averageCount: 4, triggerMode: 0, triggerEdge: 0, triggerCount: 0, showTimestamp: false, showSequence: false, openCircuitCheck: '0000' }
+      ? { thermocoupleTypes: 'KKKKKKKKKKKKKKKK', channelMask: 'FFFF', samplingRate: 10, averageCount: 4, showTimestamp: false, showSequence: false }
       : undefined,
     // DAQ-T-1602 默认 16 通道全 T 型（type code 2），采样频率 5Hz（设备全速上限）
     daqT1602Config: type === 'DAQ-T-1602'
@@ -539,7 +539,7 @@ async function onTypeChanged(next: DeviceType) {
     enableAtmospheric.value = draft.value.channels[16]?.enabled !== false
   }
   if (next === 'DAQ-T-1603') {
-    draft.value.daqT1603Config = { thermocoupleTypes: 'KKKKKKKKKKKKKKKK', channelMask: 'FFFF', samplingRate: 10, binaryFormat: false, averageCount: 4, triggerMode: 0, triggerEdge: 0, triggerCount: 0, showTimestamp: false, showSequence: false, openCircuitCheck: '0000' }
+    draft.value.daqT1603Config = { thermocoupleTypes: 'KKKKKKKKKKKKKKKK', channelMask: 'FFFF', samplingRate: 10, averageCount: 4, showTimestamp: false, showSequence: false }
     draft.value.address = '192.168.3.101'
     draft.value.port = 9000
   } else if (next === 'DAQ-T-1602') {
@@ -1442,12 +1442,7 @@ const scanError = ref<string | null>(null)
                 <DaqT1603Config
                   v-model:channel-mask="draft.daqT1603Config!.channelMask"
                   v-model:sampling-rate="draft.daqT1603Config!.samplingRate"
-                  v-model:binary-format="draft.daqT1603Config!.binaryFormat"
-                  v-model:trigger-mode="draft.daqT1603Config!.triggerMode"
-                  v-model:trigger-edge="draft.daqT1603Config!.triggerEdge"
-                  v-model:trigger-count="draft.daqT1603Config!.triggerCount"
                   v-model:show-timestamp="draft.daqT1603Config!.showTimestamp"
-                  v-model:open-circuit-check="draft.daqT1603Config!.openCircuitCheck"
                 />
                 <div class="editor-channels-table-wrap">
                   <table class="editor-channels-table">

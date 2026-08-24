@@ -348,6 +348,20 @@ const coreChannels = computed(() => {
   return probeChannels.value.filter((c) => coreRoles.includes(c.role || ''))
 })
 
+// 差压 = 风洞总压 - 探针总压（两者均为表压，可直接相减）。
+// 任一通道缺失时为 undefined，UI 显示 '--'。
+const diffPressure = computed<number | undefined>(() => {
+  const pressures = calibrationStore.realtimePressures
+  if (!pressures) return undefined
+  const { P0, PprobeTotal } = pressures
+  if (P0 === undefined || PprobeTotal === undefined) return undefined
+  return P0 - PprobeTotal
+})
+
+function getDiffPressureValue(): string {
+  return formatValue(diffPressure.value, getProbeChannelPrecision(currentConfig.value, 'totalPressure.pTunnelTotal'))
+}
+
 // 次要通道（PAtm/TAtm/TTunnel）—— 小字显示
 const secondaryChannels = computed(() => {
   const coreRoles = ['totalPressure.pProbeTotal', 'totalPressure.pTunnelTotal', 'totalPressure.pTunnelStatic']
@@ -357,6 +371,14 @@ const secondaryChannels = computed(() => {
 // 总压数据点筛选结果缓存：避免 template 中多处重复 filter 创建新数组引用
 const totalPressurePoints = computed(() => {
   return calibrationStore.dataPoints.filter(isTotalPressureDataPoint)
+})
+
+// 配置的全部测点 α 序列：配置完成后测点集合已知，
+// 图表据此固定横坐标范围与刻度（不随采集进度动态扩展）
+const plannedAlphaValues = computed<number[]>(() => {
+  return (currentConfig.value?.points ?? [])
+    .map((p) => p.coordinates?.['α'])
+    .filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
 })
 
 function formatValue(value: number | undefined | null, precision?: number): string {
@@ -633,6 +655,14 @@ onUnmounted(() => {
                   <span class="ml-1 text-xs text-[var(--text-muted)]">{{ getChannelUnit(channel.role || '') }}</span>
                 </div>
               </div>
+              <!-- 差压 = 风洞总压 - 探针总压，置于探针/风洞总压下方 -->
+              <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
+                <span class="text-xs text-[var(--text-muted)]">{{ t.tp_diffPressure }}</span>
+                <div class="text-right">
+                  <span class="font-mono text-2xl font-bold text-[var(--accent-primary)]">{{ getDiffPressureValue() }}</span>
+                  <span class="ml-1 text-xs text-[var(--text-muted)]">{{ getChannelUnit('totalPressure.pTunnelTotal') }}</span>
+                </div>
+              </div>
               <!-- 马赫数 Ma：绿色强调，区别于压力通道；无量纲无单位 -->
               <div class="flex items-baseline justify-between rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2">
                 <div>
@@ -803,7 +833,7 @@ onUnmounted(() => {
             <div class="flex flex-1 flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-w-0 min-h-0">
               <h3 class="mb-1 text-xs font-semibold text-[var(--text-muted)] flex-shrink-0">{{ t.tp_cptAlphaCurve }}</h3>
               <div class="flex-1 min-h-0">
-                <TotalPressureChart ref="chartRef" :data-points="totalPressurePoints" x-key="alpha" y-key="CPT" x-label="α (°)" :y-precision="chartYPrecision" :y-range-override="chartYRangeOverride" />
+                <TotalPressureChart ref="chartRef" :data-points="totalPressurePoints" x-key="alpha" y-key="CPT" x-label="α (°)" :y-precision="chartYPrecision" :y-range-override="chartYRangeOverride" :planned-x-values="plannedAlphaValues" />
               </div>
             </div>
           </div>
@@ -833,7 +863,7 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="flex-1 min-h-0">
-              <TotalPressureChart ref="chartRef" :data-points="totalPressurePoints" x-key="alpha" y-key="CPT" x-label="α (°)" y-label="CPT" :y-precision="chartYPrecision" :y-range-override="chartYRangeOverride" />
+              <TotalPressureChart ref="chartRef" :data-points="totalPressurePoints" x-key="alpha" y-key="CPT" x-label="α (°)" :y-precision="chartYPrecision" :y-range-override="chartYRangeOverride" :planned-x-values="plannedAlphaValues" />
             </div>
           </div>
         </div>
