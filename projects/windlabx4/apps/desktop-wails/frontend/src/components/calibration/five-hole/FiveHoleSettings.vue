@@ -11,6 +11,7 @@ import { buildCalibrationCsvName, joinCalibrationPath, splitCalibrationSavePath 
 import { calibrationApi } from '@api/calibrationApi'
 import type {
   CalibrationConfig,
+  CalibrationCoordinateMode,
   CalibrationPoint,
   ProbeChannelConfig,
   MotionAxisConfig,
@@ -31,6 +32,7 @@ import {
   setImportedFiveHolePoints,
 } from './importedFiveHolePoints'
 import MotionSafetyPanel from '@components/shared/MotionSafetyPanel.vue'
+import CoordinateModeSelect from '@components/shared/CoordinateModeSelect.vue'
 import UiAlert from '@components/ui/UiAlert.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiDialog from '@components/ui/UiDialog.vue'
@@ -190,6 +192,10 @@ const motionAxes = ref<MotionAxisConfig[]>([
   { name: 'Alpha', controllerId: '', axis: 'X' },
   { name: 'Beta', controllerId: '', axis: 'Y' },
 ])
+
+// 运动坐标模式：absolute（点位坐标即绝对目标位置，默认）/ relative（点位坐标作为相对位移量）。
+// 与后端 calibration.Config.CoordinateMode 对齐，缺省 absolute（向后兼容旧配置）。
+const coordinateMode = ref<CalibrationCoordinateMode>('absolute')
 
 // 运动安全配置：4 个全局阈值 + 按轴覆盖，留空字段等价于"使用后端默认值"。
 // 与遍历测试模块共享同一份 MotionSafetyConfig 类型与 MotionSafetyPanel 组件，
@@ -405,6 +411,8 @@ async function saveConfig() {
       name: calibrationName.value,
       probeChannels: probeChannels.value.filter((ch) => ch.enabled),
       motionAxes: motionAxes.value,
+      // 运动坐标模式：绝对坐标（点位值即目标位置）或相对坐标（点位值为位移量）
+      coordinateMode: coordinateMode.value,
       // 运动安全配置透传：未配置字段为 undefined，后端 Resolve() 时合并默认值
       motionSafety: motionSafety.value,
       points: await generateFiveHoleSnakePoints(sanitizedLayout),
@@ -472,6 +480,8 @@ async function loadSavedConfig() {
     }
     dwellTimeMs.value = config.dwellTimeMs
     samplesPerPoint.value = config.samplesPerPoint
+    // 还原运动坐标模式：旧配置无此字段时保持默认绝对坐标
+    coordinateMode.value = config.coordinateMode === 'relative' ? 'relative' : 'absolute'
     // 还原 savePath 与 saveFileName：
     //   - 优先使用持久化的 saveFileName（新配置），剥离 .csv 后缀再交给共享工具重新清洗，
     //     防止持久化的 ".csv" 被 buildCalibrationCsvName 当作普通字符再追加一次。
@@ -863,6 +873,8 @@ function getChannelGroupLabel(groupKey: string): string {
               </tbody>
             </table>
           </div>
+          <!-- 运动坐标模式：绝对坐标（默认）/ 相对坐标 -->
+          <CoordinateModeSelect v-model="coordinateMode" class="coordinate-mode-row" />
         </UiPanel>
 
         <!-- 球罐判定门控：放在运动安全面板上方，便于操作员优先确认球罐压力条件 -->
@@ -977,6 +989,10 @@ function getChannelGroupLabel(groupKey: string): string {
             <div class="summary-row">
               <span class="summary-label">运动轴</span>
               <span class="summary-value">{{ motionAxes.map(a => `${a.name}→${a.axis}`).join('，') }}</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">坐标模式</span>
+              <span class="summary-value">{{ coordinateMode === 'relative' ? '相对坐标' : '绝对坐标' }}</span>
             </div>
             <div class="summary-row">
               <span class="summary-label">球罐判定</span>
@@ -1657,6 +1673,11 @@ function getChannelGroupLabel(groupKey: string): string {
   grid-template-columns: 120px 1fr 120px;
   gap: var(--space-2);
   align-items: start;
+}
+
+/* 运动坐标模式选择：与运动轴表格保持间距 */
+.coordinate-mode-row {
+  margin-top: var(--space-2);
 }
 
 .sphere-hint {

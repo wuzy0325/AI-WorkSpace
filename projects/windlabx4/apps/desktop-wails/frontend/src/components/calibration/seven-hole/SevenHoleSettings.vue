@@ -25,6 +25,7 @@ import { buildCalibrationCsvName, joinCalibrationPath, splitCalibrationSavePath 
 import { calibrationApi } from '@api/calibrationApi'
 import type {
   CalibrationConfig,
+  CalibrationCoordinateMode,
   ProbeChannelConfig,
   MotionAxisConfig,
   ChannelRef,
@@ -42,6 +43,7 @@ import {
 } from '@shared/calibrationPrecision'
 import { getProbeChannelDisplayName } from '@shared/calibrationChannelI18n'
 import MotionSafetyPanel from '@components/shared/MotionSafetyPanel.vue'
+import CoordinateModeSelect from '@components/shared/CoordinateModeSelect.vue'
 import UiAlert from '@components/ui/UiAlert.vue'
 import UiCheckbox from '@components/ui/UiCheckbox.vue'
 import UiDialog from '@components/ui/UiDialog.vue'
@@ -165,6 +167,9 @@ const motionAxes = ref<MotionAxisConfig[]>([
   { name: 'Alpha', controllerId: '', axis: 'X' },
   { name: 'Beta', controllerId: '', axis: 'Y' },
 ])
+
+// 运动坐标模式：absolute（点位坐标即绝对目标位置，默认）/ relative（点位坐标作为相对位移量）。
+const coordinateMode = ref<CalibrationCoordinateMode>('absolute')
 
 // 运动安全配置：复用遍历测试模块的 MotionSafetyPanel 共享组件
 const motionSafety = ref<MotionSafetyConfig | undefined>(undefined)
@@ -505,6 +510,8 @@ async function saveConfig() {
       name: calibrationName.value,
       probeChannels: probeChannels.value.filter((ch) => ch.enabled),
       motionAxes: motionAxes.value,
+      // 运动坐标模式：绝对坐标（点位值即目标位置）或相对坐标（点位值为位移量）
+      coordinateMode: coordinateMode.value,
       motionSafety: motionSafety.value,
       points,
       dwellTimeMs: dwellTimeMs.value,
@@ -570,6 +577,8 @@ async function loadSavedConfig() {
     }
     dwellTimeMs.value = config.dwellTimeMs
     samplesPerPoint.value = config.samplesPerPoint
+    // 还原运动坐标模式：旧配置无此字段时保持默认绝对坐标
+    coordinateMode.value = config.coordinateMode === 'relative' ? 'relative' : 'absolute'
     if (config.saveFileName) {
       saveFileName.value = buildCalibrationCsvName(config.saveFileName.replace(/\.csv$/i, ''), config.name)
     } else if (config.savePath) {
@@ -1035,6 +1044,7 @@ const sphereTankSummaryText = computed(() =>
                   </tbody>
                 </table>
               </div>
+              <CoordinateModeSelect v-model="coordinateMode" class="coordinate-mode-row" />
             </UiPanel>
 
             <!-- 球罐判定门控：放在运动安全面板上方，便于操作员优先确认球罐压力条件 -->
@@ -1163,6 +1173,10 @@ const sphereTankSummaryText = computed(() =>
                 <div class="summary-row">
                   <span class="summary-label">{{ t.sh_motionAxes }}</span>
                   <span class="summary-value">{{ motionAxes.map(a => `${a.name}→${a.axis}`).join('，') }}</span>
+                </div>
+                <div class="summary-row">
+                  <span class="summary-label">{{ t.coordinateMode }}</span>
+                  <span class="summary-value">{{ coordinateMode === 'relative' ? t.coordinateModeRelative : t.coordinateModeAbsolute }}</span>
                 </div>
                 <div class="summary-row">
                   <span class="summary-label">{{ t.sh_sphereTankGate }}</span>
@@ -1514,6 +1528,11 @@ const sphereTankSummaryText = computed(() =>
 .field-label {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
+}
+
+/* 运动坐标模式选择：与运动轴表格保持间距 */
+.coordinate-mode-row {
+  margin-top: var(--space-2);
 }
 
 .layout-params {

@@ -34,39 +34,42 @@ import (
 //
 // 在 ToCore 中，若 Channel 非空则用嵌套值覆盖扁平值，与原 ProbeChannel.UnmarshalJSON 语义一致。
 type CalibrationConfigDTO struct {
-	TaskID                 string                              `json:"taskId"`
-	DeviceID               string                              `json:"deviceId"`
-	Type                   string                              `json:"type"`
-	Channels               []int                               `json:"channels"`
-	PressurePoints         []float64                           `json:"pressurePoints"`
-	AverageSamples         int                                 `json:"averageSamples"`
-	ProbeChannels          []ProbeChannelDTO                   `json:"probeChannels,omitempty"`
-	Points                 []calibration.CalPoint              `json:"points,omitempty"`
-	SamplesPerPoint        int                                 `json:"samplesPerPoint,omitempty"`
-	DwellTimeMs            int                                 `json:"dwellTimeMs,omitempty"`
-	StopOnError            bool                                `json:"stopOnError,omitempty"`
-	Name                   string                              `json:"name"`
-	SavePath               string                              `json:"savePath,omitempty"`
-	MotionAxes             []calibration.MotionAxisConfig      `json:"motionAxes,omitempty"`
+	TaskID          string                         `json:"taskId"`
+	DeviceID        string                         `json:"deviceId"`
+	Type            string                         `json:"type"`
+	Channels        []int                          `json:"channels"`
+	PressurePoints  []float64                      `json:"pressurePoints"`
+	AverageSamples  int                            `json:"averageSamples"`
+	ProbeChannels   []ProbeChannelDTO              `json:"probeChannels,omitempty"`
+	Points          []calibration.CalPoint         `json:"points,omitempty"`
+	SamplesPerPoint int                            `json:"samplesPerPoint,omitempty"`
+	DwellTimeMs     int                            `json:"dwellTimeMs,omitempty"`
+	StopOnError     bool                           `json:"stopOnError,omitempty"`
+	Name            string                         `json:"name"`
+	SavePath        string                         `json:"savePath,omitempty"`
+	MotionAxes      []calibration.MotionAxisConfig `json:"motionAxes,omitempty"`
+	// CoordinateMode 运动坐标模式："absolute"（绝对坐标，默认）| "relative"（相对坐标）。
+	// 与 calibration.Config.CoordinateMode 对齐，空值视为 absolute。
+	CoordinateMode calibration.CoordinateMode `json:"coordinateMode,omitempty"`
 	// MotionSafety 运动安全配置：到位容差、严重偏离阈值、跨样本看门狗等。
 	// 修复（Task 05）：原 adapters/config 层 DTO 遗漏此字段，导致前端发送的 motionSafety
 	// 在反序列化时被静默丢弃，后端只能拿到 nil 并使用 DefaultMotionSafety，绕过了用户配置。
 	// 此处补齐字段，与 calibration.Config.MotionSafety 完整对齐，由 backend Start 通过
 	// validateCalibrationMotionSafetyConfig 做权威校验（拒绝非法值而非静默忽略）。
-	MotionSafety           *traversal.MotionSafetyConfig       `json:"motionSafety,omitempty"`
-	SphereTankGate         *calibration.SphereTankGateConfig   `json:"sphereTankGate,omitempty"`
+	MotionSafety           *traversal.MotionSafetyConfig          `json:"motionSafety,omitempty"`
+	SphereTankGate         *calibration.SphereTankGateConfig      `json:"sphereTankGate,omitempty"`
 	AcquisitionSampling    *calibration.AcquisitionSamplingConfig `json:"acquisitionSampling,omitempty"`
-	TotalTemperatureConfig *calibration.TotalTemperatureConfig `json:"totalTemperatureConfig,omitempty"`
+	TotalTemperatureConfig *calibration.TotalTemperatureConfig    `json:"totalTemperatureConfig,omitempty"`
 }
 
 // ProbeChannelDTO 是探针通道在框架边界的传输对象，同时支持扁平与嵌套两种 JSON shape。
 type ProbeChannelDTO struct {
-	Role         string                    `json:"role"`
-	Name         string                    `json:"name"`
-	DeviceID     string                    `json:"deviceId"`
-	ChannelIndex int                       `json:"channelIndex"`
-	Enabled      bool                      `json:"enabled"`
-	Channel      *calibration.ChannelRef   `json:"channel,omitempty"`
+	Role         string                  `json:"role"`
+	Name         string                  `json:"name"`
+	DeviceID     string                  `json:"deviceId"`
+	ChannelIndex int                     `json:"channelIndex"`
+	Enabled      bool                    `json:"enabled"`
+	Channel      *calibration.ChannelRef `json:"channel,omitempty"`
 }
 
 // ToCore 将 DTO 转换为 core 层的 calibration.Config。
@@ -87,6 +90,7 @@ func (d CalibrationConfigDTO) ToCore() calibration.Config {
 		Name:                   d.Name,
 		SavePath:               d.SavePath,
 		MotionAxes:             d.MotionAxes,
+		CoordinateMode:         d.CoordinateMode,
 		MotionSafety:           d.MotionSafety,
 		SphereTankGate:         d.SphereTankGate,
 		AcquisitionSampling:    d.AcquisitionSampling,

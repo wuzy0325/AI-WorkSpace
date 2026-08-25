@@ -31,6 +31,17 @@ const (
 	TypeSevenHole CalibrationType = "seven-hole"
 )
 
+// CoordinateMode 运动坐标模式："absolute"（绝对坐标，默认）| "relative"（相对坐标）。
+//   - absolute：测点坐标值作为运动目标绝对位置（当前位置无关，直接走到该坐标）。
+//   - relative：测点坐标值作为相对当前位置的位移量（无论当前坐标是什么，都走该距离）。
+const (
+	CoordinateModeAbsolute CoordinateMode = "absolute"
+	CoordinateModeRelative CoordinateMode = "relative"
+)
+
+// CoordinateMode 校准运动坐标模式。
+type CoordinateMode string
+
 // Config 校准任务通用配置
 type Config struct {
 	TaskID          string             `json:"taskId"`
@@ -47,6 +58,11 @@ type Config struct {
 	Name            string             `json:"name"`                 // 校准任务名称
 	SavePath        string             `json:"savePath,omitempty"`   // 数据保存路径
 	MotionAxes      []MotionAxisConfig `json:"motionAxes,omitempty"` // 运动轴配置
+	// CoordinateMode 运动坐标模式："absolute"（绝对坐标，默认）| "relative"（相对坐标）。
+	//   - absolute：测点坐标值作为运动目标绝对位置，直接走到该坐标，与当前位置无关。
+	//   - relative：测点坐标值作为相对当前位置的位移量，目标 = 当前坐标 + 测点坐标。
+	// 空值视为 absolute（向后兼容：旧配置不含此字段时保持原绝对坐标行为）。
+	CoordinateMode CoordinateMode `json:"coordinateMode,omitempty"`
 	// MotionSafety 运动安全配置：到位容差、严重偏离阈值、跨样本看门狗等。
 	// 为 nil 时下游使用 traversal.DefaultMotionSafety，保证旧配置反序列化兼容。
 	// 类型复用 core/traversal.MotionSafetyConfig，与遍历测试共用同一套阈值语义和 Resolve/Merge 方法。

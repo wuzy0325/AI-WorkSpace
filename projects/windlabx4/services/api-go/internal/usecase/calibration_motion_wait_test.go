@@ -45,6 +45,90 @@ func TestFallbackRuntimeWaitsForCommandedPosition(t *testing.T) {
 	}
 }
 
+// axisPositionMotionManager 提供固定轴位置的 StatusAll，用于 GetAxisPosition 测试。
+type axisPositionMotionManager struct {
+	controllerID string
+	axis         motion.AxisName
+	position     float64
+	connected    bool
+}
+
+func (m *axisPositionMotionManager) LoadProfiles() ([]motion.MotionControllerProfile, error) {
+	return nil, nil
+}
+func (m *axisPositionMotionManager) SaveProfiles([]motion.MotionControllerProfile) error { return nil }
+func (m *axisPositionMotionManager) GetProfiles() []motion.MotionControllerProfile       { return nil }
+func (m *axisPositionMotionManager) UpsertProfile(motion.MotionControllerProfile) error  { return nil }
+func (m *axisPositionMotionManager) DeleteProfile(string) error                          { return nil }
+func (m *axisPositionMotionManager) Connect(context.Context, string) error               { return nil }
+func (m *axisPositionMotionManager) Disconnect(context.Context, string) error            { return nil }
+func (m *axisPositionMotionManager) StatusAll(context.Context) []motion.ControllerStatus {
+	return []motion.ControllerStatus{{
+		ID:        m.controllerID,
+		Connected: m.connected,
+		Axes:      []motion.AxisStatus{{Name: m.axis, Position: m.position}},
+	}}
+}
+func (m *axisPositionMotionManager) MoveTo(context.Context, string, motion.AxisName, float64) error {
+	return nil
+}
+func (m *axisPositionMotionManager) MoveBy(context.Context, string, motion.AxisName, float64) error {
+	return nil
+}
+func (m *axisPositionMotionManager) Jog(context.Context, string, motion.AxisName, float64) error {
+	return nil
+}
+func (m *axisPositionMotionManager) Home(context.Context, string, motion.AxisName) error { return nil }
+func (m *axisPositionMotionManager) Stop(context.Context, string, motion.AxisName) error { return nil }
+func (m *axisPositionMotionManager) EmergencyStop(context.Context, string) error         { return nil }
+func (m *axisPositionMotionManager) ResetEmergencyStop(context.Context, string) error    { return nil }
+func (m *axisPositionMotionManager) DefinePosition(context.Context, string, motion.AxisName, float64) error {
+	return nil
+}
+
+func TestFallbackRuntimeGetAxisPosition(t *testing.T) {
+	mgr := &axisPositionMotionManager{controllerID: "motion-1", axis: motion.AxisX, position: -42.5, connected: true}
+	runtime := &fallbackRuntime{motion: mgr}
+
+	pos, err := runtime.GetAxisPosition(calibration.MotionAxisConfig{ControllerID: "motion-1", Axis: "X", Name: "α"})
+	if err != nil {
+		t.Fatalf("get axis position: %v", err)
+	}
+	if pos != -42.5 {
+		t.Fatalf("expected position -42.5, got %v", pos)
+	}
+}
+
+func TestFallbackRuntimeGetAxisPositionErrors(t *testing.T) {
+	t.Run("controller not found", func(t *testing.T) {
+		mgr := &axisPositionMotionManager{controllerID: "motion-1", axis: motion.AxisX, position: 0, connected: true}
+		runtime := &fallbackRuntime{motion: mgr}
+		if _, err := runtime.GetAxisPosition(calibration.MotionAxisConfig{ControllerID: "missing", Axis: "X"}); err == nil {
+			t.Fatal("expected error for missing controller")
+		}
+	})
+	t.Run("controller disconnected", func(t *testing.T) {
+		mgr := &axisPositionMotionManager{controllerID: "motion-1", axis: motion.AxisX, position: 0, connected: false}
+		runtime := &fallbackRuntime{motion: mgr}
+		if _, err := runtime.GetAxisPosition(calibration.MotionAxisConfig{ControllerID: "motion-1", Axis: "X"}); err == nil {
+			t.Fatal("expected error for disconnected controller")
+		}
+	})
+	t.Run("axis not found", func(t *testing.T) {
+		mgr := &axisPositionMotionManager{controllerID: "motion-1", axis: motion.AxisX, position: 0, connected: true}
+		runtime := &fallbackRuntime{motion: mgr}
+		if _, err := runtime.GetAxisPosition(calibration.MotionAxisConfig{ControllerID: "motion-1", Axis: "Z"}); err == nil {
+			t.Fatal("expected error for missing axis")
+		}
+	})
+	t.Run("motion not configured", func(t *testing.T) {
+		runtime := &fallbackRuntime{motion: nil}
+		if _, err := runtime.GetAxisPosition(calibration.MotionAxisConfig{ControllerID: "motion-1", Axis: "X"}); err == nil {
+			t.Fatal("expected error when motion is nil")
+		}
+	})
+}
+
 func (m *calibrationMotionManager) LoadProfiles() ([]motion.MotionControllerProfile, error) {
 	return m.GetProfiles(), nil
 }

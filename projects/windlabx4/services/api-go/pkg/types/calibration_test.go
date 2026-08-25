@@ -111,6 +111,7 @@ func TestDecodeCalibrationConfig_PreservesAllFields(t *testing.T) {
 		"name": "全字段校准",
 		"savePath": "data/out",
 		"motionAxes": [{"controllerId":"mc-1","axis":"x","name":"X"}],
+		"coordinateMode": "relative",
 		"motionSafety": {
 			"arrivalTolerance": 0.05,
 			"criticalDeviationLimit": 1.0,
@@ -171,6 +172,9 @@ func TestDecodeCalibrationConfig_PreservesAllFields(t *testing.T) {
 		cfg.MotionAxes[0].Axis != "x" ||
 		cfg.MotionAxes[0].Name != "X" {
 		t.Fatalf("unexpected motionAxes: %+v", cfg.MotionAxes)
+	}
+	if cfg.CoordinateMode != calibration.CoordinateModeRelative {
+		t.Fatalf("expected coordinateMode=relative, got %q", cfg.CoordinateMode)
 	}
 	// MotionSafety 必须完整保留——这是 Task 05 修复的核心字段。
 	// 原 adapters/config DTO 遗漏此字段导致前端配置被静默丢弃。

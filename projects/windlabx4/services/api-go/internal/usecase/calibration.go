@@ -1872,6 +1872,40 @@ func (f *fallbackRuntime) IsAcquiring(deviceID string) bool {
 	return f.acquisitionController.IsAcquiring(deviceID)
 }
 
+// GetAxisPosition 返回指定运动轴的当前位置（相对坐标模式使用）。
+//
+// 实现 calibration.PositionReader 可选能力接口：
+// 通过 ports.MotionManager.StatusAll 轮询控制器实时状态，匹配 ControllerID + Axis
+// 后返回该轴的 Position。控制器未连接或轴不存在时返回明确错误，
+// 避免相对坐标模式在无法获知当前位置时静默产生错误目标。
+func (f *fallbackRuntime) GetAxisPosition(axis calibration.MotionAxisConfig) (float64, error) {
+	if f.motion == nil {
+		return 0, fmt.Errorf("运动控制器未配置")
+	}
+	if axis.ControllerID == "" {
+		return 0, fmt.Errorf("运动控制器ID未配置")
+	}
+	if axis.Axis == "" {
+		return 0, fmt.Errorf("运动轴未配置")
+	}
+	ctx := context.Background()
+	for _, s := range f.motion.StatusAll(ctx) {
+		if s.ID != axis.ControllerID {
+			continue
+		}
+		if !s.Connected {
+			return 0, fmt.Errorf("运动控制器未连接: %s", axis.ControllerID)
+		}
+		for _, as := range s.Axes {
+			if as.Name == motion.AxisName(axis.Axis) {
+				return as.Position, nil
+			}
+		}
+		return 0, fmt.Errorf("控制器 %s 未找到轴 %s", axis.ControllerID, axis.Axis)
+	}
+	return 0, fmt.Errorf("未找到运动控制器: %s", axis.ControllerID)
+}
+
 func (f *fallbackRuntime) MoveToPosition(axis calibration.MotionAxisConfig, position float64) error {
 	if f.motion == nil {
 		return fmt.Errorf("运动控制器未配置")

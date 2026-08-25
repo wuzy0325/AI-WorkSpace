@@ -7,10 +7,11 @@ import { useI18nStore } from '@stores/i18nStore'
 import { useStorageStore } from '@stores/storageStore'
 import { buildCalibrationCsvName, joinCalibrationPath, splitCalibrationSavePath } from '@shared/calibrationCsvPath'
 import { calibrationApi } from '@api/calibrationApi'
-import type { CalibrationConfig, ProbeChannelConfig, MotionAxisConfig, TotalPressurePointLayout, ChannelRef } from '@shared/types/calibration'
+import type { CalibrationConfig, CalibrationCoordinateMode, ProbeChannelConfig, MotionAxisConfig, TotalPressurePointLayout, ChannelRef } from '@shared/types/calibration'
 import type { MotionSafetyConfig } from '@shared/types/traversal'
 import { applyCalibrationPrecisionDefaults, DEFAULT_CALIBRATION_PROBE_PRECISION } from '@shared/calibrationPrecision'
 import MotionSafetyPanel from '@components/shared/MotionSafetyPanel.vue'
+import CoordinateModeSelect from '@components/shared/CoordinateModeSelect.vue'
 import UiButton from '@components/ui/UiButton.vue'
 import UiAlert from '@components/ui/UiAlert.vue'
 import { reportAllSettledFailures } from '@utils/allSettledReport'
@@ -79,6 +80,9 @@ const probeChannels = ref<ProbeChannelConfig[]>([
 ])
 
 const motionAxes = ref<MotionAxisConfig[]>([{ name: 'Alpha', controllerId: '', axis: 'X' }])
+
+// 运动坐标模式：absolute（点位坐标即绝对目标位置，默认）/ relative（点位坐标作为相对位移量）。
+const coordinateMode = ref<CalibrationCoordinateMode>('absolute')
 
 // 运动安全配置：4 个全局阈值 + 按轴覆盖，留空字段等价于"使用后端默认值"。
 // 与遍历测试模块共享同一份 MotionSafetyConfig 类型与 MotionSafetyPanel 组件，
@@ -195,6 +199,8 @@ async function saveConfig() {
       name: calibrationName.value,
       probeChannels: probeChannels.value.filter(ch => ch.enabled),
       motionAxes: motionAxes.value,
+      // 运动坐标模式：绝对坐标（点位值即目标位置）或相对坐标（点位值为位移量）
+      coordinateMode: coordinateMode.value,
       // 运动安全配置透传：未配置字段为 undefined，后端 Resolve() 时合并默认值
       motionSafety: motionSafety.value,
       points: generatePoints(),
@@ -250,6 +256,8 @@ async function loadSavedConfig() {
     }
     dwellTimeMs.value = config.dwellTimeMs
     samplesPerPoint.value = config.samplesPerPoint
+    // 还原运动坐标模式：旧配置无此字段时保持默认绝对坐标
+    coordinateMode.value = config.coordinateMode === 'relative' ? 'relative' : 'absolute'
     // 还原 savePath 与 saveFileName：
     //   - 优先使用持久化的 saveFileName（新配置），剥离 .csv 后缀再交给共享工具重新清洗，
     //     防止持久化的 ".csv" 被 buildCalibrationCsvName 当作普通字符再追加一次。
@@ -383,6 +391,7 @@ onMounted(async () => {
           <template #header><span class="section-header">{{ t.tp_motionAxisConfig }}</span></template>
           <div class="table-wrap"><table class="ntable"><thead><tr><th>{{ t.coordinateAxis }}</th><th class="col-controller">{{ t.motionControllerLabel }}</th><th class="col-axis">{{ t.physicalAxis }}</th></tr></thead>
             <tbody><tr v-for="ax in motionAxes" :key="ax.name"><td><UiStatusBadge status="connected">{{ ax.name }}</UiStatusBadge></td><td><UiSelect v-model="ax.controllerId" :options="motionControllerList.map(c => ({ label: `${c.name} (${c.type})`, value: c.id }))" :placeholder="t.selectController" /></td><td><UiSelect v-model="ax.axis" :options="[{label: t.tp_axisX, value: 'X'},{label: t.tp_axisY, value: 'Y'},{label: t.tp_axisZ, value: 'Z'},{label: t.tp_axisU, value: 'U'}]" /></td></tr></tbody></table></div>
+          <CoordinateModeSelect v-model="coordinateMode" class="coordinate-mode-row" />
         </UiPanel>
 
         <!-- 球罐判定门控：放在运动安全面板上方，便于操作员优先确认球罐压力条件 -->
@@ -431,6 +440,7 @@ onMounted(async () => {
             <div class="summary-row"><span class="summary-label">{{ t.pointLayout }}</span><span class="summary-value">{{ t.tp_alphaRangeSummary.replace('{min}', String(pointLayout.alphaMin)).replace('{max}', String(pointLayout.alphaMax)).replace('{step}', String(pointLayout.alphaStep)) }}</span></div>
             <div class="summary-row"><span class="summary-label">{{ t.totalPoints }}</span><span class="accent-bold">{{ pointCount }} {{ t.point }}</span></div>
             <div class="summary-row"><span class="summary-label">{{ t.tp_enabledPointsLabel }}</span><span class="summary-value">{{ probeChannels.filter(ch => ch.enabled).length }} {{ t.tp_countUnit }}</span></div>
+            <div class="summary-row"><span class="summary-label">{{ t.coordinateMode }}</span><span class="summary-value">{{ coordinateMode === 'relative' ? t.coordinateModeRelative : t.coordinateModeAbsolute }}</span></div>
             <div class="summary-row"><span class="summary-label">{{ t.tp_dwellTimeMsLabel }}</span><span class="summary-value">{{ dwellTimeMs }} {{ t.tp_msUnit }}</span></div>
             <div class="summary-row"><span class="summary-label">{{ t.tp_samplesPerPointLabel }}</span><span class="summary-value">{{ samplesPerPoint }} {{ t.tp_timesUnit }}</span></div>
             <div class="summary-row"><span class="summary-label">{{ t.tp_csvPathLabel }}</span><span class="summary-value" style="word-break:break-all;text-align:right">{{ savePath && saveFileName ? joinCalibrationPath(savePath, saveFileName) : (savePath || t.tp_notSelected) }}</span></div>
@@ -513,6 +523,11 @@ onMounted(async () => {
   min-width: 0;
 }
 .field-label { font-size: var(--text-xs); color: var(--text-muted); }
+
+/* 运动坐标模式选择：与运动轴表格保持间距 */
+.coordinate-mode-row {
+  margin-top: var(--space-2);
+}
 
 /* 点位布局：3 列网格 */
 .mach-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); margin-bottom: var(--space-2); }

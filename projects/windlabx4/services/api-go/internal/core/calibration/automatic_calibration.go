@@ -31,6 +31,20 @@ type RuntimeAccess interface {
 	StopMotion() error
 }
 
+// PositionReader 可选能力接口：读取指定运动轴的当前位置。
+//
+// 相对坐标模式（Config.CoordinateMode == CoordinateModeRelative）下，
+// moveToPoint/MoveToPointWithOrder 需要把测点坐标从"位移量"换算为绝对目标
+// （目标 = 当前坐标 + 测点坐标），因此运行时必须能返回轴当前位置。
+//
+// 通过类型断言而非扩充 RuntimeAccess 接口签名，避免破坏既有外部实现
+// （与 MotionSafetyAwareRuntime 的可选扩展模式一致）。不实现此接口的运行时
+// 在相对坐标模式下返回明确错误，而不是静默降级为绝对坐标。
+type PositionReader interface {
+	// GetAxisPosition 返回指定运动轴的当前坐标。
+	GetAxisPosition(axis MotionAxisConfig) (float64, error)
+}
+
 // ErrPointAborted 暂停打断当前测点的哨兵错误。
 // runCalibrationLoop 识别此错误后回退循环索引以重跑同一点，
 // 不计入 pointErrorCount。
@@ -45,22 +59,22 @@ var ErrMotionControl = errors.New("运动控制失败")
 // 提供 move → wait → gate → acquire → hook → push → next 的模板方法
 // 五孔、三孔、总压校准使用此引擎
 type AutomaticCalibration struct {
-	mu              sync.RWMutex
-	config          Config
-	eventPublisher  EventPublisher
-	runtime         RuntimeAccess
-	onDataPoint     func(DataPoint) // 每个点采集完成后的回调（用于实时 CSV 写入等）
+	mu             sync.RWMutex
+	config         Config
+	eventPublisher EventPublisher
+	runtime        RuntimeAccess
+	onDataPoint    func(DataPoint) // 每个点采集完成后的回调（用于实时 CSV 写入等）
 	// onMotionSafetyFailure 运动安全故障回调（由 CalibrationManager 注入）。
 	// 引擎层检测到运动安全故障时调用，委托 Manager 执行急停 + 状态写入。
 	// core/ 不能导入 usecase/（六边形架构硬约束），通过回调反转依赖。
 	// 可为 nil（未注入时故障仅返回 ErrMotionControl，不触发急停和状态快照写入）。
 	onMotionSafetyFailure func(*traversal.MotionSafetyFailure) error
-	taskID          string
-	isRunning       bool
-	isPaused        bool
-	currentPointIdx int
-	dataPoints      []DataPoint
-	startTime       int64
+	taskID                string
+	isRunning             bool
+	isPaused              bool
+	currentPointIdx       int
+	dataPoints            []DataPoint
+	startTime             int64
 	// 当前点采样进度（由算法采集循环通过 onSampleProgress 回调更新）
 	// currentSample：当前点已采样本数（1..samplesPerPoint），0 表示尚未开始
 	// samplesPerPoint：当前点总采样数，用于 UI 显示"采样 3/10"
@@ -395,6 +409,27 @@ func (a *AutomaticCalibration) checkPausedAndAbort() error {
 	return ErrPointAborted
 }
 
+// resolveTargetPosition 按坐标模式把测点坐标换算为运动目标绝对位置。
+//
+//   - 绝对坐标（默认）：测点坐标即目标绝对位置，原样返回。
+//   - 相对坐标：目标 = 当前坐标 + 测点坐标（把测点坐标视为相对当前位置的位移量）。
+//     运行时必须实现 PositionReader 才能读取当前位置；否则返回明确错误，
+//     避免相对坐标被静默降级为绝对坐标。
+func (a *AutomaticCalibration) resolveTargetPosition(axis MotionAxisConfig, value float64) (float64, error) {
+	if a.config.CoordinateMode != CoordinateModeRelative {
+		return value, nil
+	}
+	pr, ok := a.runtime.(PositionReader)
+	if !ok {
+		return 0, fmt.Errorf("相对坐标模式需要运行时支持当前位置读取（PositionReader）")
+	}
+	cur, err := pr.GetAxisPosition(axis)
+	if err != nil {
+		return 0, fmt.Errorf("读取 %s 轴当前位置失败: %w", axis.Name, err)
+	}
+	return cur + value, nil
+}
+
 // moveToPoint 移动到指定点位
 // 默认实现按坐标顺序移动各轴；五孔/七孔探针走 MoveToPointWithOrder 严格 α→β 顺序
 func (a *AutomaticCalibration) moveToPoint(point CalPoint, algorithm Algorithm) error {
@@ -422,9 +457,15 @@ func (a *AutomaticCalibration) moveToPoint(point CalPoint, algorithm Algorithm) 
 			return fmt.Errorf("未找到轴 %s 的运动配置", axisName)
 		}
 
-		log.Printf("[AutomaticCalibration] 移动 %s 轴到 %v", axisName, position)
-		if err := a.runtime.MoveToPosition(*axisConfig, position); err != nil {
-			return fmt.Errorf("移动 %s 轴到 %v 失败: %w", axisName, position, err)
+		// 按坐标模式换算目标（相对坐标：目标 = 当前坐标 + 测点坐标）
+		target, err := a.resolveTargetPosition(*axisConfig, position)
+		if err != nil {
+			return err
+		}
+
+		log.Printf("[AutomaticCalibration] 移动 %s 轴到 %v", axisName, target)
+		if err := a.runtime.MoveToPosition(*axisConfig, target); err != nil {
+			return fmt.Errorf("移动 %s 轴到 %v 失败: %w", axisName, target, err)
 		}
 	}
 
@@ -492,9 +533,16 @@ func (a *AutomaticCalibration) MoveToPointWithOrder(point CalPoint, axisOrder []
 			return fmt.Errorf("未找到轴 %s 的运动配置", axisName)
 		}
 
-		log.Printf("[AutomaticCalibration] 移动 %s 轴到 %v", axisName, position)
-		if err := a.runtime.MoveToPosition(*axisConfig, position); err != nil {
-			return fmt.Errorf("移动 %s 轴到 %v 失败: %w", axisName, position, err)
+		// 按坐标模式换算目标（相对坐标：目标 = 当前坐标 + 测点坐标）。
+		// 七孔外区点的运动坐标 (α',β') 同样参与换算——相对位移语义对运动坐标一致适用。
+		target, err := a.resolveTargetPosition(*axisConfig, position)
+		if err != nil {
+			return err
+		}
+
+		log.Printf("[AutomaticCalibration] 移动 %s 轴到 %v", axisName, target)
+		if err := a.runtime.MoveToPosition(*axisConfig, target); err != nil {
+			return fmt.Errorf("移动 %s 轴到 %v 失败: %w", axisName, target, err)
 		}
 	}
 

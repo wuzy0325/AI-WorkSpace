@@ -108,6 +108,13 @@ export interface MotionAxisConfig {
   axis: string
 }
 
+/**
+ * 运动坐标模式（与后端 core/calibration.CoordinateMode 对齐）。
+ *   - 'absolute'（默认）：测点坐标值作为运动目标绝对位置，直接走到该坐标。
+ *   - 'relative'：测点坐标值作为相对当前位置的位移量，目标 = 当前坐标 + 测点坐标。
+ */
+export type CalibrationCoordinateMode = 'absolute' | 'relative'
+
 /** 校准点位 */
 export interface CalibrationPoint {
   id: number
@@ -461,6 +468,12 @@ export interface CalibrationConfig {
   name: string
   probeChannels: ProbeChannelConfig[]
   motionAxes: MotionAxisConfig[]
+  /**
+   * 运动坐标模式（可选，缺省 'absolute'）。
+   *   - absolute：点位坐标即绝对目标位置，与当前位置无关。
+   *   - relative：点位坐标为相对当前位置的位移量，连续点位依次累积。
+   */
+  coordinateMode?: CalibrationCoordinateMode
   points: CalibrationPoint[]
   dwellTimeMs: number
   samplesPerPoint: number
