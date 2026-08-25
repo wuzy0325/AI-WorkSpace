@@ -2,6 +2,7 @@
 import { ref, watch, onMounted, onUnmounted, nextTick, computed } from 'vue'
 import { useI18nStore } from '@stores/i18nStore'
 import type { TotalPressureDataPoint, TotalPressureCoefficients } from '@shared/types/calibration'
+import { resolveTotalPressureYRange, type YRangeOverride } from './totalPressureChartRange'
 
 // i18n：Canvas 内的"暂无数据"等文本随语言切换重绘
 const i18n = useI18nStore()
@@ -13,12 +14,7 @@ const t = computed(() => i18n.t)
 type ChartXKey = 'alpha' | keyof TotalPressureCoefficients
 
 // Y 轴范围手动覆盖：用户在图表 Tab 工具条输入 min/max 后传入，
-// 跳过基于数据点的自动 [min-10%, max+10%] 计算逻辑。
-// min 必须 < max，否则视为无效回退到自动模式（draw 内做校验）。
-interface YRangeOverride {
-  min: number
-  max: number
-}
+// 直接采用用户值；min 必须 < max，否则视为无效回退到自动模式（resolveTotalPressureYRange 内校验）。
 
 const props = defineProps<{
   dataPoints: TotalPressureDataPoint[]
@@ -161,31 +157,15 @@ function draw(): void {
     xMin -= xPad0; xMax += xPad0
   }
 
-  // 纵坐标范围：无数据但有配置点位时用占位域 [-1, 1]，保证坐标轴完整可绘
-  let yMin: number
-  let yMax: number
-  if (points.length > 0) {
-    const yValues = points.map((p) => p.y)
-    yMin = Math.min(...yValues)
-    yMax = Math.max(...yValues)
-    if (yMin === yMax) { yMin -= 1; yMax += 1 }
-  } else {
-    yMin = -1
-    yMax = 1
-  }
-
-  // 纵向留 10% 边距，散点不贴边
-  const yPad = (yMax - yMin) * 0.1
-  // Y 轴范围手动覆盖：用户在图表 Tab 输入 min/max 后传入，
-  // 直接采用用户值，跳过 10% padding（用户已自行决定边界）。
-  // 无效输入（min >= max 或非有限数）静默回退到自动模式，避免 UI 报错打断操作。
-  const override = props.yRangeOverride
-  if (override && Number.isFinite(override.min) && Number.isFinite(override.max) && override.min < override.max) {
-    yMin = override.min
-    yMax = override.max
-  } else {
-    yMin -= yPad; yMax += yPad
-  }
+  // 纵坐标范围：自动模式默认窗口 [0.99, 1.01]（总压校准系数接近 1），
+  // 数据超出窗口时自动扩展容纳；用户手动 override 时直接采用。
+  // 无数据但有配置点位时同样落在默认窗口，保证坐标轴完整可绘。
+  const yRange = resolveTotalPressureYRange(
+    points.map((p) => p.y),
+    props.yRangeOverride,
+  )
+  const yMin = yRange.min
+  const yMax = yRange.max
 
   const plotW = width - padLeft - padRight
   const plotH = height - padTop - padBottom
