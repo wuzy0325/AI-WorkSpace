@@ -325,6 +325,11 @@ const statusColorToken = computed(() => {
   return '--text-muted'
 })
 
+// 进度条填充色：校准完成后切换为醒目的成功绿，提示操作员本趟已结束
+const progressBarColor = computed(() =>
+  calibrationStore.status?.status === 'completed' ? '--accent-success' : '--accent-primary',
+)
+
 const canPause = computed(() => calibrationStore.isRunning && !calibrationStore.isPaused)
 const canResume = computed(() => calibrationStore.isPaused)
 const canStop = computed(() => calibrationStore.isRunning || calibrationStore.isPaused)
@@ -622,7 +627,7 @@ onBeforeUnmount(() => {
         <div class="flex min-w-[180px] max-w-[280px] flex-1 items-center gap-2">
           <span class="whitespace-nowrap text-xs text-[var(--text-muted)]">{{ t.travProgress }}</span>
           <div class="h-2 flex-1 overflow-hidden rounded-full bg-[var(--bg-panel-strong)]">
-            <div class="h-full rounded-full bg-[var(--accent-primary)] transition-all duration-300" :style="{ width: progressPercent + '%' }"></div>
+            <div class="h-full rounded-full transition-all duration-300" :style="{ width: progressPercent + '%', backgroundColor: `var(${progressBarColor})` }"></div>
           </div>
           <span class="whitespace-nowrap font-mono text-xs font-bold text-[var(--text-primary)]">{{ formattedProgress }}</span>
         </div>

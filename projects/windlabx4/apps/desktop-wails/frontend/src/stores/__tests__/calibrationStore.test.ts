@@ -637,6 +637,110 @@ describe('calibrationStore', () => {
     })
   })
 
+  describe('completionSignal (fresh-completion popup trigger)', () => {
+    it('increments once when state transitions running -> completed', async () => {
+      const store = useCalibrationStore()
+      vi.mocked(calibrationApi.status)
+        .mockResolvedValueOnce({
+          taskId: 'cal-a',
+          type: 'five-hole',
+          state: 'running',
+          currentPoint: 1,
+          totalPoints: 2,
+          completedPoints: 0,
+          progress: 0,
+        } as any)
+        .mockResolvedValueOnce({
+          taskId: 'cal-a',
+          type: 'five-hole',
+          state: 'completed',
+          currentPoint: 2,
+          totalPoints: 2,
+          completedPoints: 2,
+          progress: 100,
+        } as any)
+
+      await store.recoveryFromBackend()
+      expect(store.completionSignal).toBe(0)
+
+      await store.recoveryFromBackend()
+      expect(store.completionSignal).toBe(1)
+    })
+
+    it('does NOT increment again when re-syncing an already-completed task (recovery / re-entry)', async () => {
+      const store = useCalibrationStore()
+      vi.mocked(calibrationApi.status).mockResolvedValue({
+        taskId: 'cal-b',
+        type: 'three-hole',
+        state: 'completed',
+        currentPoint: 3,
+        totalPoints: 3,
+        completedPoints: 3,
+        progress: 100,
+      } as any)
+
+      await store.recoveryFromBackend()
+      await store.recoveryFromBackend()
+
+      expect(store.completionSignal).toBe(1)
+    })
+
+    it('does NOT increment on stopped or error terminal states', async () => {
+      const store = useCalibrationStore()
+      vi.mocked(calibrationApi.status)
+        .mockResolvedValueOnce({
+          taskId: 'cal-c',
+          type: 'total-pressure',
+          state: 'running',
+          currentPoint: 1,
+          totalPoints: 2,
+          completedPoints: 0,
+          progress: 0,
+        } as any)
+        .mockResolvedValueOnce({
+          taskId: 'cal-c',
+          type: 'total-pressure',
+          state: 'stopped',
+          currentPoint: 1,
+          totalPoints: 2,
+          completedPoints: 1,
+          progress: 50,
+        } as any)
+
+      await store.recoveryFromBackend()
+      await store.recoveryFromBackend()
+      expect(store.completionSignal).toBe(0)
+    })
+
+    it('increments again when a NEW task completes (lastCompletedTaskId does not stick)', async () => {
+      const store = useCalibrationStore()
+      vi.mocked(calibrationApi.status)
+        .mockResolvedValueOnce({
+          taskId: 'cal-a',
+          type: 'five-hole',
+          state: 'completed',
+          currentPoint: 2,
+          totalPoints: 2,
+          completedPoints: 2,
+          progress: 100,
+        } as any)
+        .mockResolvedValueOnce({
+          taskId: 'cal-b',
+          type: 'five-hole',
+          state: 'completed',
+          currentPoint: 2,
+          totalPoints: 2,
+          completedPoints: 2,
+          progress: 100,
+        } as any)
+
+      await store.recoveryFromBackend()
+      await store.recoveryFromBackend()
+
+      expect(store.completionSignal).toBe(2)
+    })
+  })
+
   describe('startCalibration session reset', () => {
     // 测试前置：第一趟 start + stop 后 store 有 stopped 状态 + dataPoints + completeEvent
     // 测试步骤：第二趟 startCalibration

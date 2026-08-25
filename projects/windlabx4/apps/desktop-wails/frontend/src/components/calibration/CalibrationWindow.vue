@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, shallowRef, onMounted, defineAsyncComponent, type Component } from 'vue'
+import { ref, computed, shallowRef, onMounted, watch, defineAsyncComponent, type Component } from 'vue'
 import type { CalibrationType } from '@shared/types/calibration'
 import CalibrationHome from './CalibrationHome.vue'
+import UiDialog from '@components/ui/UiDialog.vue'
 import { useCalibrationStore } from '@stores/calibrationStore'
 import { useFeedbackStore } from '@stores/feedbackStore'
 import { useI18nStore } from '@stores/i18nStore'
@@ -212,6 +213,36 @@ async function handleSettingsSaved() {
   await currentMainRef.value?.reloadSavedConfig?.()
 }
 
+// 校准完成模态提示框：
+// 通过 store 的 completionSignal（仅新鲜完成时自增一次）驱动，覆盖全部探针校准模块。
+// 相比直接 watch completeEvent，能避免 recovery / 重进已完成任务时重复弹出。
+const showCompletionDialog = ref(false)
+const completionMessage = ref('')
+
+watch(
+  () => calibrationStore.completionSignal,
+  () => {
+    const ev = calibrationStore.completeEvent
+    if (!ev || !ev.success) return
+    // 用 status.type 而非 activeCalibrationType：用户可能已从 Main 返回 Home（后台 1Hz 心跳仍在跑），
+    // 此时 activeCalibrationType 为 null，但 status.type 仍保留任务类型，能正确显示提示框文案。
+    const typeName = calibrationStore.status?.type ? getCalibrationTypeName(calibrationStore.status.type) : ''
+    const durationSec = Math.max(0, Math.round((ev.duration || 0) / 1000))
+    const minutes = Math.floor(durationSec / 60)
+    const seconds = durationSec % 60
+    const duration = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    completionMessage.value = i18n.t.calCompleteBody
+      .replace('{type}', typeName)
+      .replace('{total}', String(ev.totalPoints ?? 0))
+      .replace('{duration}', duration)
+    showCompletionDialog.value = true
+  },
+)
+
+function closeCompletionDialog() {
+  showCompletionDialog.value = false
+}
+
 </script>
 
 <template>
@@ -259,6 +290,31 @@ async function handleSettingsSaved() {
         </div>
       </template>
     </Suspense>
+
+    <!-- 校准完成模态提示框：各探针模块校准完成后统一弹出，显著提醒操作员 -->
+    <UiDialog
+      :show="showCompletionDialog"
+      :title="i18n.t.calCompleteTitle"
+      width="min(88vw, 420px)"
+      closable
+      @update:show="closeCompletionDialog"
+    >
+      <div class="flex items-start gap-4 py-2">
+        <div class="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full" :style="{ background: 'color-mix(in srgb, var(--accent-success) 15%, transparent)' }">
+          <svg class="h-6 w-6" :style="{ color: 'var(--accent-success)' }" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+        <div class="min-w-0 flex-1">
+          <p class="text-sm leading-relaxed" :style="{ color: 'var(--text-primary)' }">{{ completionMessage }}</p>
+        </div>
+      </div>
+      <template #footer>
+        <div class="flex justify-end">
+          <button class="complete-ok-btn" @click="closeCompletionDialog">{{ i18n.t.calCompleteConfirm }}</button>
+        </div>
+      </template>
+    </UiDialog>
   </div>
 </template>
 
@@ -282,5 +338,21 @@ async function handleSettingsSaved() {
 .retry-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+.complete-ok-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.45rem 1.5rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent-success);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.complete-ok-btn:hover {
+  opacity: 0.88;
 }
 </style>

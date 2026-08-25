@@ -102,6 +102,13 @@ export const useCalibrationStore = defineStore('calibration', () => {
   const isRunning = ref(false)
   const isPaused = ref(false)
   const completeEvent = ref<CalibrationCompleteEvent | null>(null)
+  // 新鲜完成信号：仅在「新的已完成任务」被首次观察到时自增一次。
+  // 用于驱动「校准完成」模态提示框——区分「本轮刚刚完成」与「恢复/重进/重载已完成任务」，
+  // 避免在 recovery 或重复进入已完成的同一任务时重复弹出提示框。由调用方 watch 触发弹窗。
+  const completionSignal = ref(0)
+  // 已消费完成信号的任务 ID：防止同一已完成任务被反复观测（重载 / recovery / 重复进入）重复弹框。
+  // 非响应式，仅做去重比对，不进 ref。
+  let lastCompletedTaskId: string | null = null
   const dataPoints = ref<CalibrationAnyDataPoint[]>([])
   const realtimePressures = ref<RealtimePressures | null>(null)
   const calculatedPhysics = ref<CalculatedPhysics | null>(null)
@@ -653,6 +660,14 @@ export const useCalibrationStore = defineStore('calibration', () => {
           duration: timeInfo.value?.elapsedTime ?? 0,
           error: calStatus.lastError ?? calStatus.LastError,
         }
+        // 新鲜完成判定：仅当「新的已完成任务」首次被观测到时发一次信号，
+        // 避免 recovery / 重进 / 重载已完成任务重复弹提示框。失败/停止不触发。
+        // 用 taskId 去重：同一已完成任务反复观测不再发；新任务完成（taskId 变化）再发。
+        const completedTaskId = status.value.taskId || `cal-${Date.now()}`
+        if (state === 'completed' && completedTaskId !== lastCompletedTaskId) {
+          lastCompletedTaskId = completedTaskId
+          completionSignal.value += 1
+        }
         isRunning.value = false
         isPaused.value = false
         stopStatusPolling()
@@ -901,6 +916,7 @@ export const useCalibrationStore = defineStore('calibration', () => {
     isRunning,
     isPaused,
     completeEvent,
+    completionSignal,
     dataPoints,
     realtimePressures,
     calculatedPhysics,

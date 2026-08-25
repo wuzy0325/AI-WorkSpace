@@ -1014,6 +1014,10 @@ const zh: Record<string, string> = {
   wf_recoveryFailedTitle: '恢复校准状态失败',
   wf_recovering: '正在恢复校准状态...',
   wf_statusStopped: '已停止',
+  // 校准完成模态提示框文案（CalibrationWindow 统一渲染，覆盖全部探针校准模块）
+  calCompleteTitle: '校准完成',
+  calCompleteBody: '「{type}」校准已完成，共 {total} 个点，耗时 {duration}。',
+  calCompleteConfirm: '确定',
   // spec Task 7：跨类型切换拦截确认框文案
   // 占位符 {from} / {to} 由 CalibrationWindow 替换为探针类型中文名（复用 ch_xxxName）
   wf_switchTypeTitle: '切换校准类型',
@@ -2780,6 +2784,10 @@ const en: Record<string, string> = {
   wf_recoveryFailedTitle: 'State recovery failed',
   wf_recovering: 'Recovering calibration state...',
   wf_statusStopped: 'Stopped',
+  // Calibration complete modal dialog labels (rendered centrally in CalibrationWindow for all probe types)
+  calCompleteTitle: 'Calibration Complete',
+  calCompleteBody: '{type} calibration completed. {total} points, duration {duration}.',
+  calCompleteConfirm: 'OK',
   // spec Task 7: cross-type switch confirm dialog labels
   // Placeholders {from} / {to} are replaced by CalibrationWindow with localized probe type names
   wf_switchTypeTitle: 'Switch Calibration Type',

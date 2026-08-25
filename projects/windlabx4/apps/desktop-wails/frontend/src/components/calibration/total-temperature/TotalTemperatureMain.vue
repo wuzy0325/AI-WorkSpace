@@ -140,6 +140,10 @@ const statusColorToken = computed(() => {
   }
 })
 
+// 进度条填充色：总温模块原本就是绿色渐变（emerald-teal），保持绿色系；
+// 校准完成后统一用醒目成功绿，与其余模块一致提示本趟已结束。
+const progressBarColor = computed(() => '--accent-success')
+
 const canPause = computed(() => calibrationStore.isRunning && !calibrationStore.isPaused)
 const canResume = computed(() => calibrationStore.isPaused)
 const canStop = computed(() => calibrationStore.isRunning || calibrationStore.isPaused)
@@ -351,7 +355,10 @@ onUnmounted(() => {
               <span class="text-[var(--text-primary)]">{{ formattedProgress }}</span>
             </div>
             <div class="h-2 overflow-hidden rounded-full bg-[var(--bg-panel-strong)]">
-              <div class="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-600 transition-all duration-300" :style="{ width: progressPercent + '%' }"></div>
+              <div
+                class="h-full rounded-full transition-all duration-300"
+                :style="{ width: progressPercent + '%', backgroundColor: `var(${progressBarColor})` }"
+              ></div>
             </div>
           </div>
           <div v-if="formattedTimeInfo" class="grid grid-cols-2 gap-2 text-xs">
