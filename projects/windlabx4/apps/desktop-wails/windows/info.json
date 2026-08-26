@@ -1,15 +1,15 @@
 {
 	"fixed": {
-		"file_version": "0.1.0"
+		"file_version": "0.17.0"
 	},
 	"info": {
 		"0000": {
-			"ProductVersion": "0.1.0",
-			"CompanyName": "My Company",
-			"FileDescription": "My Product Description",
-			"LegalCopyright": "© now, My Company",
-			"ProductName": "My Product",
-			"Comments": "This is a comment"
+			"ProductVersion": "0.17.0",
+			"CompanyName": "WindLabX4 Team",
+			"FileDescription": "WindLabX4 wind tunnel DAQ application",
+			"LegalCopyright": "© now, WindLabX4 Team",
+			"ProductName": "WindLabX4",
+			"Comments": "WindLabX4 wind tunnel data acquisition desktop application"
 		}
 	}
 }

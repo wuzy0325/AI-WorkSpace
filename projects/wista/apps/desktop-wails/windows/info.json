@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "0.6.10"
+	},
+	"info": {
+		"0000": {
+			"ProductVersion": "0.6.10",
+			"CompanyName": "WindTuner Team",
+			"FileDescription": "WISTA (WindTuner Intelligent Scanning & Testing Application)",
+			"LegalCopyright": "© now, WindTuner Team",
+			"ProductName": "WISTA",
+			"Comments": "WISTA desktop application"
+		}
+	}
+}

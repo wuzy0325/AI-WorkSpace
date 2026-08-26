@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "0.7.5"
+	},
+	"info": {
+		"0000": {
+			"ProductVersion": "0.7.5",
+			"CompanyName": "WindTuner Team",
+			"FileDescription": "WISPA (WindTuner Intelligent-Pressure Scanning Application)",
+			"LegalCopyright": "© now, WindTuner Team",
+			"ProductName": "WISPA",
+			"Comments": "WISPA pressure acquisition desktop application"
+		}
+	}
+}
