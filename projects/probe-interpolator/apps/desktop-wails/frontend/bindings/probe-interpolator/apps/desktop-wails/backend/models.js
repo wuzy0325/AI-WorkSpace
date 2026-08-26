@@ -998,16 +998,16 @@ export class SevenHoleInterpolationInput {
 
 /**
  * SevenHoleInterpolationResult 是 7 孔单点计算的输出。
- *
+ * 
  * 字段语义注意（与 5 孔反转，spec §2.2 / 附录 A）：
  *   - Alpha = 侧滑角（sideslip），5 孔里 Alpha 是迎角
  *   - Beta  = 迎角（angle of attack），5 孔里 Beta 是侧滑角
- *
+ * 
  * Theta/Phi 是 PRB 网格原始角度坐标（deg），供前端展示与诊断：
  *   - 内区（小角度）模式：Theta=Alpha、Phi=Beta（两套坐标系重合）
  *   - 外区（大角度）模式：Theta 是探头坐标系俯仰角、Phi 是方位角；
  *     Alpha/Beta 是经 convertThetaPhiToAlphaBeta 投影后的风洞坐标系角度
- *
+ * 
  * JSON tag 与 5 孔结果一致（P0/Ps/alpha/beta/velocity/dynamicPressure），
  * 便于前端结果表格组件复用同样的列定义。
  */
@@ -1251,7 +1251,7 @@ export class SevenHoleLoadPrbResult {
  * SevenHolePickFilesResponse 是 PickSevenHoleFiles 多选文件对话框的返回结果。
  * 仅返回用户选中的文件路径列表，不解析、不分配槽位——分配逻辑由前端按 basename 完成。
  * 取消选择时 Paths 为空数组 + Success=true（与 Wails 对话框"OK 但无选择"语义一致）。
- *
+ * 
  * Paths 字段不用 omitempty：后端已显式把 nil 转为 []string{}，保持空数组语义
  * （取消时前端能拿到 []，而非 undefined），让前端 ?? [] 兜底与显式 [] 等价。
  */
@@ -1304,10 +1304,10 @@ export class SevenHolePickFilesResponse {
 /**
  * SevenHolePrbFileInfo 是单个 7 孔 .prb / 校准 CSV 文件的元信息。
  * Sector 字段标识文件角色：7=内区（7.prb 或小角度区 CSV），1..6=外区扇区 n（n.prb 或大角度N区 CSV）。
- *
+ * 
  * 注意：曾经存在的 Loaded 字段已移除——后端只在全部 7 个文件成功加载后才写入 sevenHoleState，
  * 因此返回列表中的每一项都隐含 Loaded=true。前端若需要"是否已加载"判断应调用 IsSevenHolePrbLoaded。
- *
+ * 
  * PointCount 字段：内区固定 169（13×13），扇区动态 = thetaCount×13（如 4×13=52、7×13=91）。
  * 由算法包 GetInnerPointCount / GetOuterPointCount 运行时读取，不再使用 169/52 兼容约定值。
  */

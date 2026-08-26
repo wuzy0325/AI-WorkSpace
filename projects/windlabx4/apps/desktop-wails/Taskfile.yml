@@ -1,105 +1,127 @@
 version: '3'
 
-# 引入公共任务与平台 Taskfile。Wails v3 约定：
-# - build/Taskfile.yml 存放跨平台共享任务（前端构建/代码生成等），以 common: 命名空间暴露；
-# - windows/Taskfile.yml 存放 Windows 专属构建/打包任务，以 windows: 命名空间暴露；
-#   wails3 build / wails3 package 会查找 windows:build、windows:package 等任务。
-# 这样根 Taskfile 与平台 Taskfile 都只 include build/Taskfile.yml，避免 root <-> windows 循环 include。
-includes:
-  common: ./build/Taskfile.yml
-  windows: ./windows/Taskfile.yml
-
-# 应用版本：构建时从 projects/windlabx4/VERSION 读取，注入 backend.buildVersion，
-# 保证软件内显示的版本号与发布版本一致。
-vars:
-  APP_VERSION:
-    sh: powershell -NoProfile -Command "(Get-Content ../../VERSION | Select-Object -First 1).Trim()"
-
 tasks:
-  # 以下任务供 `wails3 dev` 使用。`wails3 dev` 读取 ./build/config.yml 的
-  # dev_mode.executes，其中依次执行 build-frontend(blocking)、build-go(blocking)、
-  # run-dev(primary)。三个任务缺一不可，否则 dev 模式会报
-  # "Task xxx does not exist" 并退出。
-  build-frontend:
-    summary: 仅构建前端（wails3 dev 使用）
+  go:mod:tidy:
+    summary: Runs `go mod tidy`
+    internal: true
+    cmds:
+      - go mod tidy
+
+  install:frontend:deps:
+    summary: Install frontend dependencies
     dir: frontend
+    sources:
+      - package.json
+      - package-lock.json
+    generates:
+      - node_modules
+    preconditions:
+      - sh: npm version
+        msg: "Looks like npm isn't installed. Npm is part of the Node installer: https://nodejs.org/en/download/"
     cmds:
-      - npm install --no-audit --no-fund
-      - npm run build
+      - npm install
 
-  build-go:
-    summary: 仅构建 Go 二进制（生产模式，含 -tags production 与 -trimpath/-w/-s）
-    # 图标资源段 wails_windows_amd64.syso 已在仓库中生成，dev 流程无需重新生成，
-    # 因此不依赖 generate-icon，避免 Windows 上 icon 生成命令干扰 dev 启动。
-    # GOWORK=off 防止 go.work 中的多模块干扰构建。
+  build:frontend:
+    label: build:frontend (DEV={{.DEV}})
+    summary: Build the frontend project
+    dir: frontend
+    sources:
+      - "**/*"
+      - exclude: node_modules/**/*
+    generates:
+      - dist/**/*
+    deps:
+      - task: install:frontend:deps
+      - task: generate:bindings
+        vars:
+          BUILD_FLAGS:
+            ref: .BUILD_FLAGS
+    cmds:
+      - npm run {{.BUILD_COMMAND}} -q
     env:
-      GOWORK: off
-    cmds:
-      - go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui -X windlabx4/apps/desktop-wails/backend.buildVersion={{.APP_VERSION}}" -o build/bin/windlabx4.exe .
-      # 复制 DAQ-P-1603 DLL，未找到不阻止构建
-      - powershell -ExecutionPolicy Bypass -File scripts/copy-dll.ps1
+      PRODUCTION: '{{if eq .DEV "true"}}false{{else}}true{{end}}'
+    vars:
+      BUILD_COMMAND: '{{if eq .DEV "true"}}build:dev{{else}}build{{end}}'
 
-  run:
-    summary: 运行已构建的桌面应用
-    cmds:
-      - build/bin/windlabx4.exe
 
-  run-dev:
-    summary: 使用已构建的内嵌前端运行桌面应用（wails3 dev 的 primary 进程）
+  frontend:vendor:puppertino:
+    summary: Fetches Puppertino CSS into frontend/public for consistent mobile styling
+    sources:
+      - frontend/public/puppertino/puppertino.css
+    generates:
+      - frontend/public/puppertino/puppertino.css
     cmds:
-      - cmd /C "set FRONTEND_DEVSERVER_URL=&& build\bin\windlabx4.exe"
+      - |
+        set -euo pipefail
+        mkdir -p frontend/public/puppertino
+        # If bundled Puppertino exists, prefer it. Otherwise, try to fetch, but don't fail build on error.
+        if [ ! -f frontend/public/puppertino/puppertino.css ]; then
+          echo "No bundled Puppertino found. Attempting to fetch from GitHub..."
+          if curl -fsSL https://raw.githubusercontent.com/codedgar/Puppertino/main/dist/css/full.css -o frontend/public/puppertino/puppertino.css; then
+            curl -fsSL https://raw.githubusercontent.com/codedgar/Puppertino/main/LICENSE -o frontend/public/puppertino/LICENSE || true
+            echo "Puppertino CSS downloaded to frontend/public/puppertino/puppertino.css"
+          else
+            echo "Warning: Could not fetch Puppertino CSS. Proceeding without download since template may bundle it."
+          fi
+        else
+          echo "Using bundled Puppertino at frontend/public/puppertino/puppertino.css"
+        fi
+        # Ensure index.html includes Puppertino CSS and button classes
+        INDEX_HTML=frontend/index.html
+        if [ -f "$INDEX_HTML" ]; then
+          if ! grep -q 'href="/puppertino/puppertino.css"' "$INDEX_HTML"; then
+            # Insert Puppertino link tag after style.css link
+            awk '
+              /href="\/style.css"\/?/ && !x { print; print "    <link rel=\"stylesheet\" href=\"/puppertino/puppertino.css\"/>"; x=1; next }1
+            ' "$INDEX_HTML" > "$INDEX_HTML.tmp" && mv "$INDEX_HTML.tmp" "$INDEX_HTML"
+          fi
+          # Replace default .btn with Puppertino primary button classes if present
+          sed -E -i'' 's/class=\"btn\"/class=\"p-btn p-prim-col\"/g' "$INDEX_HTML" || true
+        fi
 
-  clean:
-    summary: 清理上次打包遗留的二进制和资源文件，避免与新构建混淆
-    cmds:
-      - cmd: powershell -NoProfile -Command "Remove-Item -Recurse -Force build/bin -ErrorAction SilentlyContinue; exit 0"
 
-  generate-bindings:
-    summary: 重新生成 Wails 前端 bindings
-    description: |
-      绑定 ID 是 FNV(模块路径.类型.方法名) 的哈希。任何影响该 FQN 的变更
-      （Go 模块改名、方法增删）若不重新生成 bindings，前端 dist 会携带旧 ID
-      调用新后端，触发 "unknown bound method id"。因此在每次构建前强制重新生成。
-      注意：必须使用与 go.mod 中 wails/v3 runtime 同版本的全局 wails3 CLI。
-    env:
-      GOWORK: off
+  generate:bindings:
+    label: generate:bindings (BUILD_FLAGS={{.BUILD_FLAGS}})
+    summary: Generates bindings for the frontend
+    deps:
+      - task: go:mod:tidy
+    sources:
+      - "**/*.[jt]s"
+      - exclude: frontend/**/*
+      - frontend/bindings/**/*  # Rerun when switching between dev/production mode causes changes in output
+      - "**/*.go"
+      - go.mod
+      - go.sum
+    generates:
+      - frontend/bindings/**/*
     cmds:
-      - wails3 generate bindings -silent
+      - wails3 generate bindings -f '{{.BUILD_FLAGS}}' -clean=true
 
-  generate-icon:
-    summary: 从 appicon.png 重新生成 Windows icon.ico 与 wails_windows_amd64.syso 资源段
-    description: |
-      wails3 build 不会自动重新生成 syso 资源段，导致修改 appicon.png 后 exe 图标不刷新。
-      本任务确保从源 appicon.png 重新生成图标资源。
-      注意：必须用 wails3 generate syso 覆盖 wails_windows_amd64.syso，
-      不能用 rsrc 单独生成 rsrc.syso，否则与 wails_windows_amd64.syso 中的 .rsrc 段冲突。
+  generate:icons:
+    summary: Generates Windows `.ico` and Mac `.icns` from an image; on macOS, `-iconcomposerinput appicon.icon -macassetdir darwin` also produces `Assets.car` from a `.icon` file (skipped on other platforms).
+    dir: build
+    sources:
+      - "appicon.png"
+      - "appicon.icon"
+    generates:
+      - "darwin/icons.icns"
+      - "windows/icon.ico"
     cmds:
-      # Wails generate build-assets 会生成 appicon.png/windows/*，归一化到 build/
-      - powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path build/windows | Out-Null; if (-not (Test-Path -LiteralPath 'appicon.png') -or -not (Test-Path -LiteralPath 'windows/info.json') -or -not (Test-Path -LiteralPath 'windows/wails.exe.manifest')) { wails3 generate build-assets }; if (Test-Path -LiteralPath 'appicon.png') { Copy-Item -LiteralPath 'appicon.png' -Destination 'build/appicon.png' -Force }; if (Test-Path -LiteralPath 'windows/info.json') { Copy-Item -LiteralPath 'windows/info.json' -Destination 'build/windows/info.json' -Force }; if (Test-Path -LiteralPath 'windows/wails.exe.manifest') { Copy-Item -LiteralPath 'windows/wails.exe.manifest' -Destination 'build/windows/wails.exe.manifest' -Force }; if (-not (Test-Path -LiteralPath 'build/appicon.png') -or -not (Test-Path -LiteralPath 'build/windows/info.json') -or -not (Test-Path -LiteralPath 'build/windows/wails.exe.manifest')) { throw 'Wails build assets are missing after generation' }"
-      - wails3 generate icons -input build/appicon.png -windowsfilename build/windows/icon.ico
-      - wails3 generate syso -arch amd64 -icon build/windows/icon.ico -info build/windows/info.json -manifest build/windows/wails.exe.manifest -out wails_windows_amd64.syso
+      - wails3 generate icons -input appicon.png -macfilename darwin/icons.icns -windowsfilename windows/icon.ico -iconcomposerinput appicon.icon -macassetdir darwin
 
-  release:
-    summary: 生产交付构建（清理 + bindings + 图标 + 前端 + Go 生产二进制）
-    description: |
-      完整的 release 流程：清理 -> 重新生成 bindings -> 重新生成图标资源 -> 构建前端 -> 构建 Go 生产二进制。
-      注意：NSIS installer 打包需手动执行 `makensis build/windows/installer/project.nsi`，
-      然后执行 `task archive-release` 归档到 releases/bin/。
+  dev:frontend:
+    summary: Runs the frontend in development mode
+    dir: frontend
+    deps:
+      - task: install:frontend:deps
     cmds:
-      - task: clean
-      - task: generate-bindings
-      - task: generate-icon
-      - task: build-frontend
-      - task: build-go
+      - npm run dev -- --port {{.VITE_PORT}} --strictPort
 
-  archive-release:
-    summary: 将 NSIS installer 拷贝到 projects/windlabx4/releases/bin/ 归档（按版本号命名，不入库 SVN）
-    description: |
-      读取 projects/windlabx4/VERSION，从 build/bin/ 中查找 WindLabX4-<version>-amd64-installer.exe，
-      拷贝到 projects/windlabx4/releases/bin/。
-      前置条件：必须先执行 makensis build/windows/installer/project.nsi 生成 installer。
+  update:build-assets:
+    summary: Updates the build assets
+    dir: build
     cmds:
-      - powershell -ExecutionPolicy Bypass -File ../../../../scripts/copy-release-artifacts.ps1 -Project WindLabX4
+      - wails3 update build-assets -name "{{.APP_NAME}}" -binaryname "{{.APP_NAME}}" -config config.yml -dir .
 
   build:server:
     summary: Builds the application in server mode (no GUI, HTTP server only)
@@ -108,7 +130,7 @@ tasks:
       Server mode runs as a pure HTTP server without native GUI dependencies.
       Usage: task build:server
     deps:
-      - task: common:build:frontend
+      - task: build:frontend
         vars:
           BUILD_FLAGS:
             ref: .BUILD_FLAGS

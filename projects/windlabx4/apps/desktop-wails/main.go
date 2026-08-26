@@ -24,6 +24,36 @@ var assets embed.FS
 //go:embed build/appicon.png
 var appIcon []byte
 
+// fitWindowToScreen 按主屏逻辑工作区钳制窗口初始尺寸。
+// 部分机器显示缩放较大（如 1920x1080@150% 时逻辑工作区仅约 1280x660），
+// 固定初始窗口会超出屏幕导致画面看不全。
+// 可缩放模式（normal）：初始尺寸钳制到工作区并最大化启动；
+// 最小尺寸保持不变，保护 4 列轴卡片布局断点。
+// 固定尺寸模式（motion-only，DisableResize）：宽高连同 Min/Max 一并钳制到工作区，
+// 保持禁用缩放语义，不做最大化。
+func fitWindowToScreen(app *application.App, opts application.WebviewWindowOptions) application.WebviewWindowOptions {
+	screen := app.Screen.GetPrimary()
+	if screen == nil || screen.WorkArea.Width <= 0 || screen.WorkArea.Height <= 0 {
+		return opts
+	}
+	if opts.DisableResize {
+		if screen.WorkArea.Width >= opts.Width && screen.WorkArea.Height >= opts.Height {
+			return opts
+		}
+		w := min(opts.Width, screen.WorkArea.Width)
+		h := min(opts.Height, screen.WorkArea.Height)
+		opts.Width, opts.MinWidth, opts.MaxWidth = w, w, w
+		opts.Height, opts.MinHeight, opts.MaxHeight = h, h, h
+		return opts
+	}
+	if screen.WorkArea.Width < opts.Width || screen.WorkArea.Height < opts.Height {
+		opts.Width = min(opts.Width, screen.WorkArea.Width)
+		opts.Height = min(opts.Height, screen.WorkArea.Height)
+		opts.StartState = application.WindowStateMaximised
+	}
+	return opts
+}
+
 func main() {
 	// 早期 panic recovery：捕获所有 main goroutine 启动期 panic 并写入 crash log。
 	// 必要性：windowsgui 子系统下 stderr 不可见，Wails 日志系统尚未初始化时
@@ -99,7 +129,7 @@ func main() {
 		},
 	})
 
-	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+	mainWindow := wailsApp.Window.NewWithOptions(fitWindowToScreen(wailsApp, application.WebviewWindowOptions{
 		Title:         title,
 		Width:         width,
 		Height:        height,
@@ -108,13 +138,14 @@ func main() {
 		URL:           "/",
 		Hidden:        false,
 		DisableResize: disableResize,
+		// fitWindowToScreen 会在主屏逻辑工作区放不下时钳制以上尺寸
 		BackgroundColour: application.RGBA{
 			Red:   7,
 			Green: 17,
 			Blue:  31,
 			Alpha: 1,
 		},
-	})
+	}))
 
 	// 注册窗口关闭确认 hook：拦截 X 按钮关闭，由前端弹出确认对话框。
 	// 仅在主窗口注册（normal 模式）；motion-only 模式保持现状，关闭即退出子进程。

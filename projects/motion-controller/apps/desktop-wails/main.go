@@ -18,6 +18,26 @@ var assets embed.FS
 //go:embed build/appicon.png
 var appIcon []byte
 
+// fitFixedWindowToScreen 将固定尺寸窗口按主屏逻辑工作区钳制。
+// 部分机器显示缩放较大（如 1920x1080@150% 时逻辑工作区仅约 1280x660），
+// 固定 1350x740 的窗口会超出屏幕导致画面看不全且无法调整大小。
+// 工作区放不下时把宽高连同 Min/Max 一并钳制到工作区，保持禁用缩放语义；
+// 不做最大化：固定布局窗口放大无意义，缩小到可容纳尺寸即可完整可见。
+func fitFixedWindowToScreen(app *application.App, opts application.WebviewWindowOptions) application.WebviewWindowOptions {
+	screen := app.Screen.GetPrimary()
+	if screen == nil || screen.WorkArea.Width <= 0 || screen.WorkArea.Height <= 0 {
+		return opts
+	}
+	if screen.WorkArea.Width >= opts.Width && screen.WorkArea.Height >= opts.Height {
+		return opts
+	}
+	w := min(opts.Width, screen.WorkArea.Width)
+	h := min(opts.Height, screen.WorkArea.Height)
+	opts.Width, opts.MinWidth, opts.MaxWidth = w, w, w
+	opts.Height, opts.MinHeight, opts.MaxHeight = h, h, h
+	return opts
+}
+
 func main() {
 	appCtx, err := appcontext.NewAppContext("")
 	if err != nil {
@@ -50,7 +70,7 @@ func main() {
 	}
 	wailsApp := application.New(appOpts)
 
-	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+	wailsApp.Window.NewWithOptions(fitFixedWindowToScreen(wailsApp, application.WebviewWindowOptions{
 		Title:         "Motion Controller",
 		Width:         1350,
 		Height:        740,
@@ -61,7 +81,7 @@ func main() {
 		URL:           "/",
 		Hidden:        false,
 		DisableResize: true,
-	})
+	}))
 
 	if err := wailsApp.Run(); err != nil {
 		log.Fatal(err)

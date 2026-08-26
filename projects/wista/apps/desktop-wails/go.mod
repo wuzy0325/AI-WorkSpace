@@ -17,6 +17,7 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/wailsapp/wails/webview2 v1.0.27 // indirect
+	go.bug.st/serial v1.6.2 // indirect
 )
 
 replace shared.local/device-sdk/go => ../../../../shared/device-sdk/go

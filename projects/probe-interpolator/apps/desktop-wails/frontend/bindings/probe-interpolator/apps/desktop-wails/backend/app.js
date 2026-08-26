@@ -204,11 +204,11 @@ export function ImportCsvData() {
 /**
  * ImportSevenHoleCsvData 弹出文件选择对话框让用户选 7 孔数据 CSV，
  * 解析 P1-P7 + Patm + Tatm 列（共 9 列，全部必需）。
- *
+ * 
  * 与 5 孔 CSV 的区别：
  *   - 5 孔：P1-P5 必需，Patm/Tatm/PressureMode 可选
  *   - 7 孔：P1-P7 + Patm + Tatm 全部必需（spec §1.1 强制表压，无 PressureMode 列）
- *
+ * 
  * 支持 .csv/.txt/.dat 三种扩展名（与 3 孔一致），分隔符自动检测 tab vs 逗号。
  * 注意：此方法导入的是"数据 CSV"（待计算的压力数据），与 LoadSevenHoleCalibrationCsvFiles
  * 导入的"校准 CSV"（标定网格点系数）完全不同——后者是 7 份 GBK 编码的标定文件。
@@ -271,7 +271,7 @@ export function LoadPrbFiles() {
 /**
  * LoadSevenHoleCalibrationCsvFiles 加载已分配好的 7 个校准 CSV 文件路径
  * （1 份内区 CSV + 6 份外区 CSV，文件名约定：含"小角度区"→内区，含"大角度N区"→扇区 N）。
- *
+ * 
  * 与 LoadSevenHolePrbFiles 同结构，区别仅在内/外区文件解析走 CSV 路径
  * （GBK 解码 + 列位置契约 + 退化边抖动，详见 seven_hole_csv.go）。
  * 解析失败的错误信息含文件路径，便于前端定位是哪个 CSV 出问题。
@@ -349,12 +349,15 @@ export function OpenThreeHoleHelpDoc() {
 
 /**
  * PickSevenHoleFiles 弹出多选文件对话框，让用户选择 7 孔 PRB 或校准 CSV 文件。
- *
+ * 
  * 仅返回用户选中的文件路径列表，不解析、不分配槽位——分配逻辑由前端按 basename 完成
  * （assignSevenHoleFilesByName / assignSevenHoleCsvFilesByName）。
  * 这样后端无需关心文件名约定，前端可在 UI 上展示"哪些文件未被识别"。
- *
+ * 
  * 取消选择时返回 Success=true + 空 Paths（与 Wails 对话框"OK 但无选择"语义一致）。
+ * 
+ * 实现说明：直接调用 application.Get() 取全局单例，与 openFileDialog 一致
+ * （参见 dialog.go 注释解释了为何移除 a.app 双源回退）。
  * @returns {$CancellablePromise<$models.SevenHolePickFilesResponse>}
  */
 export function PickSevenHoleFiles() {

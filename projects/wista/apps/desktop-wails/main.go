@@ -37,6 +37,34 @@ var assets embed.FS
 //go:embed appicon.png
 var appIcon []byte
 
+// 窗口设计尺寸与最小可交互尺寸（逻辑像素，非物理像素）。
+const (
+	windowDesignWidth  = 1600
+	windowDesignHeight = 900
+	windowMinWidth     = 1024
+	windowMinHeight    = 640
+)
+
+// fitWindowToScreen 按主屏逻辑工作区钳制窗口初始尺寸。
+// 部分机器显示缩放较大（如 1920x1080@150% 时逻辑工作区仅约 1280x660），
+// 固定 1600x900 的初始窗口会超出屏幕导致画面看不全。
+// 工作区放不下设计尺寸时：初始尺寸钳制到工作区并最大化启动，
+// 同时放宽最小尺寸，保证还原后仍可手动缩小窗口。
+func fitWindowToScreen(app *application.App, opts application.WebviewWindowOptions) application.WebviewWindowOptions {
+	opts.MinWidth = windowMinWidth
+	opts.MinHeight = windowMinHeight
+	screen := app.Screen.GetPrimary()
+	if screen == nil || screen.WorkArea.Width <= 0 || screen.WorkArea.Height <= 0 {
+		return opts
+	}
+	if screen.WorkArea.Width < windowDesignWidth || screen.WorkArea.Height < windowDesignHeight {
+		opts.Width = min(windowDesignWidth, screen.WorkArea.Width)
+		opts.Height = min(windowDesignHeight, screen.WorkArea.Height)
+		opts.StartState = application.WindowStateMaximised
+	}
+	return opts
+}
+
 func main() {
 	// ---- 1. 准备配置目录与日志目录 ----
 	// 解析用户配置目录（含旧版本 %APPDATA%/daq-t1603 配置的自动迁移）
@@ -114,19 +142,16 @@ func main() {
 	})
 
 	// ---- 5. 主窗口 ----
-	mainWindow := app.Window.NewWithOptions(application.WebviewWindowOptions{
+	mainWindow := app.Window.NewWithOptions(fitWindowToScreen(app, application.WebviewWindowOptions{
 		// 窗口默认标题用英文，避免首屏硬编码中文。
 		// 前端 App.vue 在 onMounted 和 watch(locale) 时会通过 @wailsio/runtime 的 Window.SetTitle
 		// 覆盖为当前语言对应的本地化标题（zh: "WISTA 温度采集" / en: "WISTA Temperature Acquisition"）。
 		Title:           "WISTA Temperature Acquisition",
-		Width:           1600,
-		Height:          900,
-		MinWidth:        1280,
-		MinHeight:       720,
 		URL:             "/",
 		DevToolsEnabled: true,
 		StartState:      application.WindowStateNormal,
-	})
+		// Width/Height/MinWidth/MinHeight 由 fitWindowToScreen 按主屏逻辑工作区决定
+	}))
 
 	// 注册窗口 X 按钮拦截：未确认退出时弹确认对话框
 	deviceService.RegisterExitConfirmationHook(mainWindow)
