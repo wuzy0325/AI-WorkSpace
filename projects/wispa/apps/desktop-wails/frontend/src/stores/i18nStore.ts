@@ -85,8 +85,8 @@ const zh = {
 
   // ---- 设备侧栏 ----
   'sidebar.deviceList': '设备列表',
-  'sidebar.scanDevices': '扫描设备',
-  'sidebar.addDevice': '添加设备',
+  'sidebar.scanDevices': '扫描压力扫描阀',
+  'sidebar.addDevice': '添加压力扫描阀',
   'sidebar.noDevices': '暂无设备',
   'sidebar.addHint': '点击上方 + 添加 P1604',
   'sidebar.unnamed': '未命名',
@@ -164,14 +164,14 @@ const zh = {
   'chart.pleaseSelectChannel': '请在上方通道选择中勾选需要显示的通道',
 
   // ---- 对话框 ----
-  'dialog.scanTitle': '扫描设备',
+  'dialog.scanTitle': '扫描压力扫描阀',
   'dialog.scanSubtitle': '勾选发现的设备后一次性添加',
   'dialog.rescan': '重新扫描',
   'dialog.scanInProgress': '扫描进行中，请稍候',
   'dialog.addingDevices': '添加中...',
   'dialog.addSelected': '添加所选 ({n})',
   'dialog.defaultAutoConnect': '添加的设备默认启用开机自动连接（本次新加会立即尝试连接）',
-  'dialog.addDeviceTitle': '添加 P1604 设备',
+  'dialog.addDeviceTitle': '添加压力扫描阀',
   'dialog.addDeviceSubtitle': '通过 IP 端口接入压力采集器',
   'dialog.deviceName': '设备名称',
   'dialog.deviceNamePlaceholder': '例如: 压力采集器 1',
@@ -310,8 +310,8 @@ const en = {
 
   // ---- sidebar ----
   'sidebar.deviceList': 'Devices',
-  'sidebar.scanDevices': 'Scan Devices',
-  'sidebar.addDevice': 'Add Device',
+  'sidebar.scanDevices': 'Scan Pressure Scanning Valve',
+  'sidebar.addDevice': 'Add Pressure Scanning Valve',
   'sidebar.noDevices': 'No devices',
   'sidebar.addHint': 'Click + above to add a P1604',
   'sidebar.unnamed': 'Unnamed',
@@ -389,14 +389,14 @@ const en = {
   'chart.pleaseSelectChannel': 'Please select channels in the channel selection above',
 
   // ---- dialog ----
-  'dialog.scanTitle': 'Scan Devices',
+  'dialog.scanTitle': 'Scan Pressure Scanning Valve',
   'dialog.scanSubtitle': 'Check discovered devices and add them in one batch',
   'dialog.rescan': 'Rescan',
   'dialog.scanInProgress': 'Scan in progress, please wait',
   'dialog.addingDevices': 'Adding...',
   'dialog.addSelected': 'Add Selected ({n})',
   'dialog.defaultAutoConnect': 'New devices default to auto-connect on startup (will try to connect immediately)',
-  'dialog.addDeviceTitle': 'Add P1604 Device',
+  'dialog.addDeviceTitle': 'Add Pressure Scanning Valve',
   'dialog.addDeviceSubtitle': 'Connect to a pressure acquisition device via IP and port',
   'dialog.deviceName': 'Device Name',
   'dialog.deviceNamePlaceholder': 'e.g., Pressure DAQ 1',

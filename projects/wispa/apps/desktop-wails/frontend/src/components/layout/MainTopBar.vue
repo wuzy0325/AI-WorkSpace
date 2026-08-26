@@ -126,7 +126,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="topbar__title-wrap">
           <h1 class="topbar__title" data-testid="topbar-title">
-            DAQ-P<span class="topbar__title-accent">1604</span>
+            WIS<span class="topbar__title-accent">PA</span>
           </h1>
           <p class="topbar__subtitle">{{ i18n.t('topbar.subtitle') }}</p>
         </div>
