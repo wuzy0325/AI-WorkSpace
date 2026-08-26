@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
 import type { DeviceProfile, DeviceStatus, DataPayload, DSA3217ScanConfig, ChannelConfig, CalibrationResult } from '@api/types'
 import { deviceApi } from '@api/deviceApi'
+import { ApiError } from '@api/http-client'
 import { createRingBuffer, type RingBuffer } from '@composables/ringBuffer'
 import { getDeviceChannelRange } from '@utils/t1602Range'
 import { useStorageStore, computeHistoryCapacity, HISTORY_CAPACITY_HARD_CAP } from '@stores/storageStore'
@@ -206,9 +207,34 @@ export const useDeviceStore = defineStore('devices', () => {
     try {
       const status = await deviceApi.getStatus(id)
       deviceStatuses.value.set(id, status)
-    } catch {
+    } catch (err) {
+      // 设备已从 DeviceManager map 移除（后端 onError 异常退出触发）时，
+      // /api/device/{id}/status 与 Wails DeviceGetStatus 均返回 404 语义。
+      // 若静默保留旧状态（原本是 Acquiring），UI 会永远显示"采集中"。
+      // 但主动 disconnect 已先置 Disconnected，此时不应覆盖为 Error。
+      if (err instanceof ApiError && err.status === 404 && statusFor(id) !== 'Disconnected') {
+        markDeviceLost(id)
+        return
+      }
       // Keep the last known status; transient device status reads should not blank the UI.
     }
+  }
+
+  /** 标记设备异常退出：置 Error + 停止数据订阅（与 onDeviceLost 回调共用） */
+  function markDeviceLost(deviceId: string) {
+    const prev = deviceStatuses.value.get(deviceId)
+    const profile = profiles.value.find((p) => p.id === deviceId)
+    deviceStatuses.value.set(deviceId, {
+      id: deviceId,
+      name: prev?.name ?? profile?.name ?? deviceId,
+      type: prev?.type ?? profile?.type ?? 'Unknown',
+      connection: 'Error',
+      acquiring: false,
+      lastError: '设备连接已断开',
+    })
+    // 停止该设备的数据订阅，避免继续轮询已不存在的设备
+    deviceApi.unsubscribeAllFromDevice(deviceId)
+    subscribedDeviceIds.delete(deviceId)
   }
 
   function updateStatus(id: string, status: DeviceStatus) {
@@ -375,20 +401,10 @@ export const useDeviceStore = defineStore('devices', () => {
       // 更新本地状态为 Error + acquiring=false，并停止该设备的数据订阅。
       // 必须更新本地状态——后端 GetStatus 返回 404 后 refreshStatusFor 的 catch
       // 会"保留旧状态"（原本是 Acquiring），不主动置 Error 就会永远显示"采集中"。
+      // 现在 refreshStatusFor 自身也能在 404 时调用 markDeviceLost，此回调仍保留
+      // 以覆盖数据轮询（getLatest 404）路径。
       unsubscribeDeviceLost = deviceApi.onDeviceLost((deviceId) => {
-        const prev = deviceStatuses.value.get(deviceId)
-        const profile = profiles.value.find((p) => p.id === deviceId)
-        deviceStatuses.value.set(deviceId, {
-          id: deviceId,
-          name: prev?.name ?? profile?.name ?? deviceId,
-          type: prev?.type ?? profile?.type ?? 'Unknown',
-          connection: 'Error',
-          acquiring: false,
-          lastError: '设备连接已断开',
-        })
-        // 停止该设备的数据订阅，避免继续轮询已不存在的设备
-        deviceApi.unsubscribeAllFromDevice(deviceId)
-        subscribedDeviceIds.delete(deviceId)
+        markDeviceLost(deviceId)
       })
     }
     // 启动 renderTick：以固定频率消费 pendingSnapshots → historyBuffers

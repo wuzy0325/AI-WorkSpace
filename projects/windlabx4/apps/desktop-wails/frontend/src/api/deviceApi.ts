@@ -155,7 +155,10 @@ export const deviceApi = {
     if (isWailsAvailable()) {
       const result = await wailsApi.device.getStatus(id)
       if (result == null || result === false || result === true) {
-        throw new Error('设备状态不可用')
+        // 设备已从 DeviceManager map 移除（异常退出或主动断开）时，Wails binding
+        // 返回 ok=false。统一抛出 404 ApiError，与 HTTP 路径 /api/device/{id}/status
+        // 的 404 语义对齐，让 refreshStatusFor 等调用方能一致地识别"设备丢失"。
+        throw new ApiError('设备状态不可用', 404)
       }
       return result as DeviceStatus
     }

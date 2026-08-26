@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useDeviceStore } from '@stores/deviceStore'
 import { deviceApi } from '@api/deviceApi'
+import { ApiError } from '@api/http-client'
 
 // mock useStorageStore：默认 historyWindowSec=30 + refreshRateHz=10 = 容量 300
 // 测试用例通过 setWindowSec/setRefreshHz 模拟用户改配置
@@ -292,6 +293,92 @@ describe('deviceStore', () => {
     expect(unsubscribe).toHaveBeenCalledWith('daq-1')
     expect(store.acquiringFor('daq-1')).toBe(false)
     expect(store.statusFor('daq-1')).toBe('Connected')
+  })
+
+  // 验证：status 轮询拿到 404（设备从 DeviceManager map 移除，如采集中拔网线/断电）
+  // 时，refreshStatusFor 必须把 UI 置为 Error，不能静默保留旧状态（否则永远"采集中"）。
+  // 此前 refreshStatusFor 的 catch 静默吞掉 404，状态翻转只依赖数据轮询（getLatest）
+  // 的 onDeviceLost 路径，未订阅数据流的视图会一直显示"采集中"。
+  it('refreshStatusFor marks device lost on 404 while acquiring', async () => {
+    const store = useDeviceStore()
+    store.profiles = [{
+      id: 'daq-1',
+      name: 'DAQ 1',
+      type: 'SIMULATED',
+      samplingRate: 20,
+      channels: [],
+    }]
+    store.updateStatus('daq-1', {
+      id: 'daq-1',
+      name: 'DAQ 1',
+      type: 'SIMULATED',
+      connection: 'Acquiring',
+      acquiring: true,
+    })
+    const unsubscribe = vi.spyOn(deviceApi, 'unsubscribeAllFromDevice').mockImplementation(() => undefined)
+    // 设备已被后端移除：getStatus 抛 404 ApiError（HTTP 与 Wails 路径统一）
+    vi.spyOn(deviceApi, 'getStatus').mockRejectedValue(new ApiError('device not connected', 404))
+
+    await store.refreshStatusFor('daq-1')
+
+    expect(store.statusFor('daq-1')).toBe('Error')
+    expect(store.acquiringFor('daq-1')).toBe(false)
+    expect(store.statusFor('daq-1')).not.toBe('Acquiring')
+    // 设备已不在 map，应停止轮询已不存在的设备
+    expect(unsubscribe).toHaveBeenCalledWith('daq-1')
+  })
+
+  // 验证：主动 disconnect 后（本地已置 Disconnected），status 轮询再拿到 404 时
+  // 不得覆盖为 Error——断开是用户意图，UI 应保持"已断开"。
+  it('refreshStatusFor keeps Disconnected on 404 after explicit disconnect', async () => {
+    const store = useDeviceStore()
+    store.profiles = [{
+      id: 'daq-1',
+      name: 'DAQ 1',
+      type: 'SIMULATED',
+      samplingRate: 20,
+      channels: [],
+    }]
+    store.updateStatus('daq-1', {
+      id: 'daq-1',
+      name: 'DAQ 1',
+      type: 'SIMULATED',
+      connection: 'Disconnected',
+      acquiring: false,
+    })
+    vi.spyOn(deviceApi, 'unsubscribeAllFromDevice').mockImplementation(() => undefined)
+    vi.spyOn(deviceApi, 'getStatus').mockRejectedValue(new ApiError('device not connected', 404))
+
+    await store.refreshStatusFor('daq-1')
+
+    expect(store.statusFor('daq-1')).toBe('Disconnected')
+    expect(store.acquiringFor('daq-1')).toBe(false)
+  })
+
+  // 验证：status 轮询遇到非 404 的临时错误（网络抖动）时仍保留旧状态，不误标为丢失。
+  it('refreshStatusFor keeps last status on transient non-404 error', async () => {
+    const store = useDeviceStore()
+    store.profiles = [{
+      id: 'daq-1',
+      name: 'DAQ 1',
+      type: 'SIMULATED',
+      samplingRate: 20,
+      channels: [],
+    }]
+    store.updateStatus('daq-1', {
+      id: 'daq-1',
+      name: 'DAQ 1',
+      type: 'SIMULATED',
+      connection: 'Acquiring',
+      acquiring: true,
+    })
+    vi.spyOn(deviceApi, 'unsubscribeAllFromDevice').mockImplementation(() => undefined)
+    vi.spyOn(deviceApi, 'getStatus').mockRejectedValue(new Error('network glitch'))
+
+    await store.refreshStatusFor('daq-1')
+
+    expect(store.statusFor('daq-1')).toBe('Acquiring')
+    expect(store.acquiringFor('daq-1')).toBe(true)
   })
 
   // 验证：设备异常退出（onDeviceLost）后，用户重连 + 重启采集能恢复订阅。
