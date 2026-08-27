@@ -6,11 +6,12 @@
     :size="drawerSize"
     append-to-body
     :destroy-on-close="false"
+    class="device-selection-drawer"
     @open="handleOpen"
   >
     <div class="drawer-layout">
       <header class="drawer-summary">
-        <div>
+        <div class="summary-info">
           <strong>已选 {{ selectedDeviceIds.length }} 台</strong>
           <span :class="['consistency', unitConsistent ? 'ok' : 'warning']">
             {{ unitConsistent ? '单位一致' : '单位不一致' }}
@@ -43,7 +44,7 @@
         aria-labelledby="valve-section-title"
       >
         <div class="section-heading">
-          <div>
+          <div class="heading-info">
             <h3 id="valve-section-title">
               阀门
             </h3>
@@ -51,6 +52,7 @@
           </div>
           <el-button
             text
+            size="small"
             :loading="refreshing"
             @click="refreshSettings"
           >
@@ -66,7 +68,7 @@
             :aria-pressed="device.id === focusedDeviceId"
             @click="focusedDeviceId = device.id"
           >
-            <span>{{ device.name || device.model || device.id }}</span>
+            <span class="device-name">{{ device.name || device.model || device.id }}</span>
             <span :class="['state-value', { error: valveError(device.id) || isValveDifferent(device.id) }]">
               {{ valveDisplay(device.id) }}{{ isValveDifferent(device.id) ? '（不一致）' : '' }}
             </span>
@@ -75,6 +77,7 @@
         <div class="section-actions">
           <el-button
             type="primary"
+            plain
             :loading="valvePending"
             :disabled="boundDevices.length === 0"
             @click="setValveAll('calibration')"
@@ -98,7 +101,7 @@
         aria-labelledby="unit-section-title"
       >
         <div class="section-heading">
-          <div>
+          <div class="heading-info">
             <h3 id="unit-section-title">
               压力单位
             </h3>
@@ -111,7 +114,7 @@
             :key="device.id"
             class="device-state-row static"
           >
-            <span>{{ device.name || device.model || device.id }}</span>
+            <span class="device-name">{{ device.name || device.model || device.id }}</span>
             <span :class="['state-value', { error: unitError(device.id) || isUnitDifferent(device.id) }]">
               {{ unitDisplay(device.id) }}{{ isUnitDifferent(device.id) ? '（不一致）' : '' }}
             </span>
@@ -147,17 +150,16 @@
         aria-labelledby="device-action-title"
       >
         <div class="section-heading">
-          <div>
+          <div class="heading-info">
             <h3 id="device-action-title">
               当前设备
             </h3>
             <span>{{ focusedDevice.name || focusedDevice.model || focusedDevice.id }}</span>
           </div>
-        </div>
-        <div class="section-actions">
           <el-button
             v-if="isFocusedValveless"
             type="primary"
+            size="small"
             :loading="zeroPending"
             @click="calibrateFocusedDevice"
           >
@@ -165,6 +167,7 @@
           </el-button>
           <el-button
             v-else
+            size="small"
             :loading="resetPending"
             @click="resetFocusedDevice"
           >
@@ -179,30 +182,30 @@
         aria-labelledby="selection-section-title"
       >
         <div class="section-heading">
-          <div>
+          <div class="heading-info">
             <h3 id="selection-section-title">
               设备选择
             </h3>
-            <span>勾选需要连接的设备，可随时调整</span>
+            <span>{{ inventoryStore.measureDevices.length }} 台可选</span>
           </div>
-        </div>
-        <div class="selection-toolbar">
-          <el-button
-            text
-            size="small"
-            :disabled="inventoryStore.measureDevices.length === 0"
-            @click="selectAll"
-          >
-            全部选择
-          </el-button>
-          <el-button
-            text
-            size="small"
-            :disabled="selectedDeviceIds.length === 0"
-            @click="clearSelection"
-          >
-            取消选择
-          </el-button>
+          <div class="heading-actions">
+            <el-button
+              text
+              size="small"
+              :disabled="inventoryStore.measureDevices.length === 0"
+              @click="selectAll"
+            >
+              全部选择
+            </el-button>
+            <el-button
+              text
+              size="small"
+              :disabled="selectedDeviceIds.length === 0"
+              @click="clearSelection"
+            >
+              取消选择
+            </el-button>
+          </div>
         </div>
         <el-checkbox-group v-model="selectedDeviceIds">
           <el-checkbox
@@ -504,38 +507,86 @@ defineExpose({ refresh: refreshSettings })
 <style scoped lang="scss">
 /* Drawer 是连续操作面，不使用嵌套卡片；区块仅用分隔线组织高密度设备状态。
    样式与计量模块 MeasurementDeviceDrawer 保持一致。 */
-.drawer-layout { display: flex; flex-direction: column; gap: 16px; }
-.drawer-summary { display: flex; flex-direction: column; gap: 12px; padding-bottom: 16px; border-bottom: 1px solid $slate-200; }
-.drawer-summary > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.drawer-summary strong { color: $slate-800; font-size: 15px; }
-.consistency { font-size: 12px; font-weight: 600; }
-.consistency.ok { color: $green; }
-.consistency.warning { color: #d97706; }
-.connection-actions { justify-content: flex-start !important; }
-.drawer-section { padding: 4px 0 16px; border-bottom: 1px solid $slate-200; }
-.section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.section-heading h3 { margin: 0; color: $slate-800; font-size: 14px; letter-spacing: 0; }
-.section-heading span { color: $slate-500; font-size: 12px; }
-.device-state-list { display: flex; flex-direction: column; margin-bottom: 12px; }
-.device-state-row { width: 100%; min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 8px; border: 0; border-bottom: 1px solid $slate-100; background: transparent; color: $slate-700; text-align: left; cursor: pointer; }
-.device-state-row.active { background: rgba(16, 185, 129, 0.08); }
-.device-state-row.static { cursor: default; }
-.state-value { color: $slate-600; font-family: $font-mono; font-size: 12px; text-align: right; overflow-wrap: anywhere; }
+.drawer-layout { display: flex; flex-direction: column; }
+
+/* 摘要行：计数 + 单位一致性徽标在左，连接动作在右，单行收纳。 */
+.drawer-summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding-bottom: 12px; border-bottom: 1px solid $slate-200;
+}
+.summary-info { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.drawer-summary strong { color: $slate-800; font-size: 13px; font-weight: $font-weight-semibold; font-variant-numeric: tabular-nums; }
+.consistency {
+  padding: 2px 8px; border-radius: $radius-full; border: 1px solid transparent;
+  color: $slate-500; font-size: 11px; font-weight: $font-weight-semibold; line-height: 16px; white-space: nowrap;
+}
+/* 状态徽标遵循 DESIGN.md：15% 底色 + 30% 描边 + 深一档文字。 */
+.consistency.ok { color: $success-700; background: rgba(34, 197, 94, 0.12); border-color: rgba(34, 197, 94, 0.3); }
+.consistency.warning { color: $warning-700; background: rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.35); }
+.connection-actions { display: flex; align-items: center; gap: 8px; }
+.connection-actions :deep(.el-button + .el-button) { margin-left: 0; }
+
+/* 区块标题与摘要同行，压缩纵向节奏；区块间仅用浅分隔线。 */
+.drawer-section { padding: 10px 0 14px; border-bottom: 1px solid $slate-100; }
+.drawer-layout > .drawer-section:last-child { border-bottom: 0; padding-bottom: 2px; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 24px; margin-bottom: 6px; }
+.heading-info { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.section-heading h3 { margin: 0; color: $slate-800; font-size: 13px; font-weight: $font-weight-semibold; white-space: nowrap; }
+.heading-info span { color: $slate-400; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.heading-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.heading-actions :deep(.el-button + .el-button),
+.section-heading > .el-button { margin-left: 0; flex-shrink: 0; }
+
+/* 设备状态行：圆角悬浮条替代通栏下划线，间距更密且层级更轻。 */
+.device-state-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; }
+.device-state-row {
+  width: 100%; min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 3px 10px; border: 0; border-radius: $radius-sm; background: transparent;
+  color: $slate-600; text-align: left; cursor: pointer; transition: background-color $transition-fast;
+}
+.device-state-row:hover:not(.static) { background: $slate-50; }
+.device-state-row:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15); }
+.device-state-row.active { background: rgba(16, 185, 129, 0.1); }
+.device-state-row.active .device-name { color: $primary-700; font-weight: $font-weight-medium; }
+.device-name { font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.state-value { color: $slate-500; font-family: $font-mono; font-size: 12px; line-height: 18px; text-align: right; overflow-wrap: anywhere; }
 .state-value.error { color: $red; }
-.section-actions, .unit-actions { display: flex; align-items: center; gap: 8px; }
-.unit-actions :deep(.el-select) { flex: 1; }
-.selection-section :deep(.el-checkbox-group) { display: flex; flex-direction: column; gap: 4px; }
-.selection-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-bottom: 4px; }
-.selection-section :deep(.el-checkbox) { width: 100%; min-height: 34px; margin-right: 0; }
-.selection-section :deep(.el-checkbox__label) { display: flex; align-items: center; width: 100%; min-width: 0; }
-.device-choice-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.connection-state { font-size: 11px; color: $slate-400; }
-.connection-state.connected { color: $green; }
-.connection-state.error { color: $red; }
-.row-disconnect { margin-left: 4px; flex-shrink: 0; color: $slate-400; }
+
+.section-actions { display: flex; align-items: center; gap: 8px; }
+.section-actions :deep(.el-button) { flex: 1; margin-left: 0; }
+.unit-actions { display: flex; align-items: center; gap: 8px; }
+.unit-actions :deep(.el-select) { flex: 1; min-width: 0; }
+.unit-actions :deep(.el-button) { flex-shrink: 0; }
+
+/* 设备选择清单：整行可点选的紧凑复选行，连接态用轻量徽标区分。 */
+.selection-section :deep(.el-checkbox-group) { display: flex; flex-direction: column; gap: 2px; }
+.selection-section :deep(.el-checkbox) {
+  width: 100%; height: auto; min-height: 32px; margin-right: 0; padding: 3px 8px; border-radius: $radius-sm;
+  transition: background-color $transition-fast;
+}
+.selection-section :deep(.el-checkbox:hover) { background: $slate-50; }
+.selection-section :deep(.el-checkbox__label) { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; font-size: 13px; }
+.device-choice-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: $slate-700; }
+.connection-state {
+  flex-shrink: 0; padding: 1px 8px; border-radius: $radius-full; border: 1px solid transparent;
+  color: $slate-400; font-size: 11px; font-weight: $font-weight-medium; line-height: 16px; white-space: nowrap;
+}
+.connection-state.connected { color: $success-700; background: rgba(34, 197, 94, 0.12); border-color: rgba(34, 197, 94, 0.3); }
+.connection-state.connecting { color: $info-600; background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.25); }
+.connection-state.error { color: $danger-700; background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.25); }
+.row-disconnect { flex-shrink: 0; color: $slate-400; }
 .row-disconnect:hover { color: $red; }
+
 @media (max-width: 600px) {
-  .connection-actions, .unit-actions { align-items: stretch !important; flex-direction: column; }
-  .connection-actions :deep(.el-button), .unit-actions :deep(.el-button) { width: 100%; margin-left: 0; }
+  .drawer-summary, .connection-actions, .unit-actions { align-items: stretch !important; flex-direction: column; }
+  .connection-actions :deep(.el-button), .unit-actions :deep(.el-button) { width: 100%; }
+}
+</style>
+
+<style lang="scss">
+/* Drawer 经 append-to-body teleport 渲染到 body 下，容器级覆盖需使用非作用域样式。 */
+.device-selection-drawer {
+  .el-drawer__header { padding: 14px 20px 12px; color: $slate-800; font-size: 15px; line-height: 22px; }
+  .el-drawer__body { padding: 14px 20px 18px; color: $text-primary; }
 }
 </style>
