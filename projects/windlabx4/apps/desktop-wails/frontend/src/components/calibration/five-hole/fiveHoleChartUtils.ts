@@ -84,11 +84,41 @@ export function drawFiveHoleChartScaffold(
   ctx.restore()
 }
 
+/** 坐标轴范围手动覆盖（与总压校准 Y 轴范围覆盖对齐）：min 必须 < max 且均为有限数才有效。 */
+export interface RangeOverride {
+  min: number
+  max: number
+}
+
+export function isValidRangeOverride(override: RangeOverride | null | undefined): override is RangeOverride {
+  return (
+    !!override &&
+    Number.isFinite(override.min) &&
+    Number.isFinite(override.max) &&
+    override.min < override.max
+  )
+}
+
 export function resolveKAlphaKbetaBounds(
-  data: { x: number; y: number }[]
-): { xMin: number; xMax: number; yMin: number; yMax: number; tickCount: number } {
+  data: { x: number; y: number }[],
+  xOverride?: RangeOverride | null,
+  yOverride?: RangeOverride | null,
+): { xMin: number; xMax: number; yMin: number; yMax: number; tickCount: number; isManual: boolean } {
+  // 手动模式：X/Y 两轴覆盖均有效时直接采用用户边界，不加边距、不做对称化（用户已自定范围）。
+  // 只有单轴覆盖有效时回退自动模式，保证两轴范围策略一致（对称化/等比例在调用方处理）。
+  if (isValidRangeOverride(xOverride) && isValidRangeOverride(yOverride)) {
+    return {
+      xMin: xOverride!.min,
+      xMax: xOverride!.max,
+      yMin: yOverride!.min,
+      yMax: yOverride!.max,
+      tickCount: 4,
+      isManual: true,
+    }
+  }
+
   if (data.length === 0) {
-    return { xMin: -1, xMax: 1, yMin: -1, yMax: 1, tickCount: 4 }
+    return { xMin: -1, xMax: 1, yMin: -1, yMax: 1, tickCount: 4, isManual: false }
   }
 
   const xs = data.map((d) => d.x)
@@ -120,7 +150,7 @@ export function resolveKAlphaKbetaBounds(
   yMin = -yAbsMax
   yMax = yAbsMax
 
-  return { xMin, xMax, yMin, yMax, tickCount: 4 }
+  return { xMin, xMax, yMin, yMax, tickCount: 4, isManual: false }
 }
 
 export function drawNoDataHint(ctx: CanvasRenderingContext2D, width: number, height: number): void {

@@ -1495,6 +1495,16 @@ const zh: Record<string, string> = {
   fh_chart: '图表',
   fh_data: '数据',
 
+  // Kα-Kβ 图坐标范围手动控制工具条（对齐总压校准 Y 轴范围控制）
+  fh_kAlphaRange: 'Kα 范围',
+  fh_kBetaRange: 'Kβ 范围',
+  fh_rangeApply: '应用',
+  fh_rangeAuto: '自动',
+  fh_rangeManualActive: '手动范围',
+  fh_rangeAutoActive: '自动范围',
+  fh_rangeInvalidHint: '请输入有效的坐标范围',
+  fh_rangeMinGeMax: '最小值必须小于最大值',
+
   // 付费模块未解锁锁角标的 aria-label / title
   locked: '付费模块，点击解锁',
 
@@ -3267,6 +3277,16 @@ const en: Record<string, string> = {
   fh_overview: 'Overview',
   fh_chart: 'Chart',
   fh_data: 'Data',
+
+  // Kα-Kβ chart coordinate range manual control toolbar (aligned with total-pressure Y-axis range control)
+  fh_kAlphaRange: 'Kα Range',
+  fh_kBetaRange: 'Kβ Range',
+  fh_rangeApply: 'Apply',
+  fh_rangeAuto: 'Auto',
+  fh_rangeManualActive: 'Manual range',
+  fh_rangeAutoActive: 'Auto range',
+  fh_rangeInvalidHint: 'Please enter valid coordinate ranges',
+  fh_rangeMinGeMax: 'Minimum must be less than maximum',
 
   // Paid module lock badge aria-label / title
   locked: 'Paid module, click to unlock',

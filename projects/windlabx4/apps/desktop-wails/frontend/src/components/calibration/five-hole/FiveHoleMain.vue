@@ -27,6 +27,7 @@ import {
   Navigation2,
 } from '@lucide/vue'
 import UiButton from '@components/ui/UiButton.vue'
+import UiInputNumber from '@components/ui/UiInputNumber.vue'
 import MotionSafetyAlertCard from '@components/shared/MotionSafetyAlertCard.vue'
 import { getImportedFiveHolePoints } from './importedFiveHolePoints'
 
@@ -463,6 +464,40 @@ function groupByBetaKb(
   return Array.from(groups.entries()).map(([beta, data]) => ({ beta, data }))
 }
 
+// ===== Kα-Kβ 图坐标范围手动控制（对齐总压校准 Y 轴范围控制）=====
+// - chartKAlphaBetaRangeOverride 为 null 表示自动模式（对称边界 + 原点居中）
+// - 用户在图表 Tab 工具条输入 Kα/Kβ 四值后点击"应用"才写入 override，避免输入过程频繁校验
+// - 概览页与图表 Tab 共用同一 override：两 Tab 视觉一致
+const chartKAlphaBetaRangeOverride = ref<{ xMin: number; xMax: number; yMin: number; yMax: number } | null>(null)
+const chartKAlphaMinInput = ref<number | null>(null)
+const chartKAlphaMaxInput = ref<number | null>(null)
+const chartKBetaMinInput = ref<number | null>(null)
+const chartKBetaMaxInput = ref<number | null>(null)
+
+function applyKAlphaKbetaRange(): void {
+  const xMin = chartKAlphaMinInput.value
+  const xMax = chartKAlphaMaxInput.value
+  const yMin = chartKBetaMinInput.value
+  const yMax = chartKBetaMaxInput.value
+  if (xMin === null || xMax === null || yMin === null || yMax === null) {
+    feedbackStore.pushToast(t.value.fh_rangeInvalidHint, 'warning')
+    return
+  }
+  if (xMin >= xMax || yMin >= yMax) {
+    feedbackStore.pushToast(t.value.fh_rangeMinGeMax, 'warning')
+    return
+  }
+  chartKAlphaBetaRangeOverride.value = { xMin, xMax, yMin, yMax }
+}
+
+function resetKAlphaKbetaRangeToAuto(): void {
+  chartKAlphaBetaRangeOverride.value = null
+  chartKAlphaMinInput.value = null
+  chartKAlphaMaxInput.value = null
+  chartKBetaMinInput.value = null
+  chartKBetaMaxInput.value = null
+}
+
 // Kα-Kβ 图表 Canvas
 const kAlphaKbetaCanvas = ref<HTMLCanvasElement | null>(null)
 const cptAlphaCanvas = ref<HTMLCanvasElement | null>(null)
@@ -499,31 +534,36 @@ function drawKAlphaKbetaChart() {
   const height = rect.height
   const padding = 42
 
-  // 计算坐标范围（使用对称边界，确保原点居中）
+  // 计算坐标范围：
+  // - 自动模式：resolveKAlphaKbetaBounds 对称边界 + 原点居中，再等比例扩张保持横纵像素/数据单位一致
+  // - 手动模式（用户在工具条输入 Kα/Kβ 范围）：直接采用用户边界，不做等比例扩张
   const points = calibrationStore.dataPoints.filter(isFiveHoleDataPoint)
-  let xMin = -1.0, xMax = 1.0, yMin = -1.0, yMax = 1.0, tickCount = 4
-  if (points.length > 0) {
-    const scatterData = points.map((p) => ({ x: p.coefficients.Kalpha, y: p.coefficients.Kbeta }))
-    const bounds = resolveKAlphaKbetaBounds(scatterData)
-    xMin = bounds.xMin; xMax = bounds.xMax
-    yMin = bounds.yMin; yMax = bounds.yMax
-    tickCount = bounds.tickCount
-  }
-
-  // 等比例：图表区域不变，扩展较宽方向的数据范围，使横纵像素/数据单位一致
+  const override = chartKAlphaBetaRangeOverride.value
+  const scatterData = points.map((p) => ({ x: p.coefficients.Kalpha, y: p.coefficients.Kbeta }))
+  const bounds = resolveKAlphaKbetaBounds(
+    scatterData,
+    override ? { min: override.xMin, max: override.xMax } : null,
+    override ? { min: override.yMin, max: override.yMax } : null,
+  )
+  let xMin = bounds.xMin, xMax = bounds.xMax, yMin = bounds.yMin, yMax = bounds.yMax, tickCount = bounds.tickCount
+  const isManualRange = bounds.isManual
   const plotWidth = width - 2 * padding
   const plotHeight = height - 2 * padding
-  const aspectRatio = plotWidth / plotHeight
-  const xRange0 = xMax - xMin || 1
-  const yRange0 = yMax - yMin || 1
-  const xCenter = (xMin + xMax) / 2
-  const yCenter = (yMin + yMax) / 2
-  if (aspectRatio > xRange0 / yRange0) {
-    const newXRange = yRange0 * aspectRatio
-    xMin = xCenter - newXRange / 2; xMax = xCenter + newXRange / 2
-  } else {
-    const newYRange = xRange0 / aspectRatio
-    yMin = yCenter - newYRange / 2; yMax = yCenter + newYRange / 2
+
+  // 等比例（仅自动模式）：图表区域不变，扩展较宽方向的数据范围，使横纵像素/数据单位一致
+  if (!isManualRange) {
+    const aspectRatio = plotWidth / plotHeight
+    const xRange0 = xMax - xMin || 1
+    const yRange0 = yMax - yMin || 1
+    const xCenter = (xMin + xMax) / 2
+    const yCenter = (yMin + yMax) / 2
+    if (aspectRatio > xRange0 / yRange0) {
+      const newXRange = yRange0 * aspectRatio
+      xMin = xCenter - newXRange / 2; xMax = xCenter + newXRange / 2
+    } else {
+      const newYRange = xRange0 / aspectRatio
+      yMin = yCenter - newYRange / 2; yMax = yCenter + newYRange / 2
+    }
   }
   const xRange = xMax - xMin
   const yRange = yMax - yMin
@@ -1317,7 +1357,26 @@ function getChannelUnit(role: string): string {
           <div v-if="activeTab === 'chart'" class="flex-1 overflow-hidden p-4">
             <div class="flex h-full flex-col gap-3 min-h-0">
               <div class="flex-1 flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 shadow-[var(--shadow-panel)] min-h-0">
-                <h3 class="mb-2 text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">{{ t.fh_kAlphaKbetaSpace }}</h3>
+                <!-- Kα-Kβ 坐标范围手动控制工具条（对齐总压校准 Y 轴范围控制）：
+                     Kα/Kβ 四值输入 + 应用按钮写入 override；自动按钮清空回退对称自动范围；
+                     概览页与图表 Tab 共用同一组设置，保证两 Tab 视觉一致 -->
+                <div class="mb-2 flex flex-shrink-0 flex-wrap items-center justify-between gap-2">
+                  <h3 class="text-sm font-semibold text-[var(--text-primary)] flex-shrink-0">{{ t.fh_kAlphaKbetaSpace }}</h3>
+                  <div class="flex items-center gap-2 text-xs flex-wrap">
+                    <span class="text-[var(--text-muted)]">{{ t.fh_kAlphaRange }}</span>
+                    <UiInputNumber v-model="chartKAlphaMinInput" :step="0.1" class="w-24" />
+                    <span class="text-[var(--text-muted)]">~</span>
+                    <UiInputNumber v-model="chartKAlphaMaxInput" :step="0.1" class="w-24" />
+                    <span class="text-[var(--text-muted)]">{{ t.fh_kBetaRange }}</span>
+                    <UiInputNumber v-model="chartKBetaMinInput" :step="0.1" class="w-24" />
+                    <span class="text-[var(--text-muted)]">~</span>
+                    <UiInputNumber v-model="chartKBetaMaxInput" :step="0.1" class="w-24" />
+                    <UiButton size="sm" variant="primary" @click="applyKAlphaKbetaRange">{{ t.fh_rangeApply }}</UiButton>
+                    <UiButton size="sm" variant="secondary" :disabled="chartKAlphaBetaRangeOverride === null" @click="resetKAlphaKbetaRangeToAuto">{{ t.fh_rangeAuto }}</UiButton>
+                    <span v-if="chartKAlphaBetaRangeOverride" class="text-[var(--accent-success)]">{{ t.fh_rangeManualActive }}</span>
+                    <span v-else class="text-[var(--text-muted)]">{{ t.fh_rangeAutoActive }}</span>
+                  </div>
+                </div>
                 <div class="flex-1 min-h-0">
                   <canvas ref="kAlphaKbetaCanvas" class="h-full w-full"></canvas>
                 </div>
