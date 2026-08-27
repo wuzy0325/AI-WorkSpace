@@ -139,22 +139,6 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column
-            label="采集时间"
-            width="100"
-            class-name="col-time"
-          >
-            <template #default="{ row }">
-              <span
-                v-if="row.collectTime"
-                class="time-display"
-              >{{ formatTime(row.collectTime) }}</span>
-              <span
-                v-else
-                class="time-display empty"
-              >--:--:--</span>
-            </template>
-          </el-table-column>
         </el-table>
       </div>
     </div>
