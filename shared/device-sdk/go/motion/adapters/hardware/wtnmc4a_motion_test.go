@@ -6,8 +6,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -717,5 +719,124 @@ func TestWTNMC4AEmergencyStopFailureLatchesControllerAndTracksAxes(t *testing.T)
 	}
 	if err := ctrl.MoveBy(context.Background(), core.AxisX, 1); err == nil {
 		t.Fatal("latched emergency stop allowed a subsequent move")
+	}
+}
+
+// TestWTNMC4APreflightFailureRejectsBeforeDLL verifies the TCP preflight runs
+// before any DLL load/create path when the controller is unreachable.
+func TestWTNMC4APreflightFailureRejectsBeforeDLL(t *testing.T) {
+	ctrl := NewWTNMC4AMotionController(wtnmc4aTestProfile())
+	ctrl.profile.Address = "192.168.3.235"
+
+	var gotAddr string
+	var gotTimeout time.Duration
+	origDial := dialTCP
+	dialTCP = func(network, addr string, timeout time.Duration) (net.Conn, error) {
+		gotAddr = addr
+		gotTimeout = timeout
+		return nil, fmt.Errorf("injected dial failure")
+	}
+	t.Cleanup(func() { dialTCP = origDial })
+
+	err := ctrl.Connect(context.Background())
+	if err == nil {
+		t.Fatal("expected Connect to fail when preflight dial fails")
+	}
+	if want := "192.168.3.235:5000"; gotAddr != want {
+		t.Fatalf("preflight dial address = %q, want %q", gotAddr, want)
+	}
+	if gotTimeout != preflightTimeout {
+		t.Fatalf("preflight dial timeout = %v, want %v", gotTimeout, preflightTimeout)
+	}
+	if ctrl.handle != 0 {
+		t.Fatalf("handle = %x, want 0 (no DLL handle should be created)", ctrl.handle)
+	}
+	if ctrl.status.Connected {
+		t.Fatal("controller must not be marked connected after preflight failure")
+	}
+	if ctrl.status.LastError == "" {
+		t.Fatal("LastError must be set after preflight failure")
+	}
+	if ctrl.ffi != nil {
+		t.Fatal("ffiGate must not be created before preflight passes")
+	}
+}
+
+// TestWTNMC4APreflightSuccessProceeds verifies the preflight dial address uses
+// defaultPort (5000) even when profile.Port differs, and that a passing dial
+// does not by itself reject the connection.
+func TestWTNMC4APreflightUsesDefaultPort(t *testing.T) {
+	ctrl := NewWTNMC4AMotionController(wtnmc4aTestProfile())
+	ctrl.profile.Address = "10.0.0.7"
+	ctrl.profile.Port = 9999
+
+	var gotAddr string
+	origDial := dialTCP
+	dialTCP = func(network, addr string, timeout time.Duration) (net.Conn, error) {
+		gotAddr = addr
+		return nil, fmt.Errorf("injected dial failure")
+	}
+	t.Cleanup(func() { dialTCP = origDial })
+
+	_ = ctrl.Connect(context.Background())
+	if want := "10.0.0.7:5000"; gotAddr != want {
+		t.Fatalf("preflight dial address = %q, want %q (must use defaultPort, not profile.Port)", gotAddr, want)
+	}
+}
+
+// stubSharedDLL 使 loadWTNMC4AProcs 短路返回空 procs（不加载真实 DLL），
+// 并注册 t.Cleanup 恢复包级共享状态。仅供测试驱动 Connect 的 FFI 失败路径。
+func stubSharedDLL(t *testing.T) {
+	t.Helper()
+	wtnmc4aSharedDLL.mu.Lock()
+	oldDLL, oldProcs := wtnmc4aSharedDLL.dll, wtnmc4aSharedDLL.procs
+	wtnmc4aSharedDLL.dll = &syscall.DLL{Name: "stub"}
+	wtnmc4aSharedDLL.procs = &dllProcs{}
+	wtnmc4aSharedDLL.mu.Unlock()
+	t.Cleanup(func() {
+		wtnmc4aSharedDLL.mu.Lock()
+		wtnmc4aSharedDLL.dll, wtnmc4aSharedDLL.procs = oldDLL, oldProcs
+		wtnmc4aSharedDLL.mu.Unlock()
+	})
+}
+
+// TestWTNMC4AHandshakeFailureStopsBeforeSetXX verifies the existing fail-fast
+// contract: when the post-DEV_CreateA handshake (getRR1) fails, Connect cleans
+// up and returns an error WITHOUT running cacheAxisSpeedsLocked (setSV/V/A/Dec).
+// The injected devCreateA seam returns a valid handle, and readRR1 fails; if
+// any setXX ran against the empty stub procs, it would dereference a nil
+// *syscall.Proc and panic the test.
+func TestWTNMC4AHandshakeFailureStopsBeforeSetXX(t *testing.T) {
+	stubSharedDLL(t)
+
+	ctrl := NewWTNMC4AMotionController(wtnmc4aTestProfile())
+	ctrl.profile.Address = "192.168.3.235"
+
+	origDial := dialTCP
+	dialTCP = func(network, addr string, timeout time.Duration) (net.Conn, error) {
+		client, _ := net.Pipe()
+		return client, nil
+	}
+	t.Cleanup(func() { dialTCP = origDial })
+
+	ctrl.devCreateA = func(ipPtr *byte, sendTimeout, recvTimeout uintptr) uintptr {
+		return 0x1 // 有效句柄
+	}
+	ctrl.readRR1 = func(handle uintptr, axis int) (rr1Status, error) {
+		return rr1Status{}, fmt.Errorf("injected handshake failure")
+	}
+
+	err := ctrl.Connect(context.Background())
+	if err == nil {
+		t.Fatal("expected Connect to fail when handshake (getRR1) fails")
+	}
+	if ctrl.handle != 0 {
+		t.Fatalf("handle = %x, want 0 (cleanup must release handle)", ctrl.handle)
+	}
+	if ctrl.status.Connected {
+		t.Fatal("controller must not be marked connected after handshake failure")
+	}
+	if ctrl.status.LastError == "" {
+		t.Fatal("LastError must be set after handshake failure")
 	}
 }

@@ -1,17 +1,19 @@
-go 1.26.1
+go 1.26.2
+
+toolchain go1.26.2
 
 use (
-	./projects/wista/apps/desktop-wails
-	./projects/probe-interpolator/apps/desktop-wails
-	programs/p1604-unit-diag
-	projects/wispa/apps/desktop-wails
-	projects/five-hole-interpolator/apps/desktop-wails
 	./projects/1604Cal
+	./projects/probe-interpolator/apps/desktop-wails
+	./projects/wista/apps/desktop-wails
+	programs/p1604-unit-diag
+	projects/five-hole-interpolator/apps/desktop-wails
 	projects/motion-controller/apps/desktop-wails
 	projects/motion-controller/services/api-go
 	projects/three-hole-interpolator/apps/desktop-wails
 	projects/windlabx4/apps/desktop-wails
 	projects/windlabx4/services/api-go
+	projects/wispa/apps/desktop-wails
 	shared/algorithms/go/fivehole
 	shared/algorithms/go/sevenhole
 	shared/device-sdk/go

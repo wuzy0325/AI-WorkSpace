@@ -1,6 +1,6 @@
 module windlabx4/services/api-go
 
-go 1.25.0
+go 1.26.2
 
 require (
 	ai-workspace/shared/algorithms/go/fivehole v0.0.0
@@ -10,11 +10,15 @@ require (
 	shared.local/motion-control/go v0.0.0
 )
 
-require golang.org/x/text v0.40.0
+require (
+	github.com/lxn/walk v0.0.0-20210112085537-c389da54e794
+	golang.org/x/text v0.40.0
+)
 
 require (
-	github.com/lxn/walk v0.0.0-20210112085537-c389da54e794 // indirect
+	github.com/creack/goselect v0.1.2 // indirect
 	github.com/lxn/win v0.0.0-20210218163916-a377121e959e // indirect
+	go.bug.st/serial v1.6.2 // indirect
 	gopkg.in/Knetic/govaluate.v3 v3.0.0 // indirect
 )
 

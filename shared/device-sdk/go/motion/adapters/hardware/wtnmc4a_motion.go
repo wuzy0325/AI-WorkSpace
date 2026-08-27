@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -52,7 +54,20 @@ const (
 	// 刷新限位/报警/归零等慢变信号，中间轮次仅 readLP 读位置。
 	fullStatusInterval   = 500 * time.Millisecond
 	positionReadAttempts = 3
+
+	// preflightTimeout 是 Connect 前 TCP 预检的超时。
+	// 控制器不可达时快速失败，避免 DEV_CreateA 在损坏链路上留下半初始化句柄；
+	// 与 ffiCallTimeout(200ms) 形成两级防护。
+	preflightTimeout = 2 * time.Second
 )
+
+// dialTCP 是 Connect 前 TCP 预检的包级 seam。
+// 生产使用 net.DialTimeout；测试替换后须 t.Cleanup 恢复。
+// 用 seam 而非直接调用，是为了在不依赖真实网络的前提下稳定、快速地
+// 模拟预检失败，并断言预检确实在进入 DLL 前拦截。
+var dialTCP = func(network, addr string, timeout time.Duration) (net.Conn, error) {
+	return net.DialTimeout(network, addr, timeout)
+}
 
 type rr1Status struct {
 	CMPP, CMPM, ASND, CNST, DSND bool
@@ -208,6 +223,9 @@ type WTNMC4AMotionController struct {
 	readRR1   func(handle uintptr, axis int) (rr1Status, error)
 	startMove func(axis int, pulse int32) error
 	stopAxis  func(handle uintptr, axis int) error
+	// devCreateA 是 DEV_CreateA 的测试 seam。nil 时走 procs.devCreateA；
+	// 测试注入可绕过真实 DLL 验证"握手失败后不再 setXX"的 fail-fast 路径。
+	devCreateA func(ipPtr *byte, sendTimeout, recvTimeout uintptr) uintptr
 
 	// 每 500ms 做一次完整状态（含 getRR1Status），刷新限位/报警/归零等慢变信号。
 	lastFullStatusAt time.Time // 上次完整状态时间
@@ -366,14 +384,31 @@ func (c *WTNMC4AMotionController) ApplyConfig(ctx context.Context, profile core.
 }
 
 func (c *WTNMC4AMotionController) Connect(ctx context.Context) error {
+	// 预检在 ioMu 锁内、mu 锁外执行：2s 网络等待不长时间阻塞状态读锁，
+	// 同时与 ApplyConfig（持 mu 改 profile）串行，避免 TOCTOU。
 	c.ioMu.Lock()
 	defer c.ioMu.Unlock()
-	c.mu.Lock()
-	defer c.mu.Unlock()
 
+	// 短持 mu 复制 address 快照后释放，避免预检期间读取到被并发修改的 profile。
+	c.mu.Lock()
 	if c.status.Connected && c.handle != 0 {
+		c.mu.Unlock()
 		return nil
 	}
+	address := c.profile.Address
+	c.mu.Unlock()
+
+	// TCP 预检：控制器不可达时快速失败，不进 DLL。
+	// DEV_CreateA 只接收 IP，端口由 DLL 内部固定为 defaultPort(5000)。
+	if err := c.preflightReachable(address); err != nil {
+		c.mu.Lock()
+		c.status.LastError = err.Error()
+		c.mu.Unlock()
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	// 确保重连时不会残留上一轮的DLL句柄或设备句柄
 	c.cleanupConnectionLocked()
@@ -387,10 +422,10 @@ func (c *WTNMC4AMotionController) Connect(ctx context.Context) error {
 	c.dll = dll
 	c.procs = *procs
 
-	ipPtr, err := syscall.BytePtrFromString(c.profile.Address)
+	ipPtr, err := syscall.BytePtrFromString(address)
 	if err != nil {
 		c.status.LastError = fmt.Sprintf("无效的IP地址: %v", err)
-		return fmt.Errorf("WTNMC4A IP地址无效 %q: %w", c.profile.Address, err)
+		return fmt.Errorf("WTNMC4A IP地址无效 %q: %w", address, err)
 	}
 	// 先创建 ffiGate：devCreateA 是 FFI，可能被 LSP 卡死，必须走 gate 受超时保护。
 	// 若已存在（异常路径残留），先关闭重建，避免 worker 堆积。
@@ -400,6 +435,10 @@ func (c *WTNMC4AMotionController) Connect(ctx context.Context) error {
 	c.ffi = newFFIGate()
 	var devRet uintptr
 	err = c.doFFI(func() {
+		if c.devCreateA != nil {
+			devRet = c.devCreateA(ipPtr, uintptr(defaultSendTO), uintptr(defaultRecvTO))
+			return
+		}
 		devRet, _, _ = c.procs.devCreateA.Call(
 			uintptr(unsafe.Pointer(ipPtr)),
 			uintptr(defaultSendTO),
@@ -409,15 +448,15 @@ func (c *WTNMC4AMotionController) Connect(ctx context.Context) error {
 	if err != nil {
 		c.cleanupConnectionLocked()
 		c.status.LastError = err.Error()
-		return fmt.Errorf("WTNMC4A 连接 %s:%d 失败: %w", c.profile.Address, c.profile.Port, err)
+		return fmt.Errorf("WTNMC4A 连接 %s:%d 失败: %w", address, c.profile.Port, err)
 	}
 	if devRet == 0 || devRet == ^uintptr(0) {
 		c.cleanupConnectionLocked()
-		c.status.LastError = fmt.Sprintf("创建设备句柄失败: %s:%d", c.profile.Address, c.profile.Port)
-		return fmt.Errorf("WTNMC4A 连接 %s:%d 失败: DEV_CreateA 返回失败句柄 0x%x", c.profile.Address, c.profile.Port, devRet)
+		c.status.LastError = fmt.Sprintf("创建设备句柄失败: %s:%d", address, c.profile.Port)
+		return fmt.Errorf("WTNMC4A 连接 %s:%d 失败: DEV_CreateA 返回失败句柄 0x%x", address, c.profile.Port, devRet)
 	}
 	c.handle = devRet
-	slog.Info("WTNMC4A DEV_CreateA returned handle", "address", c.profile.Address, "handle", fmt.Sprintf("0x%x", devRet))
+	slog.Info("WTNMC4A DEV_CreateA returned handle", "address", address, "handle", fmt.Sprintf("0x%x", devRet))
 
 	if err := c.verifyConnectionLocked(); err != nil {
 		c.cleanupConnectionLocked()
@@ -437,6 +476,20 @@ func (c *WTNMC4AMotionController) Connect(ctx context.Context) error {
 	c.status.EmergencyStopped = false
 	c.status.LastError = ""
 	c.stateVersion++
+	return nil
+}
+
+// preflightReachable 在进入 DLL 前做 TCP 预检。
+// 控制器不可达时快速失败，避免 DEV_CreateA 在损坏链路上留下半初始化句柄。
+// 注意：WTNMC4A_DEV_CreateA 只接收 IP，端口由 DLL 内部固定为 defaultPort(5000)，
+// 因此预检必须探测 defaultPort，不能用 profile.Port（该字段对 WTNMC4A 连接无意义）。
+func (c *WTNMC4AMotionController) preflightReachable(address string) error {
+	addr := net.JoinHostPort(address, strconv.Itoa(defaultPort))
+	conn, err := dialTCP("tcp", addr, preflightTimeout)
+	if err != nil {
+		return fmt.Errorf("WTNMC4A 控制器预检失败 %s: %w", addr, err)
+	}
+	_ = conn.Close()
 	return nil
 }
 
@@ -1286,17 +1339,10 @@ func (c *WTNMC4AMotionController) verifyConnectionLocked() error {
 	if len(c.profile.Axes) > 0 {
 		axisNum = wtnmc4aAxisNum(c.profile.Axes[0].Name)
 	}
-	// SDK 写入 64 字节结构体，必须用匹配的缓冲区，避免越界破坏栈内存
-	var raw wtnmc4aRR1Struct
-	var ret uintptr
-	err := c.doFFI(func() {
-		ret, _, _ = c.procs.getRR1.Call(c.handle, uintptr(axisNum), uintptr(unsafe.Pointer(&raw)))
-	})
-	if err != nil {
+	// 复用 getRR1Status（含 c.readRR1 seam），便于测试注入握手失败路径；
+	// 失败即由 Connect 触发 cleanup 并停止后续 setXX 调用。
+	if _, err := c.getRR1Status(c.handle, axisNum); err != nil {
 		return fmt.Errorf("WTNMC4A 连接 %s 验证失败: %w", c.profile.Address, err)
-	}
-	if ret == 0 {
-		return fmt.Errorf("WTNMC4A 连接 %s 验证失败: GetRR1Status 无响应", c.profile.Address)
 	}
 	return nil
 }
@@ -1307,8 +1353,9 @@ func (c *WTNMC4AMotionController) cleanupConnectionLocked() {
 		_ = c.doFFI(func() {
 			c.procs.devRelease.Call(c.handle)
 		})
-		c.handle = 0
 	}
+	// handle 无条件清零：即使 devRelease 缺失/卡死，也不保留悬空句柄。
+	c.handle = 0
 	// 不在此处卸载 DLL（见 loadWTNMC4AProcs 注释）。
 	c.status.Connected = false
 }
