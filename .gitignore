@@ -14,6 +14,18 @@ projects/*/apps/desktop-wails/build/windows/*
 !projects/*/apps/desktop-wails/build/windows/installer/
 projects/*/apps/desktop-wails/build/windows/installer/*
 !projects/*/apps/desktop-wails/build/windows/installer/project.nsi
+# 1604Cal（Wails v2 布局，build/ 在项目根目录）：图标与 Windows 资源配置入版本控制，
+# 防止被 wails build 的默认图标覆盖后无法恢复（2026-08 图标丢失事故的防回归规则）
+!projects/1604Cal/build/
+projects/1604Cal/build/*
+!projects/1604Cal/build/appicon.png
+!projects/1604Cal/build/appicon.svg
+!projects/1604Cal/build/appicon_*.png
+!projects/1604Cal/build/windows/
+projects/1604Cal/build/windows/*
+!projects/1604Cal/build/windows/icon.ico
+!projects/1604Cal/build/windows/info.json
+!projects/1604Cal/build/windows/wails.exe.manifest
 target/
 *.exe
 *.syso
