@@ -1,0 +1,353 @@
+/**
+ * 设计系统变量定义
+ * @description 清爽薄荷绿白风工业计量系统配色方案
+ * @version 2.1.0
+ */
+
+// ============================================
+// 主色调系统 - 薄荷绿
+// ============================================
+
+// 主色 - 薄荷绿
+$primary-50: #ecfdf5;
+$primary-100: #d1fae5;
+$primary-200: #a7f3d0;
+$primary-300: #6ee7b7;
+$primary-400: #34d399;
+$primary-500: #10b981;
+$primary-600: #059669;
+$primary-700: #047857;
+$primary-800: #065f46;
+$primary-900: #064e3b;
+
+// 辅助色 - 青绿 teal
+$accent-50: #f0fdfa;
+$accent-100: #ccfbf1;
+$accent-200: #99f6e4;
+$accent-300: #5eead4;
+$accent-400: #2dd4bf;
+$accent-500: #14b8a6;
+$accent-600: #0d9488;
+$accent-700: #0f766e;
+$accent-800: #115e59;
+$accent-900: #134e4a;
+
+// ============================================
+// 语义化颜色
+// ============================================
+
+// 成功色 - 绿色 (匹配 pencil 设计)
+$success-50: #f0fdf4;
+$success-100: #dcfce7;
+$success-200: #bbf7d0;
+$success-300: #86efac;
+$success-400: #4ade80;
+$success-500: #22c55e;
+$success-600: #16a34a;
+$success-700: #15803d;
+$success-800: #166534;
+$success-900: #14532d;
+
+// 警告色 - 琥珀色 (匹配 pencil 设计)
+$warning-50: #fffbeb;
+$warning-100: #fef3c7;
+$warning-200: #fde68a;
+$warning-300: #fcd34d;
+$warning-400: #fbbf24;
+$warning-500: #f59e0b;
+$warning-600: #d97706;
+$warning-700: #b45309;
+$warning-800: #92400e;
+$warning-900: #78350f;
+
+// 危险色 - 红色 (匹配 pencil 设计)
+$danger-50: #fef2f2;
+$danger-100: #fee2e2;
+$danger-200: #fecaca;
+$danger-300: #fca5a5;
+$danger-400: #f87171;
+$danger-500: #ef4444;
+$danger-600: #dc2626;
+$danger-700: #b91c1c;
+$danger-800: #991b1b;
+$danger-900: #7f1d1d;
+
+// 信息色 - 青蓝
+$info-50: #eff6ff;
+$info-100: #dbeafe;
+$info-200: #bfdbfe;
+$info-300: #93c5fd;
+$info-400: #60a5fa;
+$info-500: #3b82f6;
+$info-600: #2563eb;
+$info-700: #1d4ed8;
+$info-800: #1e40af;
+$info-900: #1e3a8a;
+
+// ============================================
+// 中性色系统 - 柔和灰
+// ============================================
+
+// 浅色主题背景
+$neutral-950: #030712;
+$neutral-900: #111827;
+$neutral-800: #1f2937;
+$neutral-700: #374151;
+$neutral-600: #4b5563;
+$neutral-500: #6b7280;
+$neutral-400: #9ca3af;
+$neutral-300: #d1d5db;
+$neutral-200: #e5e7eb;
+$neutral-100: #f3f4f6;
+$neutral-50: #f9fafb;
+
+// ============================================
+// 旧版 slate 变量兼容映射
+// ============================================
+
+// 向下兼容：部分组件仍引用 $slate-* 变量
+$slate-50: $neutral-50;
+$slate-100: $neutral-100;
+$slate-200: $neutral-200;
+$slate-300: $neutral-300;
+$slate-400: $neutral-400;
+$slate-500: $neutral-500;
+$slate-600: $neutral-600;
+$slate-700: $neutral-700;
+$slate-800: $neutral-800;
+$slate-900: $neutral-900;
+
+// 向下兼容：部分组件仍引用 $mint-* 变量（mint = primary）
+$mint: $primary-500;
+$mint-light: $primary-400;
+$mint-dark: $primary-600;
+
+// 向下兼容：简单颜色名
+$red: $danger-500;
+$amber: $warning-500;
+$green: $success-500;
+$blue: $info-500;
+
+// ============================================
+// 主题变量映射
+// ============================================
+
+// 主色调快捷引用
+$primary-color: $primary-500;
+$primary-color-light: $primary-400;
+$primary-color-dark: $primary-600;
+
+// 语义色快捷引用
+$success-color: $success-500;
+$warning-color: $warning-500;
+$danger-color: $danger-500;
+$info-color: $info-500;
+
+// ============================================
+// 文字颜色系统
+// ============================================
+
+// 浅色背景上的文字 - 清爽薄荷绿白风
+$text-primary: #1f2937;
+$text-secondary: #6b7280;
+$text-tertiary: #9ca3af;
+$text-muted: #9ca3af;
+$text-disabled: #d1d5db;
+$text-placeholder: #9ca3af;
+$text-inverse: #ffffff;
+
+// 深色背景上的文字（用于按钮/强调背景）
+$text-on-light: #1f2937;
+$text-on-light-secondary: #4b5563;
+$text-on-light-tertiary: #6b7280;
+
+// ============================================
+// 背景颜色系统
+// ============================================
+
+// 页面背景
+$bg-page: #ffffff;
+$bg-page-gradient: linear-gradient(135deg, #ffffff 0%, #f6f7f6 50%, #f0f4f1 100%);
+
+// 卡片背景
+$bg-card: #ffffff;
+$bg-card-hover: #f9fafb;
+$bg-card-active: #f3f4f6;
+
+// 表面背景
+$bg-surface: #f6f7f6;
+$bg-surface-elevated: #ffffff;
+
+// 输入框背景
+$bg-input: #ffffff;
+
+// 侧边栏背景
+$sidebar-bg: #f6f7f6;
+$sidebar-bg-gradient: linear-gradient(180deg, #f6f7f6 0%, #f0f4f1 100%);
+
+// ============================================
+// 边框颜色系统
+// ============================================
+
+$border-color: #e5e7eb;
+$border-color-light: #f3f4f6;
+$border-color-strong: #d1d5db;
+$border-color-primary: rgba(16, 185, 129, 0.5);
+
+// 边框快捷引用
+$border-primary: #e5e7eb;
+$border-secondary: rgba(16, 185, 129, 0.4);
+
+// ============================================
+// 间距系统 - 8px基准
+// ============================================
+
+$spacing-0: 0;
+$spacing-1: 4px;
+$spacing-2: 8px;
+$spacing-3: 12px;
+$spacing-4: 16px;
+$spacing-5: 20px;
+$spacing-6: 24px;
+$spacing-8: 32px;
+$spacing-10: 40px;
+$spacing-12: 48px;
+$spacing-16: 64px;
+$spacing-20: 80px;
+$spacing-24: 96px;
+
+// 旧版兼容
+$spacing-xs: $spacing-1;
+$spacing-sm: $spacing-2;
+$spacing-md: $spacing-4;
+$spacing-lg: $spacing-6;
+$spacing-xl: $spacing-8;
+
+// ============================================
+// 圆角系统
+// ============================================
+
+$radius-none: 0;
+$radius-sm: 4px;
+$radius-md: 8px;
+$radius-lg: 12px;
+$radius-xl: 16px;
+$radius-2xl: 24px;
+$radius-full: 9999px;
+
+// 旧版兼容
+$border-radius: $radius-md;
+$border-radius-sm: $radius-sm;
+$border-radius-md: $radius-md;
+$border-radius-lg: $radius-lg;
+$border-radius-xl: $radius-xl;
+$border-radius-2xl: $radius-2xl;
+$border-radius-full: $radius-full;
+
+// ============================================
+// 阴影系统 - 科技感光晕
+// ============================================
+
+// 基础阴影 - 柔和浅阴影
+$shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+$shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+$shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
+$shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+
+// 光晕阴影 - 薄荷绿
+$shadow-glow-sm: 0 0 8px rgba(16, 185, 129, 0.25);
+$shadow-glow-md: 0 0 16px rgba(16, 185, 129, 0.3);
+$shadow-glow-lg: 0 0 24px rgba(16, 185, 129, 0.35);
+$shadow-glow-success: 0 0 12px rgba(34, 197, 94, 0.3);
+$shadow-glow-warning: 0 0 12px rgba(245, 158, 11, 0.3);
+$shadow-glow-danger: 0 0 12px rgba(239, 68, 68, 0.3);
+
+// 卡片阴影
+$shadow-card: 
+    0 1px 3px rgba(0, 0, 0, 0.07),
+    0 1px 2px rgba(0, 0, 0, 0.05);
+
+$shadow-card-hover:
+    0 10px 15px -3px rgba(0, 0, 0, 0.08),
+    0 4px 6px -4px rgba(0, 0, 0, 0.05),
+    0 0 20px rgba(16, 185, 129, 0.1);
+
+// ============================================
+// 尺寸系统
+// ============================================
+
+// 侧边栏
+$sidebar-width: 180px;
+$sidebar-collapsed-width: 52px;
+
+// 头部
+$header-height: 64px;
+
+// 卡片
+$card-padding: $spacing-6;
+
+// ============================================
+// 字体系统
+// ============================================
+
+// 字体族
+$font-family-base: 'DM Sans', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+$font-family-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+
+// 向下兼容：部分组件仍引用 $font-sans 和 $font-mono
+$font-sans: $font-family-base;
+$font-mono: $font-family-mono;
+
+// 字体大小
+$font-size-xs: 12px;
+$font-size-sm: 13px;
+$font-size-base: 14px;
+$font-size-lg: 16px;
+$font-size-xl: 18px;
+$font-size-2xl: 20px;
+$font-size-3xl: 24px;
+$font-size-4xl: 30px;
+$font-size-5xl: 36px;
+
+// 字重
+$font-weight-normal: 400;
+$font-weight-medium: 500;
+$font-weight-semibold: 600;
+$font-weight-bold: 700;
+
+// 行高
+$line-height-tight: 1.25;
+$line-height-normal: 1.5;
+$line-height-relaxed: 1.75;
+
+// 字间距
+$letter-spacing-tight: -0.025em;
+$letter-spacing-normal: 0;
+$letter-spacing-wide: 0.025em;
+$letter-spacing-wider: 0.05em;
+
+// ============================================
+// 过渡动画
+// ============================================
+
+$transition-fast: 150ms ease;
+$transition-base: 250ms ease;
+$transition-normal: 250ms ease;
+$transition-slow: 350ms ease;
+
+// ============================================
+// Z-index层级
+// ============================================
+
+$z-dropdown: 1000;
+$z-sticky: 1020;
+$z-fixed: 1030;
+$z-modal-backdrop: 1040;
+$z-modal: 1050;
+$z-popover: 1060;
+$z-tooltip: 1070;
+$z-toast: 1080;
+
+// ============================================
+// 玻璃拟态效果已移除，遵循DESIGN.md禁止glassmorphism规定
+// ============================================

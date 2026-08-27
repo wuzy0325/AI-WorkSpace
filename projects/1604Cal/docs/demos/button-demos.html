@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>按钮风格 Demo</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1612;
+      min-height: 100vh;
+      padding: 40px;
+      color: #e8e2d9;
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 50px;
+      font-weight: 300;
+      letter-spacing: 2px;
+      color: #c9a45f;
+    }
+
+    .section {
+      margin-bottom: 60px;
+      padding: 30px;
+      background: #252019;
+      border-radius: 16px;
+      border: 1px solid rgba(201, 164, 95, 0.1);
+    }
+
+    .section-title {
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      color: #8a7a6a;
+      margin-bottom: 25px;
+    }
+
+    .button-row {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    /* ===== 风格 A: 新拟态 (Neumorphism) ===== */
+    .btn-neumorphic {
+      padding: 14px 32px;
+      border: none;
+      border-radius: 12px;
+      background: #252019;
+      color: #c9a45f;
+      font-size: 14px;
+      cursor: pointer;
+      box-shadow:
+        6px 6px 12px #1a1612,
+        -6px -6px 12px #332a22;
+      transition: all 0.3s ease;
+    }
+
+    .btn-neumorphic:hover {
+      box-shadow:
+        8px 8px 16px #1a1612,
+        -8px -8px 16px #332a22;
+      color: #d4b87a;
+    }
+
+    .btn-neumorphic:active {
+      box-shadow:
+        inset 4px 4px 8px #1a1612,
+        inset -4px -4px 8px #332a22;
+    }
+
+    .btn-neumorphic.primary {
+      background: linear-gradient(145deg, #d4b87a, #b08d4e);
+      color: #1a1612;
+      font-weight: 600;
+    }
+
+    /* ===== 风格 B: 玻璃拟态 (Glassmorphism) ===== */
+    .btn-glass {
+      padding: 14px 32px;
+      border: 1px solid rgba(201, 164, 95, 0.3);
+      border-radius: 12px;
+      background: rgba(201, 164, 95, 0.08);
+      backdrop-filter: blur(10px);
+      color: #c9a45f;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .btn-glass:hover {
+      background: rgba(201, 164, 95, 0.15);
+      border-color: rgba(201, 164, 95, 0.5);
+      box-shadow: 0 4px 20px rgba(201, 164, 95, 0.2);
+    }
+
+    .btn-glass.primary {
+      background: rgba(201, 164, 95, 0.2);
+      color: #d4b87a;
+    }
+
+    /* ===== 风格 C: 极简线条 ===== */
+    .btn-minimal {
+      padding: 14px 32px;
+      border: 1px solid #4a3d32;
+      border-radius: 4px;
+      background: transparent;
+      color: #a09080;
+      font-size: 14px;
+      cursor: pointer;
+      letter-spacing: 1px;
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .btn-minimal::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: #c9a45f;
+      transition: left 0.3s ease;
+      z-index: -1;
+    }
+
+    .btn-minimal:hover {
+      color: #1a1612;
+      border-color: #c9a45f;
+    }
+
+    .btn-minimal:hover::before {
+      left: 0;
+    }
+
+    .btn-minimal.primary {
+      border-color: #c9a45f;
+      color: #c9a45f;
+    }
+
+    /* ===== 风格 D: 渐变填充 ===== */
+    .btn-gradient {
+      padding: 14px 32px;
+      border: none;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #332a22 0%, #1a1612 100%);
+      color: #a09080;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      position: relative;
+    }
+
+    .btn-gradient::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 8px;
+      padding: 1px;
+      background: linear-gradient(135deg, #4a3d32, #1a1612);
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+    }
+
+    .btn-gradient:hover {
+      color: #d4b87a;
+      background: linear-gradient(135deg, #3d3228 0%, #252019 100%);
+    }
+
+    .btn-gradient.primary {
+      background: linear-gradient(135deg, #c9a45f 0%, #b08d4e 100%);
+      color: #1a1612;
+      font-weight: 600;
+    }
+
+    .btn-gradient.primary::after {
+      display: none;
+    }
+
+    /* ===== 风格 E: 浮雕边框 ===== */
+    .btn-embossed {
+      padding: 14px 32px;
+      border: 2px solid transparent;
+      border-radius: 4px;
+      background:
+        linear-gradient(#252019, #252019) padding-box,
+        linear-gradient(135deg, #5a4d42, #2a2219) border-box;
+      color: #c9a45f;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      font-size: 12px;
+    }
+
+    .btn-embossed:hover {
+      background:
+        linear-gradient(#2d2520, #2d2520) padding-box,
+        linear-gradient(135deg, #c9a45f, #8a6d3f) border-box;
+      color: #d4b87a;
+    }
+
+    .btn-embossed.primary {
+      background:
+        linear-gradient(#c9a45f, #b08d4e) padding-box,
+        linear-gradient(135deg, #d4b87a, #8a6d3f) border-box;
+      color: #1a1612;
+      font-weight: 600;
+    }
+
+    /* ===== 风格 F: 微光效果 ===== */
+    .btn-shimmer {
+      padding: 14px 32px;
+      border: none;
+      border-radius: 8px;
+      background: #252019;
+      color: #a09080;
+      font-size: 14px;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      transition: color 0.3s ease;
+    }
+
+    .btn-shimmer::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 50%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(201, 164, 95, 0.2), transparent);
+      transition: left 0.5s ease;
+    }
+
+    .btn-shimmer:hover {
+      color: #d4b87a;
+    }
+
+    .btn-shimmer:hover::before {
+      left: 150%;
+    }
+
+    .btn-shimmer.primary {
+      background: #c9a45f;
+      color: #1a1612;
+    }
+
+    .btn-shimmer.primary::before {
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+    }
+
+    /* ===== 风格 G: 像素复古 ===== */
+    .btn-pixel {
+      padding: 14px 32px;
+      border: 3px solid #4a3d32;
+      border-radius: 0;
+      background: #332a22;
+      color: #c9a45f;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.1s ease;
+      box-shadow: 4px 4px 0 #1a1612;
+      font-family: 'Courier New', monospace;
+      image-rendering: pixelated;
+    }
+
+    .btn-pixel:hover {
+      transform: translate(2px, 2px);
+      box-shadow: 2px 2px 0 #1a1612;
+    }
+
+    .btn-pixel:active {
+      transform: translate(4px, 4px);
+      box-shadow: 0 0 0 #1a1612;
+    }
+
+    .btn-pixel.primary {
+      background: #c9a45f;
+      color: #1a1612;
+      border-color: #d4b87a;
+      font-weight: bold;
+    }
+
+    /* 标签 */
+    .label {
+      font-size: 12px;
+      color: #5a5045;
+      margin-right: 10px;
+      width: 60px;
+    }
+  </style>
+</head>
+<body>
+  <h1>按钮风格选择</h1>
+
+  <div class="section">
+    <div class="section-title">A. 新拟态 Neumorphism</div>
+    <div class="button-row">
+      <span class="label">默认</span>
+      <button class="btn-neumorphic">取消</button>
+      <button class="btn-neumorphic primary">确认</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">B. 玻璃拟态 Glassmorphism</div>
+    <div class="button-row">
+      <span class="label">默认</span>
+      <button class="btn-glass">取消</button>
+      <button class="btn-glass primary">确认</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">C. 极简线条 Minimal</div>
+    <div class="button-row">
+      <span class="label">默认</span>
+      <button class="btn-minimal">取消</button>
+      <button class="btn-minimal primary">确认</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">D. 渐变填充 Gradient</div>
+    <div class="button-row">
+      <span class="label">默认</span>
+      <button class="btn-gradient">取消</button>
+      <button class="btn-gradient primary">确认</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">E. 浮雕边框 Embossed</div>
+    <div class="button-row">
+      <span class="label">默认</span>
+      <button class="btn-embossed">取消</button>
+      <button class="btn-embossed primary">确认</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">F. 微光效果 Shimmer</div>
+    <div class="button-row">
+      <span class="label">默认</span>
+      <button class="btn-shimmer">取消</button>
+      <button class="btn-shimmer primary">确认</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">G. 像素复古 Pixel</div>
+    <div class="button-row">
+      <span class="label">默认</span>
+      <button class="btn-pixel">取消</button>
+      <button class="btn-pixel primary">确认</button>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,52 @@
+/* 按钮样式覆盖 - Beekeeper Studio 扁平风格 */
+/* 核心变量通过 variables.scss 中 Element Plus CSS 变量覆盖实现 */
+/* 本文件处理按钮额外的全局覆盖 */
+
+/* ===== Element Plus 按钮类型颜色覆盖 ===== */
+.dark-theme,
+.dark-theme * {
+  /* 主要按钮 */
+  --el-color-primary: #ffd700;
+  --el-color-primary-light-3: #ffed4a;
+  --el-color-primary-light-5: #ffd700;
+  --el-color-primary-light-7: #d4a800;
+  --el-color-primary-light-8: #b8930a;
+  --el-color-primary-light-9: transparent;
+  --el-color-primary-dark-2: #d4a800;
+
+  /* 成功按钮 */
+  --el-color-success: #4ec9b0;
+  --el-color-success-light-3: #6fd4c0;
+  --el-color-success-light-5: #4ec9b0;
+  --el-color-success-light-7: #3db89f;
+  --el-color-success-light-8: #2ea78e;
+  --el-color-success-light-9: transparent;
+  --el-color-success-dark-2: #3db89f;
+
+  /* 警告按钮 */
+  --el-color-warning: #dcdcaa;
+  --el-color-warning-light-3: #e5e5bf;
+  --el-color-warning-light-5: #dcdcaa;
+  --el-color-warning-light-7: #c8c890;
+  --el-color-warning-light-8: #b5b577;
+  --el-color-warning-light-9: transparent;
+  --el-color-warning-dark-2: #c8c890;
+
+  /* 危险按钮 */
+  --el-color-danger: #f44747;
+  --el-color-danger-light-3: #f66f6f;
+  --el-color-danger-light-5: #f44747;
+  --el-color-danger-light-7: #d93333;
+  --el-color-danger-light-8: #c02020;
+  --el-color-danger-light-9: transparent;
+  --el-color-danger-dark-2: #d93333;
+
+  /* 信息按钮 */
+  --el-color-info: #569cd6;
+  --el-color-info-light-3: #78b3de;
+  --el-color-info-light-5: #569cd6;
+  --el-color-info-light-7: #4589c0;
+  --el-color-info-light-8: #3576aa;
+  --el-color-info-light-9: transparent;
+  --el-color-info-dark-2: #4589c0;
+}

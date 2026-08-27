@@ -1,0 +1,11 @@
+{
+  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "types": ["vite/client", "vitest/globals"],
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts"]
+}

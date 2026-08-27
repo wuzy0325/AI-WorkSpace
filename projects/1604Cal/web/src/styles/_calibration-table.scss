@@ -1,0 +1,51 @@
+// Shared el-table deep styles for calibration data tables
+@mixin calibration-table-deep-styles {
+  :deep(.el-table) {
+    --el-table-bg-color: var(--bg-primary);
+    --el-table-tr-bg-color: var(--bg-primary);
+    --el-table-header-bg-color: var(--bg-secondary);
+    --el-table-row-hover-bg-color: rgba(16, 185, 129, 0.06);
+    --el-table-current-row-bg-color: rgba(16, 185, 129, 0.1);
+    --el-table-border-color: var(--border-color-strong);
+    --el-table-text-color: var(--text-primary);
+    --el-table-header-text-color: var(--text-secondary);
+    background-color: var(--bg-primary);
+  }
+
+  :deep(th.el-table__cell) {
+    background: var(--bg-secondary) !important;
+    color: var(--text-secondary) !important;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-color-strong);
+  }
+
+  :deep(td.el-table__cell) {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  :deep(.el-table__row--striped td.el-table__cell) {
+    background: var(--bg-secondary) !important;
+  }
+
+  :deep(.el-table__row:hover td.el-table__cell) {
+    background: rgba(16, 185, 129, 0.06) !important;
+  }
+
+  :deep(.el-table--border .el-table__cell) {
+    border-right: 1px solid var(--border-color);
+  }
+
+  :deep(.el-table__inner-wrapper::before) {
+    background-color: var(--bg-secondary);
+  }
+
+  :deep(.el-table__empty-block) {
+    background: var(--bg-primary);
+  }
+}

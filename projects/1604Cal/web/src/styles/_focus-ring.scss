@@ -1,0 +1,30 @@
+// ============================================
+// 全局 focus ring 样式（P2-3）
+// @description 确保键盘用户可见当前焦点元素
+// @note 仅作用于自定义 button / input / [tabindex]，
+//       不覆盖 el-button 等组件自身 focus 样式。
+// @usage 在 main.ts 中通过 `import '@/styles/focus-ring.scss'` 全局引入
+// ============================================
+
+// focus ring mixin：供需要自定义 focus 视觉的组件复用
+@mixin focus-ring {
+  &:focus-visible {
+    outline: 2px solid $mint;
+    outline-offset: 2px;
+    border-radius: inherit;
+  }
+}
+
+// 全局应用到原生交互元素（排除 Element Plus 内部 class，避免与其内置 focus 样式冲突）
+button:not(.el-button),
+input:not(.el-input__inner):not([type="checkbox"]):not([type="radio"]),
+[tabindex]:not([tabindex="-1"]) {
+  @include focus-ring;
+}
+
+// checkbox / radio 用 accent-color 即可，但键盘 focus 仍需 outline 提示
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+  outline: 2px solid $mint;
+  outline-offset: 2px;
+}

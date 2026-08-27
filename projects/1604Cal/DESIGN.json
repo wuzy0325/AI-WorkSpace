@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-04-27T12:00:00Z",
+  "title": "Design System: 1604 融合平台",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Fresh Mint",
+        "canonical": "oklch(65% 0.2 155)",
+        "tonalRamp": [
+          "oklch(95% 0.02 155)",
+          "oklch(90% 0.05 155)",
+          "oklch(85% 0.08 155)",
+          "oklch(75% 0.12 155)",
+          "oklch(65% 0.2 155)",
+          "oklch(55% 0.18 155)",
+          "oklch(45% 0.15 155)",
+          "oklch(35% 0.1 155)"
+        ]
+      },
+      "warm-slate-800": {
+        "role": "neutral",
+        "displayName": "Warm Slate",
+        "canonical": "oklch(25% 0.02 250)",
+        "tonalRamp": [
+          "oklch(98% 0.005 250)",
+          "oklch(95% 0.005 250)",
+          "oklch(90% 0.01 250)",
+          "oklch(85% 0.01 250)",
+          "oklch(70% 0.015 250)",
+          "oklch(55% 0.02 250)",
+          "oklch(35% 0.02 250)",
+          "oklch(20% 0.015 250)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Hero numbers or singular page titles." },
+      "headline": { "displayName": "Headline", "purpose": "Page titles inside workbenches." },
+      "title": { "displayName": "Title", "purpose": "Section headers, card titles, module names." },
+      "body": { "displayName": "Body", "purpose": "Running text, descriptions, form labels." },
+      "label": { "displayName": "Label", "purpose": "Tags, status labels, metadata." }
+    },
+    "shadows": [
+      { "name": "ambient-low", "value": "0 1px 2px rgba(0,0,0,0.05)", "purpose": "Default resting shadow for cards and inputs." },
+      { "name": "ambient-medium", "value": "0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -2px rgba(0,0,0,0.05)", "purpose": "Raised cards, dropdowns, popovers." },
+      { "name": "ambient-high", "value": "0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -4px rgba(0,0,0,0.05)", "purpose": "Hover state for feature cards, modals, drawers." },
+      { "name": "glow-mint", "value": "0 0 8px rgba(16,185,129,0.25)", "purpose": "Focus rings and active pulse effects on primary elements." },
+      { "name": "card-hover", "value": "0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -4px rgba(0,0,0,0.05), 0 0 20px rgba(16,185,129,0.1)", "purpose": "Signature card hover lift with mint aura." }
+    ],
+    "motion": [
+      { "name": "ease-fast", "value": "150ms ease", "purpose": "Fast state transitions (hover, focus)." },
+      { "name": "ease-normal", "value": "250ms ease", "purpose": "Standard transitions (cards, panels)." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "768px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Main CTA and action trigger. Mint gradient fill with lift on hover.",
+      "html": "<button class=\"ds-btn-primary\">开始采集</button>",
+      "css": ".ds-btn-primary { background: linear-gradient(135deg, #10b981, #059669); color: #fff; border: none; border-radius: 8px; padding: 8px 16px; font-weight: 500; font-size: 14px; cursor: pointer; box-shadow: 0 2px 8px rgba(16,185,129,0.3); transition: all 150ms ease; } .ds-btn-primary:hover { background: linear-gradient(135deg, #34d399, #10b981); box-shadow: 0 4px 12px rgba(16,185,129,0.4); transform: translateY(-1px); } .ds-btn-primary:active { transform: translateY(0); box-shadow: 0 1px 4px rgba(16,185,129,0.3); }"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button-default",
+      "description": "Secondary action. Semi-transparent dark fill with border.",
+      "html": "<button class=\"ds-btn-default\">取消</button>",
+      "css": ".ds-btn-default { background: rgba(55,65,81,0.5); color: #1f2937; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 16px; font-weight: 500; font-size: 14px; cursor: pointer; transition: all 150ms ease; } .ds-btn-default:hover { background: rgba(75,85,99,0.6); border-color: #d1d5db; color: #1f2937; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Content container. White surface with subtle border and hover lift.",
+      "html": "<div class=\"ds-card\"><h3 class=\"ds-card-title\">卡片标题</h3><p class=\"ds-card-body\">卡片内容描述文本。</p></div>",
+      "css": ".ds-card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; color: #1f2937; box-shadow: 0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05); transition: all 250ms ease; } .ds-card:hover { box-shadow: 0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -4px rgba(0,0,0,0.05), 0 0 20px rgba(16,185,129,0.1); border-color: rgba(16,185,129,0.3); } .ds-card-title { font-size: 20px; font-weight: 600; margin: 0 0 8px; line-height: 1.25; } .ds-card-body { font-size: 14px; font-weight: 400; line-height: 1.5; color: #6b7280; margin: 0; }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Text entry. White background with mint focus ring.",
+      "html": "<input class=\"ds-input\" placeholder=\"请输入数值\" />",
+      "css": ".ds-input { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 12px; color: #1f2937; font-size: 14px; outline: none; transition: all 150ms ease; } .ds-input::placeholder { color: #9ca3af; } .ds-input:focus { border-color: #10b981; box-shadow: 0 0 0 3px rgba(16,185,129,0.15); }"
+    },
+    {
+      "name": "Navigation Item",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "Sidebar navigation row. Active state uses mint tint and left border.",
+      "html": "<div class=\"ds-nav-item active\"><span class=\"ds-nav-icon\">&#9670;</span><span class=\"ds-nav-label\">计量模块</span></div>",
+      "css": ".ds-nav-item { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 8px; color: #6b7280; cursor: pointer; transition: all 150ms ease; border-left: 1px solid transparent; } .ds-nav-item:hover { background: rgba(55,65,81,0.08); color: #1f2937; } .ds-nav-item.active { background: rgba(16,185,129,0.12); color: #1f2937; font-weight: 500; border-left: 1px solid #10b981; } .ds-nav-icon { font-size: 18px; } .ds-nav-label { font-size: 14px; }"
+    },
+    {
+      "name": "Status Tag",
+      "kind": "chip",
+      "refersTo": "tag",
+      "description": "Semantic status indicator. Tinted background with matching text.",
+      "html": "<span class=\"ds-tag ds-tag-success\">正常</span>",
+      "css": ".ds-tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; border: 1px solid transparent; } .ds-tag-success { background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.3); color: #4ade80; } .ds-tag-warning { background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.3); color: #fbbf24; } .ds-tag-danger { background: rgba(239,68,68,0.15); border-color: rgba(239,68,68,0.3); color: #f87171; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Clean Workbench",
+    "overview": "A design system built for field engineers who spend hours in front of industrial PCs. The interface should feel like a freshly organized workbench: every tool is within reach, surfaces are clean, and the ambient color never tires the eyes. We reject dark themes, neon accents, and decorative gradients. The aesthetic is light-first, mint-accented, and state-driven.",
+    "keyCharacteristics": [
+      "Light background dominance with Fresh Mint as the sole accent.",
+      "Tactile and responsive components: buttons lift, cards gain depth on hover.",
+      "Information density optimized for mid-to-high resolution monitors.",
+      "Element Plus as the sole component library, visually overridden to match the brand."
+    ],
+    "rules": [
+      { "name": "The One Voice Rule", "body": "The primary accent (Fresh Mint) is used on ≤10% of any given screen. Its rarity is the point.", "section": "colors" },
+      { "name": "The Flat Scale Rule", "body": "Hierarchy is built through weight contrast (400 vs 600 vs 700) and size jumps of at least 1.25×. Avoid intermediate sizes that flatten the ladder.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Surfaces are flat at rest. Shadows appear only as a response to state (hover, elevation, focus).", "section": "elevation" }
+    ],
+    "dos": [
+      "Do use Lab White (#ffffff) as the dominant background for all work surfaces.",
+      "Do use Fresh Mint (#10b981) sparingly: primary buttons, active nav states, and success indicators only.",
+      "Do maintain a 4px base spacing grid (4, 8, 12, 16, 20, 24, 32, 48px).",
+      "Do use 12px radius for cards and 8px radius for buttons and inputs.",
+      "Do ensure body text lines cap at 65–75ch for readability.",
+      "Do use Element Plus components as the foundation and override tokens via SCSS/CSS Variables for consistency."
+    ],
+    "donts": [
+      "Don't use dark themes. The system is light-first by brand mandate.",
+      "Don't use high-saturation gradients or decorative gradient text.",
+      "Don't use border-left or border-right greater than 1px as a colored stripe accent on cards, alerts, or list items.",
+      "Don't nest cards inside cards. Use spacing and dividers for hierarchy.",
+      "Don't use over-animation or bounce/elastic easing. Keep transitions to 150–350ms with ease curves.",
+      "Don't introduce non-Element Plus components into the UI; maintain library consistency.",
+      "Don't use glassmorphism as a default decorative treatment.",
+      "Don't rely on the hero-metric template (big number + small label + gradient) for data display."
+    ]
+  }
+}

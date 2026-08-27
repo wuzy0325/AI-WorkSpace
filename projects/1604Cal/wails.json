@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Cal1604",
+  "outputfilename": "Cal1604",
+  "frontend:dir": "web",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Cal1604"
+  },
+  "info": {
+    "companyName": "Cal1604",
+    "productName": "Cal1604 校准系统",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright © 2024 Cal1604",
+    "comments": "Cal1604 校准系统"
+  }
+}

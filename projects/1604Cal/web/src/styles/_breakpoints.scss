@@ -1,0 +1,39 @@
+// ============================================
+// 统一响应式断点 mixin（P2-4）
+// @description 提供项目统一的断点规范，避免各 View 各自写 @media 散乱定义
+//
+// 断点规范（max-width 语义）：
+// - sm:   768px  → 平板竖屏
+// - md:  1024px  → 平板横屏 / 小笔记本
+// - lg:   1280px → 标准笔记本
+// - xl:   1440px → 桌面
+// - 2xl:  1920px → 大屏
+//
+// @usage
+//   @use "@/styles/breakpoints.scss" as *;
+//
+//   .my-component {
+//     padding: 16px;
+//
+//     @include respond-to(sm) {
+//       padding: 8px;
+//     }
+//   }
+//
+// @note Vite 已通过 additionalData 全局注入本文件所需变量；
+//       各 View 可按需在 <style> 中 @use 本文件复用 mixin。
+// ============================================
+
+@mixin respond-to($breakpoint) {
+  @if $breakpoint == sm {
+    @media (max-width: 767px) { @content; }
+  } @else if $breakpoint == md {
+    @media (max-width: 1023px) { @content; }
+  } @else if $breakpoint == lg {
+    @media (max-width: 1279px) { @content; }
+  } @else if $breakpoint == xl {
+    @media (max-width: 1439px) { @content; }
+  } @else if $breakpoint == 2xl {
+    @media (max-width: 1919px) { @content; }
+  }
+}

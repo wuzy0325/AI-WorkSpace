@@ -1,0 +1,53 @@
+# ===== 工作区与缓存 =====
+.worktrees/
+worktrees/
+npm-cache/
+
+# 工具自动生成目录
+graphify-out/
+.vite/
+.gitnexus/
+.code-review-graph/
+
+# ===== Web 前端 =====
+web/node_modules/
+web/dist/
+web/package.json.md5
+
+# Web 端 E2E 临时产物（截图归档到 docs/screenshots/）
+web/e2e-*.png
+web/tmp-debug.mjs
+
+# ===== 构建 / 二进制 =====
+build/bin/
+*.log
+*.exe
+
+# Windows 资源 syso（由 scripts/generate_icon.py --refresh-syso 按需重生成）
+resource_windows_amd64.syso
+resource_windows_amd64.syso.disabled
+
+# ===== E2E =====
+e2e/node_modules/
+e2e/npm-cache/
+e2e/test-results/
+e2e/playwright-report/
+e2e/playwright/.cache/
+
+# ===== 杂项 =====
+nul
+
+# ===== 工具本地配置 =====
+.claude/settings.json
+.claude/settings.local.json
+.claude/skills/
+.agents/
+.trae/
+.mcp.json
+opencode.json
+.opencode/
+skills-lock.json
+
+# ===== 文档与截图（按需排除）=====
+docs/plans/architecture-deepening.md
+screenshot_*.png
