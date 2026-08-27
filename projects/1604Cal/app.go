@@ -149,22 +149,21 @@ func (a *App) confirmClose(ctx context.Context) bool {
 	if ctx == nil {
 		return false
 	}
-	const confirmButton = "确定退出"
-	const cancelButton = "取消"
 	result, err := wailsRuntime.MessageDialog(ctx, wailsRuntime.MessageDialogOptions{
 		Type:          wailsRuntime.QuestionDialog,
 		Title:         "退出确认",
 		Message:       "确定要退出 Cal1604 校准系统吗？",
-		Buttons:       []string{confirmButton, cancelButton},
-		DefaultButton: cancelButton,
-		CancelButton:  cancelButton,
+		DefaultButton: "No",
+		CancelButton:  "No",
 	})
 	if err != nil {
 		// 对话框弹出失败时允许关闭，避免窗口无法退出。
 		log.Printf("[app] close confirm dialog failed, allow close: %v", err)
 		return false
 	}
-	return result != confirmButton
+	// Windows 上 MessageDialog 忽略 Buttons 参数，固定显示系统"是/否"按钮，
+	// 返回值映射为 "Yes"/"No"，因此只能比较 "Yes" 判断确认退出。
+	return result != "Yes"
 }
 
 func debugLogPath() (string, error) {
