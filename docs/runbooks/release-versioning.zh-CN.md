@@ -172,6 +172,14 @@ build-go:
 
 不满足上述任意一项时，AI agent 必须先修复脚本或文档，再继续打包。
 
+> **打包链路完整性卡点（pre-commit 强制）**：提交前会自动运行
+> `scripts/check-build-chain.ps1`，校验：
+> 1. 各 Wails 项目 `apps/desktop-wails/Taskfile.yml` 关键任务存在：`release` / `build-go` / `build-frontend` / `windows:build`。
+> 2. `build/config.yml` 的 `dev_mode.executes` 中 `wails3 task <name>` 引用的任务存在于 Taskfile。
+> 3. `scripts/build-release.ps1`（如有）引用的 task 存在于 Taskfile；若脚本自包含，其 `go build` 必须带 `-tags production`。
+>
+> 背景：windlabx4 的 Taskfile 曾被"对齐 wails3 标准结构"重构时删除 `release`/`build-go` 等任务，但 `build-release.ps1` 与 `build/config.yml` 未同步，导致 `task release` 与 `wails3 build` 静默失效、打包时才暴露。该卡点用于防止同类回归。**修改 Taskfile 任务名/删除任务时，必须同步更新 `build/config.yml` 的 dev_mode 引用与 `scripts/build-release.ps1`。**
+
 ## CHANGELOG 格式
 
 每个项目的 `CHANGELOG.md` 使用以下格式：

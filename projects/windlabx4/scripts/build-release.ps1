@@ -21,26 +21,46 @@ if (-not (Test-Path -LiteralPath $DLLSource)) {
     exit 1
 }
 
-# --- Step 1: Build WindLabX4 (Wails v3) ---
-Write-Host '>>> Building WindLabX4 (wails3 task release)...' -ForegroundColor Cyan
-Push-Location $WailsDir
+# --- Step 1: Build frontend (npm run build -> frontend/dist) ---
+Write-Host '>>> Building frontend (npm run build)...' -ForegroundColor Cyan
+Push-Location (Join-Path $WailsDir 'frontend')
 try {
-    go run github.com/wailsapp/wails/v3/cmd/wails3 task release
+    npm install --no-audit --no-fund
     if ($LASTEXITCODE -ne 0) {
-        throw "wails3 task release failed (exit $LASTEXITCODE)"
+        throw "npm install failed (exit $LASTEXITCODE)"
     }
-    if (-not (Test-Path -LiteralPath $OutputExe)) {
-        throw "Expected output exe not found: $OutputExe"
+    npm run build
+    if ($LASTEXITCODE -ne 0) {
+        throw "npm run build failed (exit $LASTEXITCODE)"
     }
 } finally {
     Pop-Location
 }
 
-# --- Step 2: Copy DLL alongside the exe (portable build) ---
+# --- Step 2: Build Go production binary (Wails v3, -tags production) ---
+$Version = (Get-Content (Join-Path $ProjectDir 'VERSION') | Select-Object -First 1).Trim()
+Write-Host ">>> Building WindLabX4 (go build -tags production, v$Version)..." -ForegroundColor Cyan
+Push-Location $WailsDir
+try {
+    $env:GOWORK = 'off'
+    go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui -X windlabx4/apps/desktop-wails/backend.buildVersion=$Version" -o $OutputExe .
+    if ($LASTEXITCODE -ne 0) {
+        throw "go build failed (exit $LASTEXITCODE)"
+    }
+    if (-not (Test-Path -LiteralPath $OutputExe)) {
+        throw "Expected output exe not found: $OutputExe"
+    }
+    # 复制 DAQ-P-1603 依赖 DLL（WTNDAQ16H_64.dll），缺失不阻断
+    & (Join-Path $WailsDir 'scripts\copy-dll.ps1')
+} finally {
+    Pop-Location
+}
+
+# --- Step 3: Copy DLL alongside the exe (portable build) ---
 Write-Host ">>> Copying $DLLName to build/bin/ ..." -ForegroundColor Cyan
 Copy-Item -LiteralPath $DLLSource -Destination (Join-Path (Join-Path $WailsDir 'build\bin') $DLLName) -Force
 
-# --- Step 3: NSIS installer (optional) ---
+# --- Step 4: NSIS installer (optional) ---
 if ($WithInstaller) {
     $TargetInstallerDir = Join-Path $WailsDir 'build\windows\installer'
     $null = New-Item -ItemType Directory -Path $TargetInstallerDir -Force
@@ -91,7 +111,7 @@ if ($WithInstaller) {
     }
 }
 
-# --- Step 4: Archive installer to releases/bin/ (only when makensis succeeded) ---
+# --- Step 5: Archive installer to releases/bin/ (only when makensis succeeded) ---
 if ($WithInstaller -and $LASTEXITCODE -eq 0) {
     Write-Host ">>> Archiving installer to releases/bin/ ..." -ForegroundColor Cyan
     & (Join-Path $WorkspaceRoot 'scripts\copy-release-artifacts.ps1') -Project WindLabX4

@@ -10,6 +10,10 @@
 #      仅当 backend 方法缺失/多余时阻止提交；stale 时间戳警告不阻止。
 #   3. NSIS 脚本编码（check-nsi-encoding.ps1）：project.nsi 含非 ASCII 字节时
 #      必须有 BOM，否则 makensis 按系统代码页解析导致打包失败/乱码。
+#   4. 打包链路完整性（check-build-chain.ps1）：Taskfile 关键任务（release /
+#      build-go / build-frontend / windows:build）存在，build/config.yml 与
+#      build-release.ps1 引用的任务存在，build-release.ps1 的 go build 带
+#      -tags production。防止 Taskfile 重构时引用方未同步导致打包静默失效。
 #
 # 失败时阻止提交；修复违规后重试即可。
 # 规则依据见 CLAUDE.md 的 Hard Constraints 与 AGENTS.md 的 Pre-submit Checklist。
@@ -52,6 +56,22 @@ if [ $status -ne 0 ]; then
   echo "  NSIS 脚本编码校验失败，提交已阻止。"
   echo "  请将 project.nsi 转为 UTF-8 并补 BOM（EF BB BF）后重试。"
   echo "  规则依据见 projects/windlabx4/AGENTS.md 的 NSIS Hard Rules。"
+  echo "============================================================"
+  exit 1
+fi
+
+# ---- 4. 打包链路完整性校验 ----
+# Taskfile 关键任务被删除/改名，或 build/config.yml / build-release.ps1 引用的
+# 任务不一致时，`task release` / `wails3 build` 会静默失效，直到打包才暴露
+# （windlabx4 ed810cd 回归）。本检查在提交前强制打包链路自洽。
+powershell -ExecutionPolicy Bypass -File ./scripts/check-build-chain.ps1 -Quiet
+status=$?
+if [ $status -ne 0 ]; then
+  echo ""
+  echo "============================================================"
+  echo "  打包链路完整性校验失败，提交已阻止。"
+  echo "  请按上方提示补齐/同步 Taskfile 任务或 build-release.ps1 引用，再重试。"
+  echo "  规则依据见 docs/runbooks/release-versioning.zh-CN.md。"
   echo "============================================================"
   exit 1
 fi

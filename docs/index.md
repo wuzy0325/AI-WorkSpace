@@ -120,6 +120,8 @@
 | `scripts/validate-structure.ps1` | 后端/整体结构合规检查 | `powershell -File .\scripts\validate-structure.ps1` |
 | `scripts/validate-frontend-structure.ps1` | 前端目录结构合规检查（含 `-CheckFileSize` 量化检查） | `powershell -File scripts/validate-frontend-structure.ps1 -ProjectDir <path> [-CheckFileSize]` |
 | `scripts/check-wails-bindings.ps1` | Wails binding 同步检查（方法名 diff + 时间戳） | `powershell -File scripts/check-wails-bindings.ps1 [-Projects windlabx4,wista] [-StaleMinutes 30]` |
+| `scripts/check-nsi-encoding.ps1` | NSIS 脚本（project.nsi）编码防劣化检查 | `powershell -File scripts/check-nsi-encoding.ps1 [-Quiet]` |
+| `scripts/check-build-chain.ps1` | 打包链路完整性检查（Taskfile 关键任务 + config.yml/dev 引用 + build-release.ps1 production 标签） | `powershell -File scripts/check-build-chain.ps1 [-Quiet]` |
 | `scripts/check-naive-imports.ps1` | windlabx4 naive-ui 直接导入检查 | `powershell -File scripts/check-naive-imports.ps1 -ProjectDir "projects/windlabx4/apps/desktop-wails/frontend/src"` |
 | `scripts/validate-import-direction.ps1` | hexagonal 边界 import 方向检查 | `powershell -File scripts/validate-import-direction.ps1` |
 | `scripts/lint-go.ps1` | Go 代码检查（gofmt + build） | `powershell -File scripts/lint-go.ps1` |
