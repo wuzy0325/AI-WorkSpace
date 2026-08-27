@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.7.6] - 2026-08-27
+
+### Fixed
+
+- **顶栏标题改为 WISPA**：应用顶栏品牌标题由旧名称统一为 WISPA，与安装包/产品名一致。
+- **添加/扫描入口文案统一为压力扫描阀**：侧栏"添加设备"与"扫描设备"入口文案统一，消除与新命名不一致的旧术语。
+- **Windows 版本资源 ProductName 替换为真实产品名**：各 Wails 项目内嵌 exe 的版本资源 ProductName 由旧项目名替换为真实产品名（windlabx4 / wispa 等）。
+- **固定尺寸窗口按主屏工作区钳制**：固定尺寸窗口在启动时按主屏工作区钳制，避免窗口超出可见区域；同时清理过期前端绑定。
+
+### Internal
+
+- 同步 6 个版本号文件到 0.7.6：`VERSION` / `wails.json` / `frontend/package.json` / `frontend/package-lock.json`（含 `packages[""]`）/ `build/windows/installer/project.nsi` / `build/config.yml`。
+
+### Verification
+
+- `npm run typecheck`: passed.
+- `npm run test` (vitest): passed.
+- `npm run build`: passed.
+- `$env:GOWORK="off"; go test ./... -count=1 -timeout 120s`: passed.
+- `task release`: passed.
+- `makensis '-DARG_WAILS_AMD64_BINARY=..\..\bin\wispa.exe' project.nsi`（在 `build/windows/installer/` 目录下执行）: passed.
+
+### Known Issues
+
+- 现场故障电脑（SetReadDeadline 失效）的 discovery 与 Stop 路径 watchdog 兜底需实测验证（继承自 0.7.3）。
+
 ## [0.7.5] - 2026-08-13
 
 ### Added

@@ -8,7 +8,7 @@
 !define INFO_COMPANYNAME    "WindTuner Team"
 !define INFO_PRODUCTNAME    "wispa"
 ; Project version. Keep in sync with VERSION.
-!define INFO_PRODUCTVERSION "0.7.5"
+!define INFO_PRODUCTVERSION "0.7.6"
 
 !include "wails_tools.nsh"
 

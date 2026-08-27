@@ -7,7 +7,7 @@ info:
   productIdentifier: "com.wispa.app"
   description: "wispa (WindTuner Intelligent-Pressure Scanning Application) desktop app"
   copyright: "(c) 2025, WindTuner Team"
-  version: "0.7.5"
+  version: "0.7.6"
 
 # 开发模式配置：wails3 dev 默认读取 ./build/config.yml
 # 策略与 wind-daq 一致：先构建前端资源，再构建 Go 二进制（内嵌前端），最后启动应用

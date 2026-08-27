@@ -6,7 +6,7 @@ info:
   productIdentifier: "com.windlabx4.app"
   description: "WindLabX4 wind tunnel data acquisition desktop app"
   copyright: "(c) 2025, WindLabX4 Team"
-  version: "0.17.0"
+  version: "0.17.2"
 
 dev_mode:
   root_path: .

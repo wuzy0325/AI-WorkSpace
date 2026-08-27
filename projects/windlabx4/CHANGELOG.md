@@ -1,15 +1,27 @@
 # Changelog
 
-## [0.17.2] - 2026-08-24
+## [0.17.2] - 2026-08-27
+
+### Added
+
+- **相对/绝对坐标模式切换配置项**：探针校准新增坐标模式配置，可在相对/绝对坐标间切换，适配不同测量基准的现场需求。
+- **各探针模块校准完成增加模态提示框与进度条变色**：五孔/三孔/总压/七孔探针校准完成时弹窗提示，进度条变色反馈，现场不易错过完成状态。
+
+### Changed
+
+- **总压校准曲线更名压力系数曲线**：总压校准 CPT-α 曲线图表与 Tab 移除 CPT Y 轴标签，改以压力系数曲线呈现，命名与物理含义对齐。
+- **总压校准系数曲线 Y 轴默认范围改为 0.99~1.01**：默认展示范围收窄到压力系数典型区间，避免无关区域拉伸曲线。
 
 ### Fixed
 
 - **DAQ-P-1603 打压读数只有约一半（斜率错误约 2 倍）**：根因是 `shared/device-sdk` 的 `daq_p1603.go` `readLoop` 用 `code/65535*20` 换算电流（假设 0-20mA 量程单极性、码值 0=0mA），实际硬件为双极性 ±20mA、零点码值 32768，导致 0-20mA 双极性零点被当成 0，所有压力读数压缩到约一半。修复：改用 `GetVoltRangeInfo` 返回的权威参数，按 `current = (code-32768)*CodeWidth - OffsetVolt` 换算（不调用会崩溃的 `ScaleBinToVolt`）。真机（192.168.3.104）打压 -1000Pa 读数由约 -480Pa 修正为约 -1000Pa。详见 [postmortem](docs/postmortems/2026-08-24-daq-p1603-current-scaling.md)。
 - **DAQ-P-1603 禁用 CH1/CH2 后通道错位**：`SetTare`/`GetTare` 按数组下标访问通道，稀疏通道下会误判越界。修复：改为按 `ChannelConfig.Index`（真实硬件号）遍历查找。
+- **设备断连后 UI 状态轮询能感知 404 并翻转为已断开**：设备断连后前端状态轮询此前收不到有效信号，界面停留在连接状态；修复后轮询感知 404 并翻转设备状态为已断开。
 
 ### Internal
 
 - `shared/device-sdk/go/daq/hardware/daq_p1603.go`：新增 `chanScale.codeWidth/offsetVolt`，`buildChannelScales` 通过 `GetVoltRangeInfo` 获取 0-20mA 量程权威码值参数（失败回退理论码宽 `20/32768`）；`readLoop` 换算改为 `(code-32768)*CodeWidth - OffsetVolt`。
+- 各 Wails 项目 Windows 版本资源 `ProductName` 替换为真实产品名；各项目固定尺寸窗口按主屏工作区钳制；清理过期前端绑定，同步 windlabx4 多平台打包配置。
 
 ### Notes
 
