@@ -39,7 +39,7 @@ Go + Node.js LTS + Wails v3. `wista` excluded from `go.work` (ADR-006) 鈫?`$env
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **AI-WorkSpace** (56392 symbols, 117918 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **AI-WorkSpace** (56387 symbols, 117932 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
