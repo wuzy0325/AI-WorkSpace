@@ -143,6 +143,30 @@ func (a *App) GetAPIPort() int {
 	return a.port
 }
 
+// confirmClose 在用户点击窗口右上角 X 关闭应用时弹出确认对话框。
+// 返回 true 阻止关闭，返回 false 允许关闭。
+func (a *App) confirmClose(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	const confirmButton = "确定退出"
+	const cancelButton = "取消"
+	result, err := wailsRuntime.MessageDialog(ctx, wailsRuntime.MessageDialogOptions{
+		Type:          wailsRuntime.QuestionDialog,
+		Title:         "退出确认",
+		Message:       "确定要退出 Cal1604 校准系统吗？",
+		Buttons:       []string{confirmButton, cancelButton},
+		DefaultButton: cancelButton,
+		CancelButton:  cancelButton,
+	})
+	if err != nil {
+		// 对话框弹出失败时允许关闭，避免窗口无法退出。
+		log.Printf("[app] close confirm dialog failed, allow close: %v", err)
+		return false
+	}
+	return result != confirmButton
+}
+
 func debugLogPath() (string, error) {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
