@@ -172,6 +172,11 @@ const sphereTankWaitTimeSec = ref(3)
 const sphereTankStableChannel = ref<ChannelRef>({ deviceId: '', channelIndex: 0 })
 // 球罐压力通道：仅用于前端实时显示压力值，不参与闸门判定；未配置 deviceId 时 UI 显示"暂无数据"
 const sphereTankPressureChannel = ref<ChannelRef>({ deviceId: '', channelIndex: 0 })
+// 风洞总压范围判定（五孔探针专用）：读取 fiveHole.pTotal 通道，值在 [min, max] 内才允许采集
+const totalPressureGateEnabled = ref(false)
+const totalPressureMin = ref(50000)
+const totalPressureMax = ref(120000)
+const totalPressureTimeoutSec = ref(300)
 const machNumberPrecision = ref<number>(DEFAULT_CALIBRATION_MACH_PRECISION)
 const velocityPrecision = ref<number>(DEFAULT_CALIBRATION_VELOCITY_PRECISION)
 
@@ -299,6 +304,16 @@ const currentStepErrors = computed<string[]>(() => {
     const missingControllerAxis = motionAxes.value.find((axis) => !axis.controllerId)
     if (missingControllerAxis) errors.push(`${t.value.axisNotBound || '轴未绑定'}: ${missingControllerAxis.name}`)
     if (sphereTankGateEnabled.value && !sphereTankStableChannel.value.deviceId) errors.push(t.value.sphereTankRequiresDevice || '球罐门控需要选择设备')
+    if (totalPressureGateEnabled.value) {
+      if (!Number.isFinite(totalPressureMin.value) || !Number.isFinite(totalPressureMax.value)) {
+        errors.push('风洞总压范围必须为有效数字')
+      } else if (totalPressureMax.value < totalPressureMin.value) {
+        errors.push('风洞总压范围下限不能大于上限')
+      }
+      if (!Number.isFinite(totalPressureTimeoutSec.value) || totalPressureTimeoutSec.value < 0) {
+        errors.push('风洞总压判定超时不能为负数')
+      }
+    }
     return errors
   }
   return []
@@ -432,6 +447,12 @@ async function saveConfig() {
           ? { pressureChannel: { ...sphereTankPressureChannel.value } }
           : {}),
       },
+      tunnelTotalPressureGate: {
+        enabled: totalPressureGateEnabled.value,
+        minTotalPressure: totalPressureMin.value,
+        maxTotalPressure: totalPressureMax.value,
+        timeoutSec: Math.max(0, totalPressureTimeoutSec.value),
+      },
     }
     const normalizedConfig = applyCalibrationPrecisionDefaults(config)
     const res = await calibrationApi.saveConfig('five-hole', normalizedConfig)
@@ -505,6 +526,12 @@ async function loadSavedConfig() {
       sphereTankPressureChannel.value = config.sphereTankGate.pressureChannel
         ? { ...config.sphereTankGate.pressureChannel }
         : { deviceId: '', channelIndex: 0 }
+    }
+    if (config.tunnelTotalPressureGate) {
+      totalPressureGateEnabled.value = config.tunnelTotalPressureGate.enabled
+      totalPressureMin.value = config.tunnelTotalPressureGate.minTotalPressure
+      totalPressureMax.value = config.tunnelTotalPressureGate.maxTotalPressure
+      totalPressureTimeoutSec.value = config.tunnelTotalPressureGate.timeoutSec ?? 300
     }
   } catch (err) {
     // 首次打开无配置（404）属正常，其他异常需提示
@@ -924,6 +951,33 @@ function getChannelGroupLabel(groupKey: string): string {
           <p v-else class="empty-hint">未启用球罐判定，校准将按驻留时间直接采集</p>
         </UiPanel>
 
+        <!-- 风洞总压范围判定（五孔探针专用）：采集前判定 fiveHole.pTotal 通道当前值是否在范围内 -->
+        <UiPanel class="section-card">
+          <template #header>
+            <div class="section-header">
+              <Gauge :size="14" />
+              <span>风洞总压范围判定</span>
+              <UiCheckbox v-model:checked="totalPressureGateEnabled" class="header-toggle">启用</UiCheckbox>
+            </div>
+          </template>
+          <div v-if="totalPressureGateEnabled" class="sphere-grid">
+            <div class="field">
+              <span class="field-label">范围下限 (Pa)</span>
+              <UiInputNumber v-model="totalPressureMin" :min="0" :step="1000" />
+            </div>
+            <div class="field">
+              <span class="field-label">范围上限 (Pa)</span>
+              <UiInputNumber v-model="totalPressureMax" :min="0" :step="1000" />
+            </div>
+            <div class="field">
+              <span class="field-label">超时 (秒)</span>
+              <UiInputNumber v-model="totalPressureTimeoutSec" :min="0" :step="10" />
+            </div>
+            <p class="sphere-hint">读取「风洞参数 → Pt（fiveHole.pTotal）」通道：总压在范围内才开始采集，否则等待直至进入范围或超时；超时后校准停止。</p>
+          </div>
+          <p v-else class="empty-hint">未启用总压范围判定，测点按驻留时间直接采集</p>
+        </UiPanel>
+
         <!-- 运动安全配置：紧贴运动轴配置下方，让操作员在绑定轴后立即调整到位容差与异常停机阈值。
              留空字段等价于"使用后端默认值"，避免强制用户填全 4 个字段才能保存。
              与遍历测试模块共享同一份 MotionSafetyPanel 组件，保证语义一致。 -->
@@ -998,6 +1052,12 @@ function getChannelGroupLabel(groupKey: string): string {
               <span class="summary-label">球罐判定</span>
               <span class="summary-value" :class="sphereTankGateEnabled ? 'accent-bold' : 'muted-text'">
                 {{ sphereTankGateEnabled ? `启用（等待 ${sphereTankWaitTimeSec}s）` : '未启用' }}
+              </span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">总压范围判定</span>
+              <span class="summary-value" :class="totalPressureGateEnabled ? 'accent-bold' : 'muted-text'">
+                {{ totalPressureGateEnabled ? `启用（${totalPressureMin} ~ ${totalPressureMax} Pa）` : '未启用' }}
               </span>
             </div>
             <div class="summary-row">

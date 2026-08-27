@@ -66,10 +66,13 @@ type Config struct {
 	// MotionSafety 运动安全配置：到位容差、严重偏离阈值、跨样本看门狗等。
 	// 为 nil 时下游使用 traversal.DefaultMotionSafety，保证旧配置反序列化兼容。
 	// 类型复用 core/traversal.MotionSafetyConfig，与遍历测试共用同一套阈值语义和 Resolve/Merge 方法。
-	MotionSafety           *traversal.MotionSafetyConfig `json:"motionSafety,omitempty"`           // 运动安全配置
-	SphereTankGate         *SphereTankGateConfig         `json:"sphereTankGate,omitempty"`         // 球罐闸门配置
-	AcquisitionSampling    *AcquisitionSamplingConfig    `json:"acquisitionSampling,omitempty"`    // 采集采样配置
-	TotalTemperatureConfig *TotalTemperatureConfig       `json:"totalTemperatureConfig,omitempty"` // 总温校准专用配置
+	MotionSafety   *traversal.MotionSafetyConfig `json:"motionSafety,omitempty"`   // 运动安全配置
+	SphereTankGate *SphereTankGateConfig         `json:"sphereTankGate,omitempty"` // 球罐闸门配置
+	// TunnelTotalPressureGate 风洞总压范围判定配置（五孔探针校准专用）。
+	// 为 nil 或 Enabled=false 时跳过判定（向后兼容旧配置）。
+	TunnelTotalPressureGate *TunnelTotalPressureGateConfig `json:"tunnelTotalPressureGate,omitempty"`
+	AcquisitionSampling     *AcquisitionSamplingConfig     `json:"acquisitionSampling,omitempty"`    // 采集采样配置
+	TotalTemperatureConfig  *TotalTemperatureConfig        `json:"totalTemperatureConfig,omitempty"` // 总温校准专用配置
 	// TimestampReader 设备时间戳读取函数（仅运行时注入，不序列化）。
 	// 非 nil 时各算法在多次采样间等待设备推送新数据帧后才计入有效采样，避免重复读缓存旧数据。
 	TimestampReader TimestampReader `json:"-"`
@@ -554,6 +557,23 @@ type SphereTankGateConfig struct {
 	// PressureChannel 球罐压力通道引用，仅用于前端实时显示当前球罐压力值，不参与闸门判定逻辑
 	// 当配置了有效 DeviceID 时，采集协调器会自动订阅该设备，以便前端能收到实时快照
 	PressureChannel ChannelRef `json:"pressureChannel,omitempty"` // 球罐压力通道引用（仅显示，不参与判定）
+}
+
+// ==================== 风洞总压范围判定配置 ====================
+
+// TunnelTotalPressureGateConfig 风洞总压范围判定配置（五孔探针校准专用）。
+//
+// 启用后，AutomaticCalibration 在每个测点采集前读取 fiveHole.pTotal 通道当前值，
+// 判定其是否在 [MinTotalPressure, MaxTotalPressure] 范围内：
+//   - 在范围内 → 立即开始采集
+//   - 不在范围内 → 轮询等待，直到进入范围或超过 TimeoutSec 后停止校准
+//
+// 范围单位与 fiveHole.pTotal 通道原始读数一致（Pa，表压），不做单位换算。
+type TunnelTotalPressureGateConfig struct {
+	Enabled          bool    `json:"enabled"`              // 是否启用总压范围判定
+	MinTotalPressure float64 `json:"minTotalPressure"`     // 风洞总压范围下限（Pa）
+	MaxTotalPressure float64 `json:"maxTotalPressure"`     // 风洞总压范围上限（Pa）
+	TimeoutSec       int     `json:"timeoutSec,omitempty"` // 判定总超时（秒），<=0 时使用默认 300 秒
 }
 
 // ==================== 采集采样配置 ====================

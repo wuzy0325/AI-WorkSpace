@@ -9,7 +9,7 @@
 ####
 
 ; Version must match projects/windlabx4/VERSION.
-!define INFO_PRODUCTVERSION "0.17.2"
+!define INFO_PRODUCTVERSION "0.18.0"
 
 ####
 ## Please note: Template replacements don't work in this file. They are provided with default defines like

@@ -963,6 +963,19 @@ function getChannelUnit(role: string): string {
   const channelConfig = device?.channels[ch.channel.channelIndex]
   return channelConfig?.unit ?? 'Pa'
 }
+
+// 风洞总压范围判定实时状态（五孔探针专用）：
+// 读取实时 fiveHole.pTotal（store.realtimePressures.P0）并与配置范围 [min, max] 比对。
+// gate 未启用或未配置时返回 null（UI 隐藏状态条）。
+const totalPressureGateStatus = computed(() => {
+  const gate = currentConfig.value?.tunnelTotalPressureGate
+  if (!gate || !gate.enabled) return null
+  const p0 = calibrationStore.realtimePressures?.P0
+  if (p0 === undefined || p0 === null || !Number.isFinite(p0)) {
+    return { gate, p0: null, inRange: false, hasData: false }
+  }
+  return { gate, p0, inRange: p0 >= gate.minTotalPressure && p0 <= gate.maxTotalPressure, hasData: true }
+})
 </script>
 
 <template>
@@ -1210,6 +1223,31 @@ function getChannelUnit(role: string): string {
                 <span class="text-[var(--text-muted)]">{{ t.wf_spherePressureLabel }}</span>
                 <span class="font-mono font-bold text-[var(--text-primary)] tabular-nums">
                   {{ sphereTankGate.pressureValue.value !== null ? sphereTankGate.pressureValue.value.toFixed(2) : '--.--' }}{{ t.wf_spherePressureUnit }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 风洞总压范围判定状态条（固定底部，球罐门控下方）：仅启用时显示 -->
+          <div v-if="totalPressureGateStatus" class="flex-shrink-0 border-t border-[var(--border-default)] p-3">
+            <div class="flex items-center gap-2 whitespace-nowrap rounded-lg bg-[var(--bg-panel-strong)] px-3 py-2 text-xs">
+              <!-- 左侧：状态块（标题 · 状态词） -->
+              <div class="flex items-center gap-2 whitespace-nowrap">
+                <span class="text-[var(--text-muted)]">{{ t.fh_totalPressureGate }}</span>
+                <span class="text-[var(--text-muted)]">·</span>
+                <span class="font-medium" :style="{ color: totalPressureGateStatus.inRange ? `var(--accent-success)` : `var(--accent-warning)` }">
+                  {{ totalPressureGateStatus.inRange ? t.fh_tpGateInRange : (totalPressureGateStatus.hasData ? t.fh_tpGateWaiting : t.fh_tpGateNoData) }}
+                </span>
+              </div>
+              <!-- 左右视觉分隔 -->
+              <span class="text-[var(--text-muted)]">|</span>
+              <!-- 右侧：当前总压 + 配置范围 -->
+              <div class="flex items-center gap-2 whitespace-nowrap">
+                <span class="font-mono font-bold text-[var(--text-primary)] tabular-nums">
+                  {{ totalPressureGateStatus.hasData ? totalPressureGateStatus.p0?.toFixed(1) : '--.-' }} Pa
+                </span>
+                <span class="text-[var(--text-muted)]">
+                  ({{ totalPressureGateStatus.gate.minTotalPressure }} ~ {{ totalPressureGateStatus.gate.maxTotalPressure }})
                 </span>
               </div>
             </div>

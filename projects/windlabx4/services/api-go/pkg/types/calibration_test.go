@@ -546,3 +546,58 @@ func TestDecodeCalibrationConfig_SevenHoleSamplesPerPointZero(t *testing.T) {
 		t.Fatalf("error should mention samplesPerPoint, got: %v", err)
 	}
 }
+
+// TestDecodeCalibrationConfig_TunnelTotalPressureGate 验证 tunnelTotalPressureGate
+// 字段能通过 DTO 完整解码到 calibration.Config（五孔探针风洞总压范围判定）。
+func TestDecodeCalibrationConfig_TunnelTotalPressureGate(t *testing.T) {
+	jsonData := []byte(`{
+		"taskId": "cal-gate",
+		"type": "five-hole",
+		"name": "五孔校准",
+		"tunnelTotalPressureGate": {
+			"enabled": true,
+			"minTotalPressure": 50000,
+			"maxTotalPressure": 120000,
+			"timeoutSec": 60
+		}
+	}`)
+
+	cfg, err := DecodeCalibrationConfig(jsonData)
+	if err != nil {
+		t.Fatalf("decode calibration config: %v", err)
+	}
+	if cfg.TunnelTotalPressureGate == nil {
+		t.Fatal("expected tunnelTotalPressureGate to be set")
+	}
+	gate := cfg.TunnelTotalPressureGate
+	if !gate.Enabled || gate.MinTotalPressure != 50000 || gate.MaxTotalPressure != 120000 || gate.TimeoutSec != 60 {
+		t.Fatalf("unexpected tunnelTotalPressureGate: %+v", gate)
+	}
+}
+
+// TestCalibrationConfigDTO_ToCore_TunnelTotalPressureGate 验证 ToCore 保留
+// TunnelTotalPressureGate 指针，且 JSON 缺省字段时保持 nil（向后兼容）。
+func TestCalibrationConfigDTO_ToCore_TunnelTotalPressureGate(t *testing.T) {
+	// 有配置 → 指针透传
+	dto := CalibrationConfigDTO{
+		TaskID: "cal-gate-ptr",
+		Type:   "five-hole",
+		TunnelTotalPressureGate: &calibration.TunnelTotalPressureGateConfig{
+			Enabled: true, MinTotalPressure: 100, MaxTotalPressure: 200, TimeoutSec: 30,
+		},
+	}
+	cfg := dto.ToCore()
+	if cfg.TunnelTotalPressureGate == nil {
+		t.Fatal("ToCore should preserve TunnelTotalPressureGate pointer")
+	}
+	if !cfg.TunnelTotalPressureGate.Enabled || cfg.TunnelTotalPressureGate.MinTotalPressure != 100 ||
+		cfg.TunnelTotalPressureGate.MaxTotalPressure != 200 || cfg.TunnelTotalPressureGate.TimeoutSec != 30 {
+		t.Fatalf("unexpected tunnelTotalPressureGate after ToCore: %+v", cfg.TunnelTotalPressureGate)
+	}
+
+	// 无配置 → nil（旧配置向后兼容，引擎视为未启用）
+	empty := CalibrationConfigDTO{TaskID: "cal-gate-nil", Type: "five-hole"}.ToCore()
+	if empty.TunnelTotalPressureGate != nil {
+		t.Fatalf("expected nil TunnelTotalPressureGate for empty DTO, got %+v", empty.TunnelTotalPressureGate)
+	}
+}

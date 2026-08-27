@@ -350,6 +350,8 @@ func TestCalibrationManagerSessionStaleWorkerFinalizeIsolated(t *testing.T) {
 
 // TestCalibrationManagerLifecyclePreStartValidationFailureLeavesIdle 验证所有
 // 预启动校验失败都不会留下 Running 状态（校验全部通过后才发布 running）。
+// TestCalibrationManagerLifecyclePreStartValidationFailureLeavesIdle 验证启动前校验失败
+// 不发布运行态（旧实现先发布 Running 再创建算法，失败后状态卡死）。
 func TestCalibrationManagerLifecyclePreStartValidationFailureLeavesIdle(t *testing.T) {
 	manager := NewCalibrationManager(nil, nil, nil, nil)
 
@@ -377,6 +379,49 @@ func TestCalibrationManagerLifecyclePreStartValidationFailureLeavesIdle(t *testi
 
 	// 校验失败后合法任务仍可正常启动并运行
 	valid := fiveHoleStatusTestConfig("cal-lifecycle-valid")
+	valid.DwellTimeMs = 60000
+	if err := manager.Start(valid); err != nil {
+		t.Fatalf("expected valid start to succeed after failed validations, got %v", err)
+	}
+	if status := manager.Status(); status.State != calibration.StateRunning {
+		t.Fatalf("expected running state for valid task, got %s", status.State)
+	}
+	if err := manager.Stop(); err != nil {
+		t.Fatalf("stop valid calibration: %v", err)
+	}
+}
+
+// TestCalibrationManagerStartRejectsInvalidTotalPressureGate 回归测试（code-review Critical 2）：
+// 风洞总压范围判定配置在 Start 预启动阶段校验：非法范围（min>max）、[0,0]（null 解码形态）
+// 在探针移动 + 驻留之前即被拒绝，不发布运行态。
+func TestCalibrationManagerStartRejectsInvalidTotalPressureGate(t *testing.T) {
+	manager := NewCalibrationManager(nil, nil, nil, nil)
+
+	base := fiveHoleStatusTestConfig("cal-lifecycle-bad-tpg")
+
+	// 用例 1：范围非法（min > max）
+	badRange := base
+	badRange.TunnelTotalPressureGate = &calibration.TunnelTotalPressureGateConfig{
+		Enabled: true, MinTotalPressure: 200, MaxTotalPressure: 100,
+	}
+	if err := manager.Start(badRange); err == nil {
+		t.Fatal("expected start with min>max total pressure gate to fail")
+	}
+	if status := manager.Status(); status.State == calibration.StateRunning {
+		t.Fatal("expected no running state after failed start (invalid total pressure gate range)")
+	}
+
+	// 用例 2：[0,0]（JSON null 解码形态）→ 拒绝
+	zeroRange := base
+	zeroRange.TunnelTotalPressureGate = &calibration.TunnelTotalPressureGateConfig{
+		Enabled: true, MinTotalPressure: 0, MaxTotalPressure: 0,
+	}
+	if err := manager.Start(zeroRange); err == nil {
+		t.Fatal("expected start with [0,0] total pressure gate to fail")
+	}
+
+	// 校验失败后合法任务仍可正常启动并运行
+	valid := fiveHoleStatusTestConfig("cal-lifecycle-valid-tpg")
 	valid.DwellTimeMs = 60000
 	if err := manager.Start(valid); err != nil {
 		t.Fatalf("expected valid start to succeed after failed validations, got %v", err)

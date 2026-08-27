@@ -132,6 +132,17 @@ export interface SphereTankGateConfig {
   pressureChannel?: ChannelRef
 }
 
+/** 风洞总压范围判定配置（五孔探针校准专用） */
+export interface TunnelTotalPressureGateConfig {
+  enabled: boolean
+  /** 风洞总压范围下限（Pa），与 fiveHole.pTotal 通道读数同口径 */
+  minTotalPressure: number
+  /** 风洞总压范围上限（Pa） */
+  maxTotalPressure: number
+  /** 判定总超时（秒），<=0 时使用默认 300 秒 */
+  timeoutSec?: number
+}
+
 /** 采样批量读取策略 */
 export interface AcquisitionSamplingConfig {
   batchTimeoutMs?: number
@@ -484,6 +495,9 @@ export interface CalibrationConfig {
   saveFileName?: string
   stopOnError?: boolean
   sphereTankGate?: SphereTankGateConfig
+  /** 风洞总压范围判定配置（五孔探针校准专用）：启用后每个测点采集前判定
+   *  fiveHole.pTotal 通道当前值是否在范围内，不在则等待直至进入范围或超时。 */
+  tunnelTotalPressureGate?: TunnelTotalPressureGateConfig
   acquisitionSampling?: AcquisitionSamplingConfig
   fiveHoleLayout?: FiveHolePointLayout
   threeHoleLayout?: ThreeHolePointLayout

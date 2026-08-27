@@ -254,6 +254,16 @@ func (m *CalibrationManager) Start(config calibration.Config) error {
 		return fmt.Errorf("运动安全配置校验失败: %w", err)
 	}
 
+	// 风洞总压范围判定配置校验（五孔探针专用）：非法范围/缺失 fiveHole.pTotal 通道
+	// 在启动前拒绝，避免探针已经移动 + 驻留后才在门控处才发现配置错误（此时引擎已
+	// 发布运行态并可能驱动实际运动）。仅五孔类型校验，与其他类型共用引擎但引擎门控
+	// 仅 TypeFiveHole 生效，非五孔配置携带该字段时视为无效数据忽略（与引擎语义一致）。
+	if config.Type == string(calibration.TypeFiveHole) {
+		if err := calibration.ValidateTunnelTotalPressureGate(config); err != nil {
+			return fmt.Errorf("风洞总压范围判定配置校验失败: %w", err)
+		}
+	}
+
 	// 根据校准类型选择算法（未知类型在此拒绝，不得留下 Running 状态）
 	algorithm, err := m.createAlgorithm(config)
 	if err != nil {

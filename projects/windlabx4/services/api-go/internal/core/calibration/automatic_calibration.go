@@ -55,6 +55,15 @@ var ErrPointAborted = errors.New("测点被暂停打断")
 // probe remains at an unknown physical position.
 var ErrMotionControl = errors.New("运动控制失败")
 
+// ErrGateConditionFailed 门控条件等待失败（超时）的哨兵错误。
+// 门控（球罐判定 / 风洞总压范围判定）超时代表设备或流场条件未就绪，
+// 后续测点大概率同样无法满足，继续执行没有意义。runCalibrationLoop 将其视为
+// 不可恢复错误，无条件停止校准并返回错误——不受 StopOnError 影响
+// （StopOnError 仅决定"普通测点采集失败"是否继续）。否则多点校准在
+// StopOnError=false（前端默认）下会跳到下一轮、因 Stop 已置位而以 nil 返回，
+// 被 Manager 误判为 StateCompleted。
+var ErrGateConditionFailed = errors.New("门控条件等待失败")
+
 // AutomaticCalibration 自动循环校准引擎
 // 提供 move → wait → gate → acquire → hook → push → next 的模板方法
 // 五孔、三孔、总压校准使用此引擎
@@ -214,6 +223,12 @@ func (a *AutomaticCalibration) runCalibrationLoop(ctx context.Context, algorithm
 			if errors.Is(err, ErrMotionControl) {
 				return fmt.Errorf("测点 %d 运动失败: %w", i+1, err)
 			}
+			// 门控条件超时：不可恢复，无条件停止并返回错误（不受 StopOnError 影响）。
+			// 门控超时前引擎已自行 Stop()，此分支确保把错误带出循环，
+			// 避免 StopOnError=false 时跳到下一轮、以 !IsRunning()→nil 伪装成成功完成。
+			if errors.Is(err, ErrGateConditionFailed) {
+				return fmt.Errorf("测点 %d 门控条件失败: %w", i+1, err)
+			}
 
 			log.Printf("[AutomaticCalibration] 测点 %d 采集失败: %v", i+1, err)
 			pointErrorCount++
@@ -269,6 +284,16 @@ func (a *AutomaticCalibration) processPoint(ctx context.Context, algorithm Algor
 	}
 
 	// 闸门条件满足后、采集前检查暂停
+	if err := a.checkPausedAndAbort(); err != nil {
+		return err
+	}
+
+	// 3.5 等待风洞总压范围条件（五孔探针校准专用，如果启用）
+	if err := a.waitForTotalPressureGateIfNeeded(ctx); err != nil {
+		return fmt.Errorf("风洞总压范围判定失败: %w", err)
+	}
+
+	// 总压范围条件满足后、采集前检查暂停
 	if err := a.checkPausedAndAbort(); err != nil {
 		return err
 	}
@@ -619,7 +644,95 @@ func (a *AutomaticCalibration) waitForSphereTankGateIfNeeded(ctx context.Context
 
 		if time.Now().UnixMilli()-gateWaitStartAt > int64(maxWaitMs) {
 			a.Stop()
-			return fmt.Errorf("球罐判定等待超时（%d 秒）", maxWaitSec)
+			return fmt.Errorf("%w: 球罐判定等待超时（%d 秒）", ErrGateConditionFailed, maxWaitSec)
+		}
+
+		if err := sleepContext(ctx, 100*time.Millisecond); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// waitForTotalPressureGateIfNeeded 等待风洞总压进入配置范围（五孔探针校准专用）。
+//
+// 仅在 TypeFiveHole 且配置了启用的 TunnelTotalPressureGate 时生效：
+// 每个测点采集前读取 fiveHole.pTotal 通道当前值，若在 [min, max] 范围内则立即返回
+// （开始采集），否则轮询等待直至进入范围。
+//
+// 总超时取 gate.TimeoutSec，<=0 时使用默认 300 秒（与球罐闸门一致）。
+// 超时后停止校准并返回错误，避免无限等待卡死整个流程；ctx 取消时立即返回 ctx.Err()。
+func (a *AutomaticCalibration) waitForTotalPressureGateIfNeeded(ctx context.Context) error {
+	if a.config.Type != string(TypeFiveHole) {
+		return nil
+	}
+	gate := NormalizeTunnelTotalPressureGate(a.config)
+	if gate == nil {
+		return nil
+	}
+
+	if err := ValidateTunnelTotalPressureGate(a.config); err != nil {
+		return err
+	}
+
+	channel, ok := findFiveHoleTotalPressureChannel(a.config)
+	if !ok {
+		// 校验已确保通道存在，此处为防御性兜底
+		return fmt.Errorf("未找到启用的 %s 通道", fiveHoleTotalPressureRole)
+	}
+
+	// 记录进入门控时 fiveHole.pTotal 设备的当前时间戳：要求后续读数来自本测点
+	// 运动 + 驻留之后的采集周期（新帧），避免接受运动前缓存的旧总压值
+	// （设备停止采集或数据陈旧时，时间戳不再前进，门控将持续等待直至超时）。
+	entryTS, hasEntryTS := int64(0), false
+	if a.runtime != nil {
+		entryTS, hasEntryTS = a.runtime.GetLatestTimestamp(channel.DeviceID)
+	}
+
+	// 总压判定总超时（秒）。0 表示使用默认 300 秒。
+	maxWaitSec := gate.TimeoutSec
+	if maxWaitSec <= 0 {
+		maxWaitSec = 300
+	}
+	maxWaitMs := maxWaitSec * 1000
+	gateWaitStartAt := time.Now().UnixMilli()
+
+	for a.IsRunning() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		// 暂停时等待
+		if err := a.waitWhilePaused(ctx); err != nil {
+			return err
+		}
+		if !a.IsRunning() {
+			return nil
+		}
+
+		// 读取风洞总压通道当前值（runtime 为 nil 时视为通道不可读，继续等待）
+		var value float64
+		var ok bool
+		if a.runtime != nil {
+			value, ok = a.runtime.GetChannelValue(channel.DeviceID, channel.ChannelIndex)
+		}
+		if ok {
+			// 新鲜度判定：设备无时间戳能力（fake/旧驱动，hasEntryTS=false）时退化为仅按值判定；
+			// 有时间戳时要求当前帧晚于进入门控时刻（当前采集周期新数据），否则视为陈旧缓存。
+			fresh := true
+			if hasEntryTS {
+				curTS, hasCurTS := a.runtime.GetLatestTimestamp(channel.DeviceID)
+				fresh = hasCurTS && curTS > entryTS
+			}
+			if fresh && IsTotalPressureInRange(gate, value) {
+				return nil
+			}
+		}
+
+		if time.Now().UnixMilli()-gateWaitStartAt > int64(maxWaitMs) {
+			a.Stop()
+			return fmt.Errorf("%w: 风洞总压范围判定等待超时（%d 秒），当前总压未进入配置范围 [%.2f, %.2f]",
+				ErrGateConditionFailed, maxWaitSec, gate.MinTotalPressure, gate.MaxTotalPressure)
 		}
 
 		if err := sleepContext(ctx, 100*time.Millisecond); err != nil {

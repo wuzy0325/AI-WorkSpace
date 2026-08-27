@@ -56,10 +56,13 @@ type CalibrationConfigDTO struct {
 	// 在反序列化时被静默丢弃，后端只能拿到 nil 并使用 DefaultMotionSafety，绕过了用户配置。
 	// 此处补齐字段，与 calibration.Config.MotionSafety 完整对齐，由 backend Start 通过
 	// validateCalibrationMotionSafetyConfig 做权威校验（拒绝非法值而非静默忽略）。
-	MotionSafety           *traversal.MotionSafetyConfig          `json:"motionSafety,omitempty"`
-	SphereTankGate         *calibration.SphereTankGateConfig      `json:"sphereTankGate,omitempty"`
-	AcquisitionSampling    *calibration.AcquisitionSamplingConfig `json:"acquisitionSampling,omitempty"`
-	TotalTemperatureConfig *calibration.TotalTemperatureConfig    `json:"totalTemperatureConfig,omitempty"`
+	MotionSafety   *traversal.MotionSafetyConfig     `json:"motionSafety,omitempty"`
+	SphereTankGate *calibration.SphereTankGateConfig `json:"sphereTankGate,omitempty"`
+	// TunnelTotalPressureGate 风洞总压范围判定配置（五孔探针校准专用），
+	// 与 calibration.Config.TunnelTotalPressureGate 对齐。nil 视为未启用。
+	TunnelTotalPressureGate *calibration.TunnelTotalPressureGateConfig `json:"tunnelTotalPressureGate,omitempty"`
+	AcquisitionSampling     *calibration.AcquisitionSamplingConfig     `json:"acquisitionSampling,omitempty"`
+	TotalTemperatureConfig  *calibration.TotalTemperatureConfig        `json:"totalTemperatureConfig,omitempty"`
 }
 
 // ProbeChannelDTO 是探针通道在框架边界的传输对象，同时支持扁平与嵌套两种 JSON shape。
@@ -77,24 +80,25 @@ type ProbeChannelDTO struct {
 // MotionSafety 指针原样传递（共享底层值），nil 语义保留——下游使用 DefaultMotionSafety。
 func (d CalibrationConfigDTO) ToCore() calibration.Config {
 	cfg := calibration.Config{
-		TaskID:                 d.TaskID,
-		DeviceID:               d.DeviceID,
-		Type:                   d.Type,
-		Channels:               d.Channels,
-		PressurePoints:         d.PressurePoints,
-		AverageSamples:         d.AverageSamples,
-		Points:                 d.Points,
-		SamplesPerPoint:        d.SamplesPerPoint,
-		DwellTimeMs:            d.DwellTimeMs,
-		StopOnError:            d.StopOnError,
-		Name:                   d.Name,
-		SavePath:               d.SavePath,
-		MotionAxes:             d.MotionAxes,
-		CoordinateMode:         d.CoordinateMode,
-		MotionSafety:           d.MotionSafety,
-		SphereTankGate:         d.SphereTankGate,
-		AcquisitionSampling:    d.AcquisitionSampling,
-		TotalTemperatureConfig: d.TotalTemperatureConfig,
+		TaskID:                  d.TaskID,
+		DeviceID:                d.DeviceID,
+		Type:                    d.Type,
+		Channels:                d.Channels,
+		PressurePoints:          d.PressurePoints,
+		AverageSamples:          d.AverageSamples,
+		Points:                  d.Points,
+		SamplesPerPoint:         d.SamplesPerPoint,
+		DwellTimeMs:             d.DwellTimeMs,
+		StopOnError:             d.StopOnError,
+		Name:                    d.Name,
+		SavePath:                d.SavePath,
+		MotionAxes:              d.MotionAxes,
+		CoordinateMode:          d.CoordinateMode,
+		MotionSafety:            d.MotionSafety,
+		SphereTankGate:          d.SphereTankGate,
+		TunnelTotalPressureGate: d.TunnelTotalPressureGate,
+		AcquisitionSampling:     d.AcquisitionSampling,
+		TotalTemperatureConfig:  d.TotalTemperatureConfig,
 	}
 	if len(d.ProbeChannels) > 0 {
 		cfg.ProbeChannels = make([]calibration.ProbeChannel, len(d.ProbeChannels))

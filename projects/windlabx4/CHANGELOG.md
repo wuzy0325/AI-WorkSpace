@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.18.0] - 2026-08-27
+
+### Added
+
+- **五孔探针校准新增"风洞总压范围判定"**：可配置使能开关、风洞总压范围下限/上限（Pa）与判定超时（默认 300 秒）。启用后每个测点采集前读取 `fiveHole.pTotal` 通道当前值判定是否在范围内——在范围内立即采集，否则轮询等待直至进入范围或超时；超时停止校准并返回明确错误。配置在五孔设置界面编辑并持久化，主界面底部实时显示当前总压与「范围内/等待」状态。
+### Fixed
+
+- **门控超时被误判为成功完成**：`StopOnError=false`（前端默认）下，风洞总压门控超时此前会因引擎已 Stop 而以 nil 返回、被 Manager 标记为已完成（零点也显示成功）。修复为不可恢复错误，无条件终止并进入错误态；球罐门控同类问题一并修复。
+- **门控可能接受过期缓存总压**：门控此前只看通道读取 ok 值，设备停止采集时可能基于运动前缓存的旧总压值采集。修复为要求读数来自本测点移动+驻留后的新采集周期（设备时间戳前进），无时间戳能力的运行时退化为仅按值判定。
+- **非法范围在探针移动前被拒绝**：范围边界 NaN/Inf、`[0,0]`（JSON null 解码形态）、`min>max`、缺失或无效 `fiveHole.pTotal` 通道，均改为在 `CalibrationManager.Start` 预启动校验阶段拒绝，不再等探针移动+驻留后才报错。
+### Internal
+
+- 新增哨兵错误 `ErrGateConditionFailed`，`runCalibrationLoop` 对其无条件返回错误（不受 `StopOnError` 影响）。
+- `ValidateTunnelTotalPressureGate` 增加有限数边界与 `[0,0]` 校验；`waitForTotalPressureGateIfNeeded` 增加时间戳新鲜度判定。
+- 新增门控超时/陈旧缓存/启动前校验等回归测试。
+### Verification
+
+- `go test ./internal/... ./pkg/... ./api/...`：passed
+- `go vet ./...`：passed
+- `npm run typecheck`：passed
+- `npm run build`：passed
+- `task release`：passed
+
+### Known Issues
+
+- 暂无。
+
 ## [0.17.2] - 2026-08-27
 
 ### Added
